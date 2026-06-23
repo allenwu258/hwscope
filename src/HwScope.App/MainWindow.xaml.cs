@@ -1,4 +1,6 @@
+using System.Globalization;
 using System.Windows;
+using System.Windows.Controls;
 using System.Windows.Input;
 using HwScope.Core.Hardware;
 
@@ -12,7 +14,44 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
-        Loaded += (_, _) => RefreshHardwareSummary();
+        Loaded += (_, _) =>
+        {
+            ShowHardwareSummary();
+            RefreshHardwareSummary();
+        };
+    }
+
+    private void NavigationTree_SelectedItemChanged(object sender, RoutedPropertyChangedEventArgs<object> e)
+    {
+        if (!IsInitialized || SummaryPage is null)
+        {
+            return;
+        }
+
+        if (e.NewValue is not TreeViewItem item)
+        {
+            return;
+        }
+
+        switch (item.Tag as string)
+        {
+            case "memory-benchmark":
+                ShowMemoryBenchmark();
+                break;
+            case "summary":
+                ShowHardwareSummary();
+                break;
+        }
+    }
+
+    private void ShowHardwareSummary_Click(object sender, RoutedEventArgs e)
+    {
+        ShowHardwareSummary();
+    }
+
+    private void ShowMemoryBenchmark_Click(object sender, RoutedEventArgs e)
+    {
+        ShowMemoryBenchmark();
     }
 
     private void RefreshButton_Click(object sender, RoutedEventArgs e)
@@ -33,40 +72,64 @@ public partial class MainWindow : Window
 
     private void RefreshHardwareSummary()
     {
-        SetBusyState(true);
+        SetSummaryBusyState(true);
 
         try
         {
             _currentReport = _collector.CollectSummary();
             HardwareSummaryList.ItemsSource = HardwareSummaryItem.FromReport(_currentReport);
             GeneratedAtText.Text = $"检测时间：{_currentReport.GeneratedAt:yyyy-MM-dd HH:mm:ss}";
-            StatusBadge.Text = "已完成";
             SetFooterStatus("硬件检测完成。");
         }
         catch (Exception ex)
         {
-            StatusBadge.Text = "失败";
             SetFooterStatus($"硬件检测失败：{ex.Message}");
             MessageBox.Show(this, ex.Message, "硬件检测失败", MessageBoxButton.OK, MessageBoxImage.Error);
         }
         finally
         {
-            SetBusyState(false);
+            SetSummaryBusyState(false);
         }
     }
 
-    private void SetBusyState(bool isBusy)
+    private void ShowHardwareSummary()
+    {
+        if (SummaryPage is null)
+        {
+            return;
+        }
+
+        SummaryPage.Visibility = Visibility.Visible;
+        SetFooterStatus("硬件概览。");
+    }
+
+    private void ShowMemoryBenchmark()
+    {
+        if (_currentReport is null)
+        {
+            RefreshHardwareSummary();
+        }
+
+        var window = new MemoryBenchmarkWindow(_currentReport)
+        {
+            Owner = this
+        };
+        window.Show();
+        SetFooterStatus("已打开内存跑分窗口。");
+    }
+
+    private void SetSummaryBusyState(bool isBusy)
     {
         RefreshButton.IsEnabled = !isBusy;
         CopyButton.IsEnabled = !isBusy && _currentReport is not null;
-        StatusBadge.Text = isBusy ? "检测中" : StatusBadge.Text;
-        Mouse.OverrideCursor = isBusy ? System.Windows.Input.Cursors.Wait : null;
+        Mouse.OverrideCursor = isBusy ? Cursors.Wait : null;
     }
 
     private void SetFooterStatus(string text)
     {
         FooterStatusText.Text = text;
     }
+
 }
 
 public sealed record HardwareSummaryItem(string Label, string Value)

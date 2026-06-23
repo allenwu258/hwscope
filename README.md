@@ -10,6 +10,7 @@ src/
   HwScope.App/    # WPF 图形界面入口
   HwScope.Core/   # 硬件采集、格式化、后续跑分/稳定性核心能力
   HwScope.Cli/    # 命令行入口
+  HwScope.Native.MemoryBench/ # C++ 内存跑分 worker
 ```
 
 ## 运行
@@ -41,6 +42,16 @@ dotnet build
 ```
 
 当前目标框架为 `net8.0-windows`，硬件摘要通过 Windows WMI 采集。
+
+## 内存跑分
+
+内存跑分由 C++ native worker 提供。开发时可先构建：
+
+```powershell
+.\src\HwScope.Native.MemoryBench\scripts\build-msvc.ps1
+```
+
+GUI 中进入“性能测试 → 内存跑分”，点击 `Start Benchmark` 即可运行。
 
 ## Visual Studio
 
