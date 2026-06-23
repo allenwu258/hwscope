@@ -53,6 +53,8 @@ dotnet build
 
 GUI 中进入“性能测试 → 内存跑分”，点击 `Start Benchmark` 即可运行。
 
+设计说明见 [docs/memory-benchmark-design.md](docs/memory-benchmark-design.md)。
+
 ## Visual Studio
 
 如果 Visual Studio 提示“无法直接启动带有‘类库输出类型’的项目”，请在解决方案资源管理器中右键 `HwScope.App`，选择“设为启动项目”。
