@@ -9,6 +9,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "HwScope.Cli", "src\HwScope.
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "HwScope.Core", "src\HwScope.Core\HwScope.Core.csproj", "{618E4332-02DB-40C5-94FE-C1D2B3B02A13}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "HwScope.App", "src\HwScope.App\HwScope.App.csproj", "{80FD030E-3A99-463F-9DA3-161F211D0C04}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -26,9 +28,14 @@ Global
 		{3E54291F-AC1A-4E33-88C7-1F1CFBDF2E1A}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{3E54291F-AC1A-4E33-88C7-1F1CFBDF2E1A}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{3E54291F-AC1A-4E33-88C7-1F1CFBDF2E1A}.Release|Any CPU.Build.0 = Release|Any CPU
+		{80FD030E-3A99-463F-9DA3-161F211D0C04}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{80FD030E-3A99-463F-9DA3-161F211D0C04}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{80FD030E-3A99-463F-9DA3-161F211D0C04}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{80FD030E-3A99-463F-9DA3-161F211D0C04}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(NestedProjects) = preSolution
 		{618E4332-02DB-40C5-94FE-C1D2B3B02A13} = {DACC6645-C569-4B90-8CD0-BE55F944DB22}
 		{3E54291F-AC1A-4E33-88C7-1F1CFBDF2E1A} = {DACC6645-C569-4B90-8CD0-BE55F944DB22}
+		{80FD030E-3A99-463F-9DA3-161F211D0C04} = {DACC6645-C569-4B90-8CD0-BE55F944DB22}
 	EndGlobalSection
 EndGlobal
