@@ -7,11 +7,20 @@ HwScope 是一个 Windows C# 硬件工具箱项目。当前阶段先移植了硬
 ```text
 HwScope.sln
 src/
+  HwScope.App/    # WPF 图形界面入口
   HwScope.Core/   # 硬件采集、格式化、后续跑分/稳定性核心能力
   HwScope.Cli/    # 命令行入口
 ```
 
 ## 运行
+
+GUI：
+
+```powershell
+dotnet run --project .\src\HwScope.App
+```
+
+CLI：
 
 ```powershell
 dotnet run --project .\src\HwScope.Cli
@@ -35,7 +44,7 @@ dotnet build
 
 ## Visual Studio
 
-如果 Visual Studio 提示“无法直接启动带有‘类库输出类型’的项目”，请在解决方案资源管理器中右键 `HwScope.Cli`，选择“设为启动项目”。
+如果 Visual Studio 提示“无法直接启动带有‘类库输出类型’的项目”，请在解决方案资源管理器中右键 `HwScope.App`，选择“设为启动项目”。
 
 ## License
 
