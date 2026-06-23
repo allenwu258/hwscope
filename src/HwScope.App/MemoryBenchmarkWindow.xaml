@@ -1,0 +1,170 @@
+<Window x:Class="HwScope.App.MemoryBenchmarkWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="HwScope Cache &amp; Memory Benchmark"
+        Height="560"
+        Width="760"
+        MinHeight="520"
+        MinWidth="720"
+        Background="#FFFFFF"
+        WindowStartupLocation="CenterOwner">
+    <Window.Resources>
+        <Style x:Key="CellBorderStyle" TargetType="Border">
+            <Setter Property="BorderBrush" Value="#808080" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="MinHeight" Value="28" />
+            <Setter Property="Margin" Value="4,3" />
+            <Setter Property="Background" Value="#FFFFFF" />
+        </Style>
+        <Style x:Key="LabelTextStyle" TargetType="TextBlock">
+            <Setter Property="VerticalAlignment" Value="Center" />
+            <Setter Property="FontSize" Value="14" />
+            <Setter Property="Foreground" Value="#000000" />
+        </Style>
+        <Style x:Key="ValueTextStyle" TargetType="TextBlock">
+            <Setter Property="VerticalAlignment" Value="Center" />
+            <Setter Property="HorizontalAlignment" Value="Center" />
+            <Setter Property="FontSize" Value="14" />
+            <Setter Property="Foreground" Value="#000000" />
+        </Style>
+    </Window.Resources>
+
+    <Grid Margin="12">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <Border Grid.Row="0" BorderBrush="#808080" BorderThickness="1">
+            <Grid Margin="16">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="18" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="18" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                </Grid.RowDefinitions>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="140" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+
+                <TextBlock Grid.Column="1" Text="Read" Style="{StaticResource LabelTextStyle}" HorizontalAlignment="Center" />
+                <TextBlock Grid.Column="2" Text="Write" Style="{StaticResource LabelTextStyle}" HorizontalAlignment="Center" />
+                <TextBlock Grid.Column="3" Text="Copy" Style="{StaticResource LabelTextStyle}" HorizontalAlignment="Center" />
+                <TextBlock Grid.Column="4" Text="Latency" Style="{StaticResource LabelTextStyle}" HorizontalAlignment="Center" />
+
+                <TextBlock Grid.Row="1" Text="Memory" Style="{StaticResource LabelTextStyle}" />
+                <Border Grid.Row="1" Grid.Column="1" Style="{StaticResource CellBorderStyle}">
+                    <TextBlock x:Name="MemoryReadText" Text="" Style="{StaticResource ValueTextStyle}" />
+                </Border>
+                <Border Grid.Row="1" Grid.Column="2" Style="{StaticResource CellBorderStyle}">
+                    <TextBlock x:Name="MemoryWriteText" Text="" Style="{StaticResource ValueTextStyle}" />
+                </Border>
+                <Border Grid.Row="1" Grid.Column="3" Style="{StaticResource CellBorderStyle}">
+                    <TextBlock x:Name="MemoryCopyText" Text="" Style="{StaticResource ValueTextStyle}" />
+                </Border>
+                <Border Grid.Row="1" Grid.Column="4" Style="{StaticResource CellBorderStyle}">
+                    <TextBlock x:Name="MemoryLatencyText" Text="" Style="{StaticResource ValueTextStyle}" />
+                </Border>
+
+                <TextBlock Grid.Row="2" Text="L1 Cache" Style="{StaticResource LabelTextStyle}" />
+                <TextBlock Grid.Row="3" Text="L2 Cache" Style="{StaticResource LabelTextStyle}" />
+                <TextBlock Grid.Row="4" Text="L3 Cache" Style="{StaticResource LabelTextStyle}" />
+
+                <Grid Grid.Row="6" Grid.ColumnSpan="5">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="140" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="28" />
+                        <RowDefinition Height="28" />
+                        <RowDefinition Height="28" />
+                        <RowDefinition Height="28" />
+                        <RowDefinition Height="28" />
+                    </Grid.RowDefinitions>
+
+                    <TextBlock Grid.Row="0" Text="CPU Type" Style="{StaticResource LabelTextStyle}" />
+                    <Border Grid.Row="0" Grid.Column="1" Style="{StaticResource CellBorderStyle}" Margin="4,0,4,0">
+                        <TextBlock x:Name="CpuTypeText" Style="{StaticResource LabelTextStyle}" Margin="8,0" />
+                    </Border>
+                    <TextBlock Grid.Row="1" Text="CPU Clock" Style="{StaticResource LabelTextStyle}" />
+                    <Border Grid.Row="1" Grid.Column="1" Style="{StaticResource CellBorderStyle}" Margin="4,0,4,0">
+                        <TextBlock Text="" Style="{StaticResource LabelTextStyle}" Margin="8,0" />
+                    </Border>
+                    <TextBlock Grid.Row="2" Text="CPU FSB" Style="{StaticResource LabelTextStyle}" />
+                    <Border Grid.Row="2" Grid.Column="1" Style="{StaticResource CellBorderStyle}" Margin="4,0,4,0">
+                        <TextBlock Text="" Style="{StaticResource LabelTextStyle}" Margin="8,0" />
+                    </Border>
+                    <TextBlock Grid.Row="3" Text="CPU Multiplier" Style="{StaticResource LabelTextStyle}" />
+                    <Border Grid.Row="3" Grid.Column="1" Style="{StaticResource CellBorderStyle}" Margin="4,0,4,0">
+                        <TextBlock Text="" Style="{StaticResource LabelTextStyle}" Margin="8,0" />
+                    </Border>
+                    <TextBlock Grid.Row="4" Text="North Bridge Clock" Style="{StaticResource LabelTextStyle}" />
+                    <Border Grid.Row="4" Grid.Column="1" Style="{StaticResource CellBorderStyle}" Margin="4,0,4,0">
+                        <TextBlock Text="" Style="{StaticResource LabelTextStyle}" Margin="8,0" />
+                    </Border>
+                </Grid>
+
+                <Grid Grid.Row="8" Grid.ColumnSpan="5">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="140" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="28" />
+                        <RowDefinition Height="28" />
+                        <RowDefinition Height="28" />
+                        <RowDefinition Height="28" />
+                        <RowDefinition Height="28" />
+                    </Grid.RowDefinitions>
+
+                    <TextBlock Grid.Row="0" Text="Memory Bus" Style="{StaticResource LabelTextStyle}" />
+                    <Border Grid.Row="0" Grid.Column="1" Style="{StaticResource CellBorderStyle}" Margin="4,0,4,0">
+                        <TextBlock Text="" Style="{StaticResource LabelTextStyle}" Margin="8,0" />
+                    </Border>
+                    <TextBlock Grid.Row="1" Text="Memory Type" Style="{StaticResource LabelTextStyle}" />
+                    <Border Grid.Row="1" Grid.Column="1" Style="{StaticResource CellBorderStyle}" Margin="4,0,4,0">
+                        <TextBlock x:Name="MemoryTypeText" Style="{StaticResource LabelTextStyle}" Margin="8,0" />
+                    </Border>
+                    <TextBlock Grid.Row="2" Text="Chipset" Style="{StaticResource LabelTextStyle}" />
+                    <Border Grid.Row="2" Grid.Column="1" Style="{StaticResource CellBorderStyle}" Margin="4,0,4,0">
+                        <TextBlock Text="" Style="{StaticResource LabelTextStyle}" Margin="8,0" />
+                    </Border>
+                    <TextBlock Grid.Row="3" Text="Motherboard" Style="{StaticResource LabelTextStyle}" />
+                    <Border Grid.Row="3" Grid.Column="1" Style="{StaticResource CellBorderStyle}" Margin="4,0,4,0">
+                        <TextBlock x:Name="MotherboardText" Style="{StaticResource LabelTextStyle}" Margin="8,0" />
+                    </Border>
+                    <TextBlock Grid.Row="4" Text="BIOS Version" Style="{StaticResource LabelTextStyle}" />
+                    <Border Grid.Row="4" Grid.Column="1" Style="{StaticResource CellBorderStyle}" Margin="4,0,4,0">
+                        <TextBlock Text="" Style="{StaticResource LabelTextStyle}" Margin="8,0" />
+                    </Border>
+                </Grid>
+
+                <TextBlock Grid.Row="9" Grid.ColumnSpan="5" x:Name="StatusText" Text="准备就绪" VerticalAlignment="Bottom" Foreground="#000000" />
+            </Grid>
+        </Border>
+
+        <Grid Grid.Row="1" Margin="0,12,0,0">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+
+            <Button Grid.Column="0" Width="110" Height="30" Content="Save" IsEnabled="False" />
+            <Button Grid.Column="1" x:Name="StartBenchmarkButton" Width="170" Height="30" Content="Start Benchmark" HorizontalAlignment="Center" Click="StartBenchmarkButton_Click" />
+            <Button Grid.Column="2" Width="110" Height="30" Content="Close" Click="CloseButton_Click" />
+        </Grid>
+    </Grid>
+</Window>
+

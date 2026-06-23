@@ -6,161 +6,140 @@
         xmlns:local="clr-namespace:HwScope.App"
         mc:Ignorable="d"
         Title="HwScope"
-        MinHeight="560"
-        MinWidth="860"
-        Height="640"
-        Width="980"
-        Background="#F4F6F8"
+        MinHeight="640"
+        MinWidth="980"
+        Height="720"
+        Width="1120"
+        Background="#ECEFF3"
         WindowStartupLocation="CenterScreen">
     <Window.Resources>
-        <SolidColorBrush x:Key="PanelBorderBrush" Color="#D9DEE7" />
-        <SolidColorBrush x:Key="MutedTextBrush" Color="#667085" />
-        <Style x:Key="ToolbarButtonStyle" TargetType="Button">
-            <Setter Property="MinWidth" Value="86" />
-            <Setter Property="Height" Value="32" />
-            <Setter Property="Padding" Value="14,0" />
-            <Setter Property="Margin" Value="8,0,0,0" />
-            <Setter Property="BorderBrush" Value="#C9D2DF" />
-            <Setter Property="Background" Value="#FFFFFF" />
-            <Setter Property="Foreground" Value="#202939" />
-            <Setter Property="FontSize" Value="13" />
+        <SolidColorBrush x:Key="LineBrush" Color="#B8BEC7" />
+        <SolidColorBrush x:Key="MutedTextBrush" Color="#5F6875" />
+        <Style x:Key="ToolButtonStyle" TargetType="Button">
+            <Setter Property="MinWidth" Value="72" />
+            <Setter Property="Height" Value="54" />
+            <Setter Property="Margin" Value="0,0,10,0" />
+            <Setter Property="Padding" Value="8,4" />
+            <Setter Property="Background" Value="#F6F7F9" />
+            <Setter Property="BorderBrush" Value="#C8CED7" />
             <Setter Property="Cursor" Value="Hand" />
         </Style>
         <Style x:Key="HardwareRowStyle" TargetType="Border">
-            <Setter Property="BorderBrush" Value="#E2E7EF" />
+            <Setter Property="BorderBrush" Value="#D8DDE5" />
             <Setter Property="BorderThickness" Value="0,0,0,1" />
-            <Setter Property="Padding" Value="0" />
         </Style>
     </Window.Resources>
 
-    <Grid>
-        <Grid.RowDefinitions>
-            <RowDefinition Height="Auto" />
-            <RowDefinition Height="*" />
-            <RowDefinition Height="Auto" />
-        </Grid.RowDefinitions>
+    <DockPanel>
+        <Menu DockPanel.Dock="Top" Background="#F7F7F7" BorderBrush="{StaticResource LineBrush}" BorderThickness="0,0,0,1">
+            <MenuItem Header="文件(_F)" />
+            <MenuItem Header="查看(_V)" />
+            <MenuItem Header="报告(_R)" />
+            <MenuItem Header="工具(_T)">
+                <MenuItem Header="内存跑分" Click="ShowMemoryBenchmark_Click" />
+            </MenuItem>
+            <MenuItem Header="帮助(_H)" />
+        </Menu>
 
-        <Border Grid.Row="0" Background="#FFFFFF" BorderBrush="{StaticResource PanelBorderBrush}" BorderThickness="0,0,0,1">
-            <Grid Margin="24,18">
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="*" />
-                    <ColumnDefinition Width="Auto" />
-                </Grid.ColumnDefinitions>
-
-                <StackPanel>
-                    <TextBlock Text="HwScope"
-                               FontSize="24"
-                               FontWeight="SemiBold"
-                               Foreground="#111827" />
-                    <TextBlock Text="硬件检测"
-                               Margin="0,4,0,0"
-                               FontSize="13"
-                               Foreground="{StaticResource MutedTextBrush}" />
+        <Border DockPanel.Dock="Top" Background="#F1F2F4" BorderBrush="{StaticResource LineBrush}" BorderThickness="0,0,0,1">
+            <DockPanel Margin="10,8">
+                <StackPanel Orientation="Horizontal" DockPanel.Dock="Left">
+                    <Button Style="{StaticResource ToolButtonStyle}" Click="ShowHardwareSummary_Click">
+                        <StackPanel>
+                            <TextBlock Text="▣" FontSize="24" HorizontalAlignment="Center" Foreground="#2D6E9F" />
+                            <TextBlock Text="概要" HorizontalAlignment="Center" FontSize="13" />
+                        </StackPanel>
+                    </Button>
+                    <Button Style="{StaticResource ToolButtonStyle}" IsEnabled="False">
+                        <StackPanel>
+                            <TextBlock Text="▤" FontSize="24" HorizontalAlignment="Center" Foreground="#5C6670" />
+                            <TextBlock Text="报告" HorizontalAlignment="Center" FontSize="13" />
+                        </StackPanel>
+                    </Button>
+                    <Button Style="{StaticResource ToolButtonStyle}" IsEnabled="False">
+                        <StackPanel>
+                            <TextBlock Text="♨" FontSize="24" HorizontalAlignment="Center" Foreground="#D74B34" />
+                            <TextBlock Text="传感器" HorizontalAlignment="Center" FontSize="13" />
+                        </StackPanel>
+                    </Button>
+                    <Button Style="{StaticResource ToolButtonStyle}" Click="ShowMemoryBenchmark_Click">
+                        <StackPanel>
+                            <TextBlock Text="▥" FontSize="24" HorizontalAlignment="Center" Foreground="#2B8A3E" />
+                            <TextBlock Text="内存" HorizontalAlignment="Center" FontSize="13" />
+                        </StackPanel>
+                    </Button>
+                    <Button Style="{StaticResource ToolButtonStyle}" Click="ShowMemoryBenchmark_Click">
+                        <StackPanel>
+                            <TextBlock Text="◉" FontSize="24" HorizontalAlignment="Center" Foreground="#CC7A00" />
+                            <TextBlock Text="跑分" HorizontalAlignment="Center" FontSize="13" />
+                        </StackPanel>
+                    </Button>
                 </StackPanel>
-
-                <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
-                    <Button x:Name="RefreshButton"
-                            Content="刷新"
-                            Style="{StaticResource ToolbarButtonStyle}"
-                            Click="RefreshButton_Click" />
-                    <Button x:Name="CopyButton"
-                            Content="复制"
-                            Style="{StaticResource ToolbarButtonStyle}"
-                            Click="CopyButton_Click" />
-                </StackPanel>
-            </Grid>
+                <TextBox DockPanel.Dock="Right" Width="180" Height="30" VerticalAlignment="Center" Text="查找" Foreground="#6B7280" />
+            </DockPanel>
         </Border>
 
-        <Grid Grid.Row="1" Margin="24">
+        <StatusBar DockPanel.Dock="Bottom" Background="#F7F7F7" BorderBrush="{StaticResource LineBrush}" BorderThickness="0,1,0,0">
+            <StatusBarItem>
+                <TextBlock x:Name="FooterStatusText" Text="准备就绪" />
+            </StatusBarItem>
+        </StatusBar>
+
+        <Grid>
             <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="220" />
-                <ColumnDefinition Width="16" />
+                <ColumnDefinition Width="240" />
                 <ColumnDefinition Width="*" />
             </Grid.ColumnDefinitions>
 
-            <Border Grid.Column="0"
-                    Background="#FFFFFF"
-                    BorderBrush="{StaticResource PanelBorderBrush}"
-                    BorderThickness="1">
-                <StackPanel>
-                    <TextBlock Text="检测项目"
-                               Margin="16,16,16,10"
-                               FontSize="13"
-                               FontWeight="SemiBold"
-                               Foreground="#344054" />
-                    <ListBox SelectedIndex="0"
-                             BorderThickness="0"
-                             Background="Transparent"
-                             FontSize="14">
-                        <ListBoxItem Content="硬件概览" Padding="16,10" />
-                        <ListBoxItem Content="处理器" Padding="16,10" IsEnabled="False" />
-                        <ListBoxItem Content="显卡" Padding="16,10" IsEnabled="False" />
-                        <ListBoxItem Content="内存" Padding="16,10" IsEnabled="False" />
-                        <ListBoxItem Content="硬盘" Padding="16,10" IsEnabled="False" />
-                        <ListBoxItem Content="跑分" Padding="16,10" IsEnabled="False" />
-                        <ListBoxItem Content="稳定性" Padding="16,10" IsEnabled="False" />
-                    </ListBox>
-                </StackPanel>
+            <Border Grid.Column="0" Background="#FFFFFF" BorderBrush="{StaticResource LineBrush}" BorderThickness="0,0,1,0">
+                <TreeView x:Name="NavigationTree"
+                          BorderThickness="0"
+                          FontSize="15"
+                          SelectedItemChanged="NavigationTree_SelectedItemChanged">
+                    <TreeViewItem Header="计算机" IsExpanded="True" Tag="summary">
+                        <TreeViewItem Header="硬件概览" Tag="summary" />
+                    </TreeViewItem>
+                    <TreeViewItem Header="主板" IsExpanded="True">
+                        <TreeViewItem Header="中央处理器 (CPU)" Tag="summary" />
+                        <TreeViewItem Header="内存" Tag="summary" />
+                    </TreeViewItem>
+                    <TreeViewItem Header="显示设备" />
+                    <TreeViewItem Header="存储设备" />
+                    <TreeViewItem Header="网络设备" />
+                    <TreeViewItem Header="性能测试" IsExpanded="True">
+                        <TreeViewItem Header="内存跑分" Tag="memory-benchmark" />
+                    </TreeViewItem>
+                </TreeView>
             </Border>
 
-            <Border Grid.Column="2"
-                    Background="#FFFFFF"
-                    BorderBrush="{StaticResource PanelBorderBrush}"
-                    BorderThickness="1">
-                <Grid>
+            <Grid Grid.Column="1">
+                <Grid x:Name="SummaryPage" Background="#FFFFFF">
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto" />
                         <RowDefinition Height="*" />
                     </Grid.RowDefinitions>
-
-                    <DockPanel Grid.Row="0" Margin="20,18,20,14">
+                    <DockPanel Grid.Row="0" Margin="20,18,20,12">
                         <StackPanel DockPanel.Dock="Left">
-                            <TextBlock Text="硬件概览"
-                                       FontSize="18"
-                                       FontWeight="SemiBold"
-                                       Foreground="#111827" />
-                            <TextBlock x:Name="GeneratedAtText"
-                                       Margin="0,4,0,0"
-                                       FontSize="12"
-                                       Foreground="{StaticResource MutedTextBrush}" />
+                            <TextBlock Text="硬件概览" FontSize="20" FontWeight="SemiBold" />
+                            <TextBlock x:Name="GeneratedAtText" Margin="0,4,0,0" FontSize="12" Foreground="{StaticResource MutedTextBrush}" />
                         </StackPanel>
-                        <TextBlock x:Name="StatusBadge"
-                                   DockPanel.Dock="Right"
-                                   HorizontalAlignment="Right"
-                                   VerticalAlignment="Top"
-                                   Background="#EEF4FF"
-                                   Foreground="#3538CD"
-                                   Padding="10,4"
-                                   FontSize="12"
-                                   Text="待检测" />
+                        <StackPanel Orientation="Horizontal" DockPanel.Dock="Right">
+                            <Button x:Name="RefreshButton" Width="76" Height="30" Content="刷新" Click="RefreshButton_Click" />
+                            <Button x:Name="CopyButton" Width="76" Height="30" Margin="8,0,0,0" Content="复制" Click="CopyButton_Click" />
+                        </StackPanel>
                     </DockPanel>
-
-                    <ScrollViewer Grid.Row="1"
-                                  VerticalScrollBarVisibility="Auto"
-                                  HorizontalScrollBarVisibility="Disabled">
-                        <ItemsControl x:Name="HardwareSummaryList"
-                                      Margin="20,0,20,20"
-                                      AlternationCount="100">
+                    <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
+                        <ItemsControl x:Name="HardwareSummaryList" Margin="20,0,20,20">
                             <ItemsControl.ItemTemplate>
                                 <DataTemplate DataType="{x:Type local:HardwareSummaryItem}">
                                     <Border Style="{StaticResource HardwareRowStyle}">
-                                        <Grid MinHeight="48">
+                                        <Grid MinHeight="46">
                                             <Grid.ColumnDefinitions>
-                                                <ColumnDefinition Width="104" />
+                                                <ColumnDefinition Width="108" />
                                                 <ColumnDefinition Width="*" />
                                             </Grid.ColumnDefinitions>
-                                            <TextBlock Grid.Column="0"
-                                                       Text="{Binding Label}"
-                                                       VerticalAlignment="Center"
-                                                       FontSize="13"
-                                                       FontWeight="SemiBold"
-                                                       Foreground="#475467" />
-                                            <TextBlock Grid.Column="1"
-                                                       Text="{Binding Value}"
-                                                       VerticalAlignment="Center"
-                                                       FontSize="14"
-                                                       Foreground="#101828"
-                                                       TextWrapping="Wrap" />
+                                            <TextBlock Grid.Column="0" Text="{Binding Label}" VerticalAlignment="Center" FontWeight="SemiBold" Foreground="#475467" />
+                                            <TextBlock Grid.Column="1" Text="{Binding Value}" VerticalAlignment="Center" TextWrapping="Wrap" />
                                         </Grid>
                                     </Border>
                                 </DataTemplate>
@@ -168,16 +147,8 @@
                         </ItemsControl>
                     </ScrollViewer>
                 </Grid>
-            </Border>
+
+            </Grid>
         </Grid>
-
-        <Border Grid.Row="2" Background="#FFFFFF" BorderBrush="{StaticResource PanelBorderBrush}" BorderThickness="0,1,0,0">
-            <TextBlock x:Name="FooterStatusText"
-                       Margin="24,10"
-                       FontSize="12"
-                       Foreground="{StaticResource MutedTextBrush}"
-                       Text="准备就绪" />
-        </Border>
-    </Grid>
+    </DockPanel>
 </Window>
-
