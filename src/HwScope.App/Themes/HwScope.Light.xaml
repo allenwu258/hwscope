@@ -1,0 +1,24 @@
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <Color x:Key="HwScopePanelColor">#F5F5F5</Color>
+    <Color x:Key="HwScopeContentColor">#F5F5F5</Color>
+    <Color x:Key="HwScopeCardColor">#FFFFFFFF</Color>
+    <Color x:Key="HwScopeLineColor">#E5E5E5</Color>
+    <Color x:Key="HwScopeTextColor">#2F2F2F</Color>
+    <Color x:Key="HwScopeStrongTextColor">#4B5563</Color>
+    <Color x:Key="HwScopeMutedTextColor">#626262</Color>
+    <Color x:Key="HwScopeIconColor">#3F4752</Color>
+    <Color x:Key="HwScopeIconBackplateColor">#F3F4F6</Color>
+    <Color x:Key="HwScopeActiveViewColor">#EDEDED</Color>
+
+    <SolidColorBrush x:Key="HwScopePanelBrush" Color="{StaticResource HwScopePanelColor}" />
+    <SolidColorBrush x:Key="HwScopeContentBrush" Color="{StaticResource HwScopeContentColor}" />
+    <SolidColorBrush x:Key="HwScopeCardBrush" Color="{StaticResource HwScopeCardColor}" />
+    <SolidColorBrush x:Key="HwScopeLineBrush" Color="{StaticResource HwScopeLineColor}" />
+    <SolidColorBrush x:Key="HwScopeTextBrush" Color="{StaticResource HwScopeTextColor}" />
+    <SolidColorBrush x:Key="HwScopeStrongTextBrush" Color="{StaticResource HwScopeStrongTextColor}" />
+    <SolidColorBrush x:Key="HwScopeMutedTextBrush" Color="{StaticResource HwScopeMutedTextColor}" />
+    <SolidColorBrush x:Key="HwScopeIconBrush" Color="{StaticResource HwScopeIconColor}" />
+    <SolidColorBrush x:Key="HwScopeIconBackplateBrush" Color="{StaticResource HwScopeIconBackplateColor}" />
+    <SolidColorBrush x:Key="HwScopeActiveViewBrush" Color="{StaticResource HwScopeActiveViewColor}" />
+</ResourceDictionary>

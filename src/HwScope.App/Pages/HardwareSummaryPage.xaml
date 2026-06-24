@@ -8,21 +8,7 @@
              mc:Ignorable="d"
              d:DesignHeight="560"
              d:DesignWidth="840">
-    <UserControl.Resources>
-        <SolidColorBrush x:Key="HwScopeCardBrush" Color="#FFFFFFFF" />
-        <SolidColorBrush x:Key="HwScopeLineBrush" Color="#E5E5E5" />
-        <SolidColorBrush x:Key="HwScopeContentBrush" Color="#F5F5F5" />
-        <SolidColorBrush x:Key="HwScopeMutedTextBrush" Color="#626262" />
-        <SolidColorBrush x:Key="HwScopeIconBrush" Color="#3F4752" />
-        <SolidColorBrush x:Key="HwScopeIconBackplateBrush" Color="#F3F4F6" />
-        <SolidColorBrush x:Key="HwScopeActiveViewBrush" Color="#EDEDED" />
-        <Style x:Key="HardwareRowStyle" TargetType="Border">
-            <Setter Property="BorderBrush" Value="{StaticResource HwScopeLineBrush}" />
-            <Setter Property="BorderThickness" Value="0,0,0,1" />
-        </Style>
-    </UserControl.Resources>
-
-    <Grid Background="{StaticResource HwScopeContentBrush}">
+    <Grid Background="{DynamicResource HwScopeContentBrush}">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
@@ -41,7 +27,7 @@
                 <TextBlock x:Name="GeneratedAtText"
                            Margin="0,5,0,0"
                            FontSize="13"
-                           Foreground="{StaticResource HwScopeMutedTextBrush}" />
+                           Foreground="{DynamicResource HwScopeMutedTextBrush}" />
             </StackPanel>
 
             <StackPanel Grid.Column="1"
@@ -96,8 +82,8 @@
                                 MinHeight="92"
                                 Margin="0,0,10,10"
                                 Padding="12"
-                                Background="{StaticResource HwScopeCardBrush}"
-                                BorderBrush="{StaticResource HwScopeLineBrush}"
+                                Background="{DynamicResource HwScopeCardBrush}"
+                                BorderBrush="{DynamicResource HwScopeLineBrush}"
                                 BorderThickness="1"
                                 CornerRadius="7">
                             <Grid>
@@ -109,22 +95,23 @@
                                 <Border Width="26"
                                         Height="26"
                                         VerticalAlignment="Top"
-                                        Background="{StaticResource HwScopeIconBackplateBrush}"
+                                        Background="{DynamicResource HwScopeIconBackplateBrush}"
                                         CornerRadius="6">
                                     <ui:SymbolIcon Symbol="{Binding Icon}"
                                                    FontSize="16"
-                                                   Foreground="{StaticResource HwScopeIconBrush}" />
+                                                   Foreground="{DynamicResource HwScopeIconBrush}" />
                                 </Border>
 
                                 <StackPanel Grid.Column="1" Margin="10,0,0,0">
                                     <TextBlock Text="{Binding Label}"
                                                FontSize="13"
                                                FontWeight="SemiBold"
-                                               Foreground="#4B5563" />
+                                               Foreground="{DynamicResource HwScopeStrongTextBrush}" />
                                     <TextBlock Text="{Binding Value}"
                                                Margin="0,5,0,0"
                                                FontSize="14"
                                                LineHeight="19"
+                                               Foreground="{DynamicResource HwScopeTextBrush}"
                                                TextWrapping="Wrap" />
                                 </StackPanel>
                             </Grid>
@@ -137,8 +124,8 @@
         <Border x:Name="ListSummaryPanel"
                 Grid.Row="1"
                 Margin="16,0,16,14"
-                Background="{StaticResource HwScopeCardBrush}"
-                BorderBrush="{StaticResource HwScopeLineBrush}"
+                Background="{DynamicResource HwScopeCardBrush}"
+                BorderBrush="{DynamicResource HwScopeLineBrush}"
                 BorderThickness="1"
                 CornerRadius="8"
                 Padding="18,4"
@@ -147,7 +134,7 @@
                 <ItemsControl x:Name="ListHardwareSummaryList">
                     <ItemsControl.ItemTemplate>
                         <DataTemplate DataType="{x:Type local:HardwareSummaryItem}">
-                            <Border Style="{StaticResource HardwareRowStyle}">
+                            <Border Style="{DynamicResource HardwareRowStyle}">
                                 <Grid MinHeight="44">
                                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="116" />
@@ -157,10 +144,11 @@
                                                Text="{Binding Label}"
                                                VerticalAlignment="Center"
                                                FontWeight="SemiBold"
-                                               Foreground="#4B5563" />
+                                               Foreground="{DynamicResource HwScopeStrongTextBrush}" />
                                     <TextBlock Grid.Column="1"
                                                Text="{Binding Value}"
                                                VerticalAlignment="Center"
+                                               Foreground="{DynamicResource HwScopeTextBrush}"
                                                TextWrapping="Wrap" />
                                 </Grid>
                             </Border>

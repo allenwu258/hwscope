@@ -10,24 +10,10 @@
                  MinWidth="980"
                  Height="760"
                  Width="1280"
-                 Background="#F5F5F5"
+                 Background="{DynamicResource HwScopePanelBrush}"
                  ExtendsContentIntoTitleBar="True"
                  WindowBackdropType="Mica"
                  WindowStartupLocation="CenterScreen">
-    <ui:FluentWindow.Resources>
-        <SolidColorBrush x:Key="HwScopeContentBrush" Color="#F5F5F5" />
-        <SolidColorBrush x:Key="HwScopePanelBrush" Color="#F5F5F5" />
-        <SolidColorBrush x:Key="HwScopeLineBrush" Color="#E5E5E5" />
-        <SolidColorBrush x:Key="HwScopeMutedTextBrush" Color="#666666" />
-        <Style x:Key="ToolbarButtonStyle" TargetType="{x:Type ui:Button}">
-            <Setter Property="Height" Value="34" />
-            <Setter Property="MinWidth" Value="78" />
-            <Setter Property="Margin" Value="0,0,6,0" />
-            <Setter Property="Padding" Value="10,0" />
-            <Setter Property="Cursor" Value="Hand" />
-        </Style>
-    </ui:FluentWindow.Resources>
-
     <Grid>
         <Grid.RowDefinitions>
             <RowDefinition Height="44" />
@@ -54,6 +40,27 @@
                           Padding="0">
                         <MenuItem Header="文件(_F)" />
                         <MenuItem Header="查看(_V)">
+                            <MenuItem Header="主题">
+                                <MenuItem x:Name="FollowSystemThemeMenuItem"
+                                          Header="跟随系统"
+                                          IsCheckable="True"
+                                          Click="FollowSystemThemeMenuItem_Click" />
+                                <MenuItem x:Name="LightThemeMenuItem"
+                                          Header="浅色"
+                                          IsCheckable="True"
+                                          IsChecked="True"
+                                          Click="LightThemeMenuItem_Click" />
+                                <MenuItem x:Name="DarkThemeMenuItem"
+                                          Header="深色"
+                                          IsCheckable="True"
+                                          Click="DarkThemeMenuItem_Click" />
+                            </MenuItem>
+                            <MenuItem x:Name="MicaBackdropMenuItem"
+                                      Header="Mica 背景"
+                                      IsCheckable="True"
+                                      IsChecked="True"
+                                      Click="MicaBackdropMenuItem_Click" />
+                            <Separator />
                             <MenuItem x:Name="StatusBarMenuItem"
                                       Header="状态栏"
                                       IsCheckable="True"
@@ -71,8 +78,8 @@
         </ui:TitleBar>
 
         <Border Grid.Row="1"
-                Background="{StaticResource HwScopePanelBrush}"
-                BorderBrush="{StaticResource HwScopeLineBrush}"
+                Background="{DynamicResource HwScopePanelBrush}"
+                BorderBrush="{DynamicResource HwScopeLineBrush}"
                 BorderThickness="0,0,0,1"
                 Padding="12,8">
             <DockPanel LastChildFill="True">
@@ -104,11 +111,11 @@
                          HorizontalAlignment="Right"
                          VerticalAlignment="Center"
                          Text="查找"
-                         Foreground="{StaticResource HwScopeMutedTextBrush}" />
+                         Foreground="{DynamicResource HwScopeMutedTextBrush}" />
             </DockPanel>
         </Border>
 
-        <Grid Grid.Row="2" Background="{StaticResource HwScopeContentBrush}">
+        <Grid Grid.Row="2" Background="{DynamicResource HwScopeContentBrush}">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="236" />
                 <ColumnDefinition Width="*" />
@@ -165,13 +172,13 @@
 
             <ContentControl x:Name="PageHost"
                             Grid.Column="1"
-                            Background="{StaticResource HwScopeContentBrush}" />
+                            Background="{DynamicResource HwScopeContentBrush}" />
         </Grid>
 
         <StatusBar x:Name="RootStatusBar"
                    Grid.Row="3"
-                   Background="{StaticResource HwScopePanelBrush}"
-                   BorderBrush="{StaticResource HwScopeLineBrush}"
+                   Background="{DynamicResource HwScopePanelBrush}"
+                   BorderBrush="{DynamicResource HwScopeLineBrush}"
                    BorderThickness="0,1,0,0"
                    Visibility="Collapsed">
             <StatusBarItem>
