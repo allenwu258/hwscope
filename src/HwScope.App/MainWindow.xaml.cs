@@ -3,10 +3,11 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using HwScope.Core.Hardware;
+using Wpf.Ui.Controls;
 
 namespace HwScope.App;
 
-public partial class MainWindow : Window
+public partial class MainWindow : FluentWindow
 {
     private readonly HardwareCollector _collector = new();
     private HardwareReport? _currentReport;
@@ -21,14 +22,14 @@ public partial class MainWindow : Window
         };
     }
 
-    private void NavigationTree_SelectedItemChanged(object sender, RoutedPropertyChangedEventArgs<object> e)
+    private void RootNavigation_SelectionChanged(object sender, RoutedEventArgs e)
     {
         if (!IsInitialized || SummaryPage is null)
         {
             return;
         }
 
-        if (e.NewValue is not TreeViewItem item)
+        if (RootNavigation.SelectedItem is not NavigationViewItem item)
         {
             return;
         }
@@ -84,7 +85,7 @@ public partial class MainWindow : Window
         catch (Exception ex)
         {
             SetFooterStatus($"硬件检测失败：{ex.Message}");
-            MessageBox.Show(this, ex.Message, "硬件检测失败", MessageBoxButton.OK, MessageBoxImage.Error);
+            System.Windows.MessageBox.Show(this, ex.Message, "硬件检测失败", System.Windows.MessageBoxButton.OK, MessageBoxImage.Error);
         }
         finally
         {
