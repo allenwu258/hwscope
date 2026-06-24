@@ -3,10 +3,11 @@ using System.Windows;
 using System.Windows.Input;
 using HwScope.Core.Benchmark;
 using HwScope.Core.Hardware;
+using Wpf.Ui.Controls;
 
 namespace HwScope.App;
 
-public partial class MemoryBenchmarkWindow : Window
+public partial class MemoryBenchmarkWindow : FluentWindow
 {
     private readonly IMemoryBenchmarkRunner _runner = new MemoryBenchmarkProcessRunner();
     private bool _isRunning;
@@ -47,7 +48,7 @@ public partial class MemoryBenchmarkWindow : Window
         catch (Exception ex)
         {
             StatusText.Text = $"失败：{ex.Message}";
-            MessageBox.Show(this, ex.Message, "内存跑分失败", MessageBoxButton.OK, MessageBoxImage.Error);
+            System.Windows.MessageBox.Show(this, ex.Message, "内存跑分失败", System.Windows.MessageBoxButton.OK, MessageBoxImage.Error);
         }
         finally
         {

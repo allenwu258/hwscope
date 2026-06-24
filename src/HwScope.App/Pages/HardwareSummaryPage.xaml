@@ -1,0 +1,161 @@
+<UserControl x:Class="HwScope.App.Pages.HardwareSummaryPage"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:local="clr-namespace:HwScope.App.Pages"
+             xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
+             mc:Ignorable="d"
+             d:DesignHeight="560"
+             d:DesignWidth="840">
+    <Grid Background="{DynamicResource HwScopeContentBrush}">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <Grid Grid.Row="0" Margin="16,14,16,12">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+
+            <StackPanel>
+                <TextBlock Text="硬件概览"
+                           FontSize="24"
+                           FontWeight="SemiBold" />
+                <TextBlock x:Name="GeneratedAtText"
+                           Margin="0,5,0,0"
+                           FontSize="13"
+                           Foreground="{DynamicResource HwScopeMutedTextBrush}" />
+            </StackPanel>
+
+            <StackPanel Grid.Column="1"
+                        Orientation="Horizontal"
+                        VerticalAlignment="Center">
+                <ui:Button x:Name="CardViewButton"
+                           Height="32"
+                           MinWidth="88"
+                           Padding="12,0"
+                           Icon="{ui:SymbolIcon Apps24}"
+                           Content="卡片视图"
+                           Click="CardViewButton_Click" />
+                <ui:Button x:Name="ListViewButton"
+                           Height="32"
+                           MinWidth="88"
+                           Margin="6,0,12,0"
+                           Padding="12,0"
+                           Icon="{ui:SymbolIcon TextBulletListLtr24}"
+                           Content="列表视图"
+                           Click="ListViewButton_Click" />
+                <ui:Button x:Name="RefreshButton"
+                           Height="32"
+                           MinWidth="78"
+                           Padding="10,0"
+                           Icon="{ui:SymbolIcon ArrowClockwise24}"
+                           Content="刷新"
+                           Click="RefreshButton_Click" />
+                <ui:Button x:Name="CopyButton"
+                           Height="32"
+                           MinWidth="78"
+                           Margin="6,0,0,0"
+                           Padding="10,0"
+                           Icon="{ui:SymbolIcon Copy24}"
+                           Content="复制"
+                           Click="CopyButton_Click" />
+            </StackPanel>
+        </Grid>
+
+        <ScrollViewer x:Name="CardSummaryPanel"
+                      Grid.Row="1"
+                      Margin="16,0,16,14"
+                      VerticalScrollBarVisibility="Auto">
+            <ItemsControl x:Name="CardHardwareSummaryList">
+                <ItemsControl.ItemsPanel>
+                    <ItemsPanelTemplate>
+                        <WrapPanel />
+                    </ItemsPanelTemplate>
+                </ItemsControl.ItemsPanel>
+                <ItemsControl.ItemTemplate>
+                    <DataTemplate DataType="{x:Type local:HardwareSummaryItem}">
+                        <Border Width="390"
+                                MinHeight="92"
+                                Margin="0,0,10,10"
+                                Padding="12"
+                                Background="{DynamicResource HwScopeCardBrush}"
+                                BorderBrush="{DynamicResource HwScopeLineBrush}"
+                                BorderThickness="1"
+                                CornerRadius="7">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="30" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+
+                                <Border Width="26"
+                                        Height="26"
+                                        VerticalAlignment="Top"
+                                        Background="{DynamicResource HwScopeIconBackplateBrush}"
+                                        CornerRadius="6">
+                                    <ui:SymbolIcon Symbol="{Binding Icon}"
+                                                   FontSize="16"
+                                                   Foreground="{DynamicResource HwScopeIconBrush}" />
+                                </Border>
+
+                                <StackPanel Grid.Column="1" Margin="10,0,0,0">
+                                    <TextBlock Text="{Binding Label}"
+                                               FontSize="13"
+                                               FontWeight="SemiBold"
+                                               Foreground="{DynamicResource HwScopeStrongTextBrush}" />
+                                    <TextBlock Text="{Binding Value}"
+                                               Margin="0,5,0,0"
+                                               FontSize="14"
+                                               LineHeight="19"
+                                               Foreground="{DynamicResource HwScopeTextBrush}"
+                                               TextWrapping="Wrap" />
+                                </StackPanel>
+                            </Grid>
+                        </Border>
+                    </DataTemplate>
+                </ItemsControl.ItemTemplate>
+            </ItemsControl>
+        </ScrollViewer>
+
+        <Border x:Name="ListSummaryPanel"
+                Grid.Row="1"
+                Margin="16,0,16,14"
+                Background="{DynamicResource HwScopeCardBrush}"
+                BorderBrush="{DynamicResource HwScopeLineBrush}"
+                BorderThickness="1"
+                CornerRadius="8"
+                Padding="18,4"
+                Visibility="Collapsed">
+            <ScrollViewer VerticalScrollBarVisibility="Auto">
+                <ItemsControl x:Name="ListHardwareSummaryList">
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate DataType="{x:Type local:HardwareSummaryItem}">
+                            <Border Style="{DynamicResource HardwareRowStyle}">
+                                <Grid MinHeight="44">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="116" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0"
+                                               Text="{Binding Label}"
+                                               VerticalAlignment="Center"
+                                               FontWeight="SemiBold"
+                                               Foreground="{DynamicResource HwScopeStrongTextBrush}" />
+                                    <TextBlock Grid.Column="1"
+                                               Text="{Binding Value}"
+                                               VerticalAlignment="Center"
+                                               Foreground="{DynamicResource HwScopeTextBrush}"
+                                               TextWrapping="Wrap" />
+                                </Grid>
+                            </Border>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+            </ScrollViewer>
+        </Border>
+    </Grid>
+</UserControl>
