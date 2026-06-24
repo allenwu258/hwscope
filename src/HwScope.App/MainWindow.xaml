@@ -8,20 +8,21 @@
                  Title="HwScope"
                  MinHeight="640"
                  MinWidth="980"
-                 Height="720"
-                 Width="1120"
-                 Background="{DynamicResource ApplicationBackgroundBrush}"
+                 Height="760"
+                 Width="1280"
+                 Background="#F5F5F5"
                  ExtendsContentIntoTitleBar="True"
                  WindowBackdropType="Mica"
                  WindowStartupLocation="CenterScreen">
     <ui:FluentWindow.Resources>
-        <SolidColorBrush x:Key="HwScopePanelBrush" Color="#FAFAFA" />
+        <SolidColorBrush x:Key="HwScopeContentBrush" Color="#F5F5F5" />
+        <SolidColorBrush x:Key="HwScopePanelBrush" Color="#F5F5F5" />
         <SolidColorBrush x:Key="HwScopeLineBrush" Color="#E5E5E5" />
         <SolidColorBrush x:Key="HwScopeMutedTextBrush" Color="#666666" />
         <Style x:Key="ToolbarButtonStyle" TargetType="{x:Type ui:Button}">
-            <Setter Property="Height" Value="36" />
-            <Setter Property="MinWidth" Value="88" />
-            <Setter Property="Margin" Value="0,0,8,0" />
+            <Setter Property="Height" Value="34" />
+            <Setter Property="MinWidth" Value="78" />
+            <Setter Property="Margin" Value="0,0,6,0" />
             <Setter Property="Padding" Value="10,0" />
             <Setter Property="Cursor" Value="Hand" />
         </Style>
@@ -41,7 +42,7 @@
                      Icon="{ui:SymbolIcon Desktop20}" />
 
         <Menu Grid.Row="1"
-              Background="Transparent"
+              Background="{StaticResource HwScopePanelBrush}"
               BorderBrush="{StaticResource HwScopeLineBrush}"
               BorderThickness="0,0,0,1">
             <MenuItem Header="文件(_F)" />
@@ -61,11 +62,11 @@
             <DockPanel LastChildFill="True">
                 <StackPanel Orientation="Horizontal" DockPanel.Dock="Left">
                     <ui:Button Style="{StaticResource ToolbarButtonStyle}"
-                               Icon="{ui:SymbolIcon Info24}"
+                               Icon="{ui:SymbolIcon Home24}"
                                Content="概要"
                                Click="ShowHardwareSummary_Click" />
                     <ui:Button Style="{StaticResource ToolbarButtonStyle}"
-                               Icon="{ui:SymbolIcon Document24}"
+                               Icon="{ui:SymbolIcon DocumentData24}"
                                Content="报告"
                                IsEnabled="False" />
                     <ui:Button Style="{StaticResource ToolbarButtonStyle}"
@@ -73,16 +74,16 @@
                                Content="传感器"
                                IsEnabled="False" />
                     <ui:Button Style="{StaticResource ToolbarButtonStyle}"
-                               Icon="{ui:SymbolIcon Database24}"
+                               Icon="{ui:SymbolIcon DesktopToolbox24}"
                                Content="内存"
                                Click="ShowHardwareSummary_Click" />
                     <ui:Button Style="{StaticResource ToolbarButtonStyle}"
-                               Icon="{ui:SymbolIcon Trophy24}"
+                               Icon="{ui:SymbolIcon TopSpeed20}"
                                Content="跑分"
                                Click="ShowMemoryBenchmark_Click" />
                 </StackPanel>
 
-                <TextBox Width="220"
+                <TextBox Width="236"
                          Height="34"
                          HorizontalAlignment="Right"
                          VerticalAlignment="Center"
@@ -91,7 +92,7 @@
             </DockPanel>
         </Border>
 
-        <Grid Grid.Row="3">
+        <Grid Grid.Row="3" Background="{StaticResource HwScopeContentBrush}">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="236" />
                 <ColumnDefinition Width="*" />
@@ -148,7 +149,7 @@
 
             <ContentControl x:Name="PageHost"
                             Grid.Column="1"
-                            Background="{DynamicResource ApplicationBackgroundBrush}" />
+                            Background="{StaticResource HwScopeContentBrush}" />
         </Grid>
 
         <StatusBar Grid.Row="4"

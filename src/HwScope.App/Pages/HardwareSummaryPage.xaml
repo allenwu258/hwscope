@@ -9,21 +9,26 @@
              d:DesignHeight="560"
              d:DesignWidth="840">
     <UserControl.Resources>
+        <SolidColorBrush x:Key="HwScopeCardBrush" Color="#FFFFFFFF" />
         <SolidColorBrush x:Key="HwScopeLineBrush" Color="#E5E5E5" />
-        <SolidColorBrush x:Key="HwScopeMutedTextBrush" Color="#666666" />
+        <SolidColorBrush x:Key="HwScopeContentBrush" Color="#F5F5F5" />
+        <SolidColorBrush x:Key="HwScopeMutedTextBrush" Color="#626262" />
+        <SolidColorBrush x:Key="HwScopeIconBrush" Color="#3F4752" />
+        <SolidColorBrush x:Key="HwScopeIconBackplateBrush" Color="#F3F4F6" />
+        <SolidColorBrush x:Key="HwScopeActiveViewBrush" Color="#EDEDED" />
         <Style x:Key="HardwareRowStyle" TargetType="Border">
             <Setter Property="BorderBrush" Value="{StaticResource HwScopeLineBrush}" />
             <Setter Property="BorderThickness" Value="0,0,0,1" />
         </Style>
     </UserControl.Resources>
 
-    <Grid Margin="18" Background="Transparent">
+    <Grid Background="{StaticResource HwScopeContentBrush}">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
         </Grid.RowDefinitions>
 
-        <Grid Grid.Row="0" Margin="0,0,0,14">
+        <Grid Grid.Row="0" Margin="16,14,16,12">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="*" />
                 <ColumnDefinition Width="Auto" />
@@ -42,34 +47,108 @@
             <StackPanel Grid.Column="1"
                         Orientation="Horizontal"
                         VerticalAlignment="Center">
+                <ui:Button x:Name="CardViewButton"
+                           Height="32"
+                           MinWidth="88"
+                           Padding="12,0"
+                           Icon="{ui:SymbolIcon Apps24}"
+                           Content="卡片视图"
+                           Click="CardViewButton_Click" />
+                <ui:Button x:Name="ListViewButton"
+                           Height="32"
+                           MinWidth="88"
+                           Margin="6,0,12,0"
+                           Padding="12,0"
+                           Icon="{ui:SymbolIcon TextBulletListLtr24}"
+                           Content="列表视图"
+                           Click="ListViewButton_Click" />
                 <ui:Button x:Name="RefreshButton"
-                           Width="88"
-                           Height="34"
+                           Height="32"
+                           MinWidth="78"
+                           Padding="10,0"
                            Icon="{ui:SymbolIcon ArrowClockwise24}"
                            Content="刷新"
                            Click="RefreshButton_Click" />
                 <ui:Button x:Name="CopyButton"
-                           Width="88"
-                           Height="34"
-                           Margin="8,0,0,0"
+                           Height="32"
+                           MinWidth="78"
+                           Margin="6,0,0,0"
+                           Padding="10,0"
                            Icon="{ui:SymbolIcon Copy24}"
                            Content="复制"
                            Click="CopyButton_Click" />
             </StackPanel>
         </Grid>
 
-        <Border Grid.Row="1"
-                Background="#FFFFFFFF"
+        <ScrollViewer x:Name="CardSummaryPanel"
+                      Grid.Row="1"
+                      Margin="16,0,16,14"
+                      VerticalScrollBarVisibility="Auto">
+            <ItemsControl x:Name="CardHardwareSummaryList">
+                <ItemsControl.ItemsPanel>
+                    <ItemsPanelTemplate>
+                        <WrapPanel />
+                    </ItemsPanelTemplate>
+                </ItemsControl.ItemsPanel>
+                <ItemsControl.ItemTemplate>
+                    <DataTemplate DataType="{x:Type local:HardwareSummaryItem}">
+                        <Border Width="390"
+                                MinHeight="92"
+                                Margin="0,0,10,10"
+                                Padding="12"
+                                Background="{StaticResource HwScopeCardBrush}"
+                                BorderBrush="{StaticResource HwScopeLineBrush}"
+                                BorderThickness="1"
+                                CornerRadius="7">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="30" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+
+                                <Border Width="26"
+                                        Height="26"
+                                        VerticalAlignment="Top"
+                                        Background="{StaticResource HwScopeIconBackplateBrush}"
+                                        CornerRadius="6">
+                                    <ui:SymbolIcon Symbol="{Binding Icon}"
+                                                   FontSize="16"
+                                                   Foreground="{StaticResource HwScopeIconBrush}" />
+                                </Border>
+
+                                <StackPanel Grid.Column="1" Margin="10,0,0,0">
+                                    <TextBlock Text="{Binding Label}"
+                                               FontSize="13"
+                                               FontWeight="SemiBold"
+                                               Foreground="#4B5563" />
+                                    <TextBlock Text="{Binding Value}"
+                                               Margin="0,5,0,0"
+                                               FontSize="14"
+                                               LineHeight="19"
+                                               TextWrapping="Wrap" />
+                                </StackPanel>
+                            </Grid>
+                        </Border>
+                    </DataTemplate>
+                </ItemsControl.ItemTemplate>
+            </ItemsControl>
+        </ScrollViewer>
+
+        <Border x:Name="ListSummaryPanel"
+                Grid.Row="1"
+                Margin="16,0,16,14"
+                Background="{StaticResource HwScopeCardBrush}"
                 BorderBrush="{StaticResource HwScopeLineBrush}"
                 BorderThickness="1"
                 CornerRadius="8"
-                Padding="18,4">
+                Padding="18,4"
+                Visibility="Collapsed">
             <ScrollViewer VerticalScrollBarVisibility="Auto">
-                <ItemsControl x:Name="HardwareSummaryList">
+                <ItemsControl x:Name="ListHardwareSummaryList">
                     <ItemsControl.ItemTemplate>
                         <DataTemplate DataType="{x:Type local:HardwareSummaryItem}">
                             <Border Style="{StaticResource HardwareRowStyle}">
-                                <Grid MinHeight="48">
+                                <Grid MinHeight="44">
                                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="116" />
                                         <ColumnDefinition Width="*" />
