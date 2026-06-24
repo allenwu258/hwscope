@@ -53,6 +53,11 @@ public partial class MainWindow : FluentWindow
         ShowMemoryBenchmark();
     }
 
+    private void StatusBarMenuItem_Click(object sender, RoutedEventArgs e)
+    {
+        RootStatusBar.Visibility = StatusBarMenuItem.IsChecked ? Visibility.Visible : Visibility.Collapsed;
+    }
+
     private void ShowHardwareSummary()
     {
         PageHost.Content = _hardwareSummaryPage;

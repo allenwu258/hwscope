@@ -30,31 +30,47 @@
 
     <Grid>
         <Grid.RowDefinitions>
-            <RowDefinition Height="48" />
-            <RowDefinition Height="Auto" />
+            <RowDefinition Height="44" />
             <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
             <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
 
         <ui:TitleBar Grid.Row="0"
-                     Title="HwScope"
-                     Icon="{ui:SymbolIcon Desktop20}" />
+                     Height="44"
+                     Title="">
+            <ui:TitleBar.Header>
+                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                    <ui:SymbolIcon Symbol="Desktop20"
+                                   Width="20"
+                                   Height="20"
+                                   Margin="0,0,10,0" />
+                    <TextBlock Text="HwScope"
+                               VerticalAlignment="Center"
+                               Margin="0,0,18,0"
+                               FontSize="14" />
+                    <Menu Background="Transparent"
+                          BorderThickness="0"
+                          Padding="0">
+                        <MenuItem Header="文件(_F)" />
+                        <MenuItem Header="查看(_V)">
+                            <MenuItem x:Name="StatusBarMenuItem"
+                                      Header="状态栏"
+                                      IsCheckable="True"
+                                      IsChecked="False"
+                                      Click="StatusBarMenuItem_Click" />
+                        </MenuItem>
+                        <MenuItem Header="报告(_R)" />
+                        <MenuItem Header="工具(_T)">
+                            <MenuItem Header="内存跑分" Click="ShowMemoryBenchmark_Click" />
+                        </MenuItem>
+                        <MenuItem Header="帮助(_H)" />
+                    </Menu>
+                </StackPanel>
+            </ui:TitleBar.Header>
+        </ui:TitleBar>
 
-        <Menu Grid.Row="1"
-              Background="{StaticResource HwScopePanelBrush}"
-              BorderBrush="{StaticResource HwScopeLineBrush}"
-              BorderThickness="0,0,0,1">
-            <MenuItem Header="文件(_F)" />
-            <MenuItem Header="查看(_V)" />
-            <MenuItem Header="报告(_R)" />
-            <MenuItem Header="工具(_T)">
-                <MenuItem Header="内存跑分" Click="ShowMemoryBenchmark_Click" />
-            </MenuItem>
-            <MenuItem Header="帮助(_H)" />
-        </Menu>
-
-        <Border Grid.Row="2"
+        <Border Grid.Row="1"
                 Background="{StaticResource HwScopePanelBrush}"
                 BorderBrush="{StaticResource HwScopeLineBrush}"
                 BorderThickness="0,0,0,1"
@@ -92,7 +108,7 @@
             </DockPanel>
         </Border>
 
-        <Grid Grid.Row="3" Background="{StaticResource HwScopeContentBrush}">
+        <Grid Grid.Row="2" Background="{StaticResource HwScopeContentBrush}">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="236" />
                 <ColumnDefinition Width="*" />
@@ -152,10 +168,12 @@
                             Background="{StaticResource HwScopeContentBrush}" />
         </Grid>
 
-        <StatusBar Grid.Row="4"
+        <StatusBar x:Name="RootStatusBar"
+                   Grid.Row="3"
                    Background="{StaticResource HwScopePanelBrush}"
                    BorderBrush="{StaticResource HwScopeLineBrush}"
-                   BorderThickness="0,1,0,0">
+                   BorderThickness="0,1,0,0"
+                   Visibility="Collapsed">
             <StatusBarItem>
                 <TextBlock x:Name="FooterStatusText" Text="准备就绪" />
             </StatusBarItem>
