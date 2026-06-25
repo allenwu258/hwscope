@@ -1,3 +1,4 @@
+using System.IO;
 using System.Windows;
 using HwScope.App.Theming;
 using HwScope.App.Pages;
@@ -105,18 +106,28 @@ public partial class MainWindow : FluentWindow
 
     private void ShowMemoryBenchmark()
     {
-        if (_currentReport is null)
+        try
         {
-            _hardwareSummaryPage.RefreshHardwareSummary();
-            _currentReport = _hardwareSummaryPage.CurrentReport;
-        }
+            if (_currentReport is null)
+            {
+                _hardwareSummaryPage.RefreshHardwareSummary();
+                _currentReport = _hardwareSummaryPage.CurrentReport;
+            }
 
-        var window = new MemoryBenchmarkWindow(_currentReport)
+            var window = new MemoryBenchmarkWindow(_currentReport)
+            {
+                Owner = this
+            };
+            window.Show();
+            SetFooterStatus("已打开内存跑分窗口。");
+        }
+        catch (Exception ex)
         {
-            Owner = this
-        };
-        window.Show();
-        SetFooterStatus("已打开内存跑分窗口。");
+            SetFooterStatus($"打开内存跑分窗口失败：{ex.Message}");
+            File.AppendAllText(Path.Combine(Path.GetTempPath(), "HwScope-crash.log"),
+                $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] ShowMemoryBenchmark{Environment.NewLine}{ex}{Environment.NewLine}{new string('-', 80)}{Environment.NewLine}");
+            System.Windows.MessageBox.Show(this, ex.ToString(), "打开内存跑分窗口失败", System.Windows.MessageBoxButton.OK, MessageBoxImage.Error);
+        }
     }
 
     private void SetFooterStatus(string text)

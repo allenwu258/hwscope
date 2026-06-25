@@ -12,7 +12,7 @@ public sealed class ThemeService
     private readonly ThemeDefinitionStore _themeDefinitionStore;
     private readonly ThemeResourceBuilder _resourceBuilder;
     private AppSettings _settings;
-    private FluentWindow? _watchedWindow;
+    private readonly List<FluentWindow> _attachedWindows = [];
     private string? _lastStatusMessage;
 
     public event EventHandler<string>? StatusChanged;
@@ -47,9 +47,25 @@ public sealed class ThemeService
 
     public void Attach(FluentWindow window)
     {
-        _watchedWindow = window;
+        if (!_attachedWindows.Contains(window))
+        {
+            _attachedWindows.Add(window);
+            window.Loaded += AttachedWindow_Loaded;
+            window.Closed += AttachedWindow_Closed;
+        }
+
         window.WindowBackdropType = CurrentBackdropType;
         Apply(watchSystemTheme: _settings.Theme.Mode == ThemeMode.System);
+    }
+
+    public void Detach(FluentWindow window)
+    {
+        if (_attachedWindows.Remove(window))
+        {
+            TryUnWatch(window);
+            window.Loaded -= AttachedWindow_Loaded;
+            window.Closed -= AttachedWindow_Closed;
+        }
     }
 
     public void SetThemeMode(ThemeMode mode)
@@ -63,16 +79,16 @@ public sealed class ThemeService
     {
         _settings.Theme.Backdrop = backdrop;
 
-        if (_watchedWindow is not null)
+        foreach (var window in _attachedWindows)
         {
-            _watchedWindow.WindowBackdropType = CurrentBackdropType;
+            window.WindowBackdropType = CurrentBackdropType;
         }
 
         ApplicationThemeManager.Apply(ToApplicationTheme(EffectiveThemeMode), CurrentBackdropType, true);
 
-        if (_settings.Theme.Mode == ThemeMode.System && _watchedWindow is not null)
+        if (_settings.Theme.Mode == ThemeMode.System)
         {
-            SystemThemeWatcher.Watch(_watchedWindow, CurrentBackdropType, true);
+            WatchAttachedWindows();
         }
 
         Save();
@@ -95,19 +111,83 @@ public sealed class ThemeService
         ApplyHwScopeThemeResources(effectiveMode);
         ApplicationThemeManager.Apply(ToApplicationTheme(effectiveMode), CurrentBackdropType, true);
 
-        if (_watchedWindow is null)
+        if (watchSystemTheme)
+        {
+            WatchAttachedWindows();
+        }
+        else
+        {
+            UnWatchAttachedWindows();
+        }
+    }
+
+    private void WatchAttachedWindows()
+    {
+        foreach (var window in _attachedWindows)
+        {
+            if (!window.IsLoaded)
+            {
+                continue;
+            }
+
+            SystemThemeWatcher.Watch(window, CurrentBackdropType, true);
+        }
+    }
+
+    private void UnWatchAttachedWindows()
+    {
+        foreach (var window in _attachedWindows)
+        {
+            TryUnWatch(window);
+        }
+    }
+
+    private void AttachedWindow_Loaded(object sender, RoutedEventArgs e)
+    {
+        if (sender is not FluentWindow window)
         {
             return;
         }
 
-        if (watchSystemTheme)
+        window.WindowBackdropType = CurrentBackdropType;
+
+        if (_settings.Theme.Mode == ThemeMode.System)
         {
-            SystemThemeWatcher.Watch(_watchedWindow, CurrentBackdropType, true);
+            TryWatch(window);
         }
-        else
+    }
+
+    private void AttachedWindow_Closed(object? sender, EventArgs e)
+    {
+        if (sender is FluentWindow window)
         {
-            SystemThemeWatcher.UnWatch(_watchedWindow);
+            Detach(window);
         }
+    }
+
+    private void TryWatch(FluentWindow window)
+    {
+        if (!CanUseSystemThemeWatcher(window))
+        {
+            return;
+        }
+
+        SystemThemeWatcher.Watch(window, CurrentBackdropType, true);
+    }
+
+    private void TryUnWatch(FluentWindow window)
+    {
+        if (!CanUseSystemThemeWatcher(window))
+        {
+            return;
+        }
+
+        SystemThemeWatcher.UnWatch(window);
+    }
+
+    private static bool CanUseSystemThemeWatcher(FluentWindow window)
+    {
+        return window.IsLoaded && PresentationSource.FromVisual(window) is not null;
     }
 
     private void OnApplicationThemeChanged(ApplicationTheme currentApplicationTheme, Color _)
