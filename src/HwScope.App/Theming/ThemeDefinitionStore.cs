@@ -1,6 +1,7 @@
 using System.IO;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Windows.Media;
 
 namespace HwScope.App.Theming;
 
@@ -24,29 +25,96 @@ public sealed class ThemeDefinitionStore
         _themeDirectory = themeDirectory;
     }
 
-    public ThemeDefinition Load(ThemeMode mode)
+    public ThemeLoadResult Load(ThemeMode mode)
     {
         var id = mode == ThemeMode.Dark ? "dark" : "light";
         var path = Path.Combine(_themeDirectory, $"{id}.json");
 
         if (!File.Exists(path))
         {
-            return CreateFallback(id);
+            return CreateFallbackResult(id, $"主题文件缺失，已使用内置{id}回退主题：{path}");
         }
 
         try
         {
             using var stream = File.OpenRead(path);
-            return JsonSerializer.Deserialize<ThemeDefinition>(stream, SerializerOptions) ?? CreateFallback(id);
+            var theme = JsonSerializer.Deserialize<ThemeDefinition>(stream, SerializerOptions);
+            var validationMessage = Validate(theme, id);
+
+            return validationMessage is null
+                ? new ThemeLoadResult(theme!, UsedFallback: false, Message: null)
+                : CreateFallbackResult(id, validationMessage);
         }
-        catch (JsonException)
+        catch (JsonException exception)
         {
-            return CreateFallback(id);
+            return CreateFallbackResult(id, $"主题 JSON 格式无效，已使用内置{id}回退主题：{exception.Message}");
         }
-        catch (IOException)
+        catch (IOException exception)
         {
-            return CreateFallback(id);
+            return CreateFallbackResult(id, $"主题文件读取失败，已使用内置{id}回退主题：{exception.Message}");
         }
+    }
+
+    private static string? Validate(ThemeDefinition? theme, string expectedId)
+    {
+        if (theme is null)
+        {
+            return $"主题 JSON 为空，已使用内置{expectedId}回退主题。";
+        }
+
+        if (string.IsNullOrWhiteSpace(theme.Id))
+        {
+            return $"主题 JSON 缺少 id，已使用内置{expectedId}回退主题。";
+        }
+
+        if (!string.Equals(theme.Id, expectedId, StringComparison.OrdinalIgnoreCase))
+        {
+            return $"主题 JSON id 与文件不匹配，已使用内置{expectedId}回退主题。";
+        }
+
+        foreach (var token in CreateFallback(expectedId).Tokens.Keys)
+        {
+            if (!theme.Tokens.TryGetValue(token, out var value) || string.IsNullOrWhiteSpace(value))
+            {
+                return $"主题 JSON 缺少 token {token}，已使用内置{expectedId}回退主题。";
+            }
+
+            if (!IsColorValue(value))
+            {
+                return $"主题 JSON token {token} 颜色值无效，已使用内置{expectedId}回退主题。";
+            }
+        }
+
+        foreach (var (token, value) in theme.Tokens)
+        {
+            if (!IsColorValue(value))
+            {
+                return $"主题 JSON token {token} 颜色值无效，已使用内置{expectedId}回退主题。";
+            }
+        }
+
+        return null;
+    }
+
+    private static bool IsColorValue(string value)
+    {
+        try
+        {
+            return ColorConverter.ConvertFromString(value) is Color;
+        }
+        catch (FormatException)
+        {
+            return false;
+        }
+        catch (NotSupportedException)
+        {
+            return false;
+        }
+    }
+
+    private static ThemeLoadResult CreateFallbackResult(string id, string message)
+    {
+        return new ThemeLoadResult(CreateFallback(id), UsedFallback: true, message);
     }
 
     private static ThemeDefinition CreateFallback(string id)

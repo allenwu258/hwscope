@@ -17,6 +17,7 @@ public partial class MainWindow : FluentWindow
 
         _hardwareSummaryPage.StatusChanged += (_, status) => SetFooterStatus(status);
         _hardwareSummaryPage.CurrentReportChanged += (_, report) => _currentReport = report;
+        App.ThemeService.StatusChanged += (_, status) => SetFooterStatus(status);
 
         Loaded += (_, _) =>
         {
@@ -24,6 +25,11 @@ public partial class MainWindow : FluentWindow
             ApplyConfiguredWindowState();
             SyncThemeMenuState();
             ShowHardwareSummary();
+
+            if (!string.IsNullOrWhiteSpace(App.ThemeService.LastStatusMessage))
+            {
+                SetFooterStatus(App.ThemeService.LastStatusMessage);
+            }
         };
     }
 

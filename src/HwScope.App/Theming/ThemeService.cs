@@ -13,6 +13,9 @@ public sealed class ThemeService
     private readonly ThemeResourceBuilder _resourceBuilder;
     private AppSettings _settings;
     private FluentWindow? _watchedWindow;
+    private string? _lastStatusMessage;
+
+    public event EventHandler<string>? StatusChanged;
 
     public ThemeService(
         JsonSettingsStore settingsStore,
@@ -34,6 +37,8 @@ public sealed class ThemeService
     public ThemeMode EffectiveThemeMode => ResolveEffectiveThemeMode(_settings.Theme.Mode);
 
     public WindowBackdropType CurrentBackdropType => ToWindowBackdropType(_settings.Theme.Backdrop);
+
+    public string? LastStatusMessage => _lastStatusMessage;
 
     public void ApplyCurrentTheme()
     {
@@ -126,16 +131,19 @@ public sealed class ThemeService
             dictionaries.Remove(currentTheme);
         }
 
-        var theme = _themeDefinitionStore.Load(mode);
-        dictionaries.Add(_resourceBuilder.Build(theme));
+        var loadResult = _themeDefinitionStore.Load(mode);
+        dictionaries.Add(_resourceBuilder.Build(loadResult.Theme));
+
+        if (loadResult.UsedFallback && !string.IsNullOrWhiteSpace(loadResult.Message))
+        {
+            _lastStatusMessage = loadResult.Message;
+            StatusChanged?.Invoke(this, loadResult.Message);
+        }
     }
 
     private static bool IsHwScopeThemeDictionary(ResourceDictionary dictionary)
     {
-        return dictionary.Contains(ThemeResourceBuilder.DictionaryMarkerKey)
-            || dictionary.Source?.OriginalString.EndsWith("HwScope.Colors.xaml", StringComparison.OrdinalIgnoreCase) == true
-            || dictionary.Source?.OriginalString.EndsWith("HwScope.Light.xaml", StringComparison.OrdinalIgnoreCase) == true
-            || dictionary.Source?.OriginalString.EndsWith("HwScope.Dark.xaml", StringComparison.OrdinalIgnoreCase) == true;
+        return dictionary.Contains(ThemeResourceBuilder.DictionaryMarkerKey);
     }
 
     private static ThemeMode ResolveEffectiveThemeMode(ThemeMode mode)
