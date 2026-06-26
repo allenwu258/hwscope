@@ -36,8 +36,7 @@ public static class CpuDetailReportFormatter
         builder.AppendLine();
 
         AppendLine(builder, "当前频率", report.Clocks.CurrentMHz);
-        AppendLine(builder, "基础频率", report.Clocks.BaseMHz);
-        AppendLine(builder, "最大频率", report.Clocks.MaxMHz);
+        AppendLine(builder, "标称/最大频率", report.Clocks.BaseMHz);
         AppendLine(builder, "总线频率", report.Clocks.BusMHz);
         AppendLine(builder, "倍频", report.Clocks.Multiplier);
         builder.AppendLine();

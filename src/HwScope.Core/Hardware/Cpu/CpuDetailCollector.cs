@@ -28,10 +28,10 @@ public sealed class CpuDetailCollector
 
         if (knownInfo is not null)
         {
-            notes.Add(new CpuDataNote("部分代号、工艺、TDP、缓存和指令集来自处理器型号映射，后续将由 native CPUID 校验。", CpuDataSource.Mapping));
+            notes.Add(new CpuDataNote("带 * 的映射值来自本地处理器资料库，用于补充 WMI 未提供的代号、工艺、TDP、缓存和指令集。", CpuDataSource.Mapping));
         }
 
-        notes.Add(new CpuDataNote("Stage 1 使用 WMI 作为主要数据源；Family/Revision/Stepping 不等同于完整 raw CPUID。", CpuDataSource.Wmi));
+        notes.Add(new CpuDataNote("WMI 是当前主要数据源；CPUID、Windows 拓扑 API 和传感器字段会在后续阶段继续补齐。", CpuDataSource.Wmi));
 
         var coreCount = SumUInt(processors, "NumberOfCores");
         var logicalCount = SumUInt(processors, "NumberOfLogicalProcessors");

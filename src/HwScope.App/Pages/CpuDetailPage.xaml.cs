@@ -2,7 +2,9 @@ using System.Threading;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
+using System.IO;
 using HwScope.Core.Hardware.Cpu;
+using Microsoft.Win32;
 
 namespace HwScope.App.Pages;
 
@@ -52,7 +54,13 @@ public partial class CpuDetailPage : UserControl
         catch (Exception ex)
         {
             SetStatus($"CPU 详情刷新失败：{ex.Message}");
-            System.Windows.MessageBox.Show(Window.GetWindow(this), ex.Message, "CPU 详情刷新失败", MessageBoxButton.OK, MessageBoxImage.Error);
+            if (_currentReport is null)
+            {
+                CpuSubtitleText.Text = "CPU 信息读取失败，可点击刷新重试。";
+                ProcessorNameText.Text = "CPU 信息读取失败";
+                ProcessorMetaText.Text = ex.Message;
+                System.Windows.MessageBox.Show(Window.GetWindow(this), ex.Message, "CPU 详情刷新失败", MessageBoxButton.OK, MessageBoxImage.Error);
+            }
         }
         finally
         {
@@ -77,6 +85,31 @@ public partial class CpuDetailPage : UserControl
 
         Clipboard.SetText(CpuDetailReportFormatter.Format(_currentReport));
         SetStatus("CPU 详情已复制到剪贴板。");
+    }
+
+    private void SaveButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_currentReport is null)
+        {
+            return;
+        }
+
+        var dialog = new SaveFileDialog
+        {
+            Title = "保存 CPU 详情",
+            Filter = "文本报告 (*.txt)|*.txt|所有文件 (*.*)|*.*",
+            FileName = $"HwScope-CPU-{DateTime.Now:yyyyMMdd-HHmmss}.txt",
+            AddExtension = true,
+            DefaultExt = ".txt"
+        };
+
+        if (dialog.ShowDialog(Window.GetWindow(this)) != true)
+        {
+            return;
+        }
+
+        File.WriteAllText(dialog.FileName, CpuDetailReportFormatter.Format(_currentReport));
+        SetStatus($"CPU 详情已保存：{dialog.FileName}");
     }
 
     private void Render(CpuDetailReport report)
@@ -132,8 +165,7 @@ public partial class CpuDetailPage : UserControl
             ]),
             new CpuSectionView("时钟", [
                 Row("当前频率", report.Clocks.CurrentMHz),
-                Row("基础频率", report.Clocks.BaseMHz),
-                Row("最大频率", report.Clocks.MaxMHz),
+                Row("标称/最大频率", report.Clocks.BaseMHz),
                 Row("总线频率", report.Clocks.BusMHz),
                 Row("倍频", report.Clocks.Multiplier)
             ]),
@@ -146,7 +178,7 @@ public partial class CpuDetailPage : UserControl
                 Row("NUMA Nodes", report.Topology.NumaNodeCount)
             ]),
             new CpuSectionView("缓存", report.Caches
-                .Select(cache => new CpuFieldRowView(cache.Name, CpuDetailReportFormatter.FormatCache(cache), FormatSource(cache.Source, cache.IsEstimated)))
+                .Select(cache => new CpuFieldRowView(cache.Name, CpuDetailReportFormatter.FormatCache(cache), FormatSource(cache.Source, cache.IsEstimated), DescribeSource(cache.Source, cache.IsEstimated, cache.Note)))
                 .ToList()),
             new CpuSectionView("平台上下文", [
                 Row("主板", report.Platform.Motherboard),
@@ -162,7 +194,7 @@ public partial class CpuDetailPage : UserControl
 
     private static CpuFieldRowView Row<T>(string label, CpuFieldValue<T> value)
     {
-        return new CpuFieldRowView(label, value.DisplayText, FormatSource(value.Source, value.IsEstimated));
+        return new CpuFieldRowView(label, value.DisplayText, FormatSource(value.Source, value.IsEstimated), DescribeSource(value.Source, value.IsEstimated, value.Note));
     }
 
     private static void AddChip<T>(ICollection<string> chips, CpuFieldValue<T> value)
@@ -177,6 +209,7 @@ public partial class CpuDetailPage : UserControl
     {
         RefreshButton.IsEnabled = !isBusy;
         CopyButton.IsEnabled = !isBusy && _currentReport is not null;
+        SaveButton.IsEnabled = !isBusy && _currentReport is not null;
         Mouse.OverrideCursor = isBusy ? Cursors.Wait : null;
     }
 
@@ -200,10 +233,31 @@ public partial class CpuDetailPage : UserControl
 
         return isEstimated && label != "-" ? $"{label}*" : label;
     }
+
+    private static string DescribeSource(CpuDataSource source, bool isEstimated, string? note)
+    {
+        var description = source switch
+        {
+            CpuDataSource.Wmi => "来自 Windows WMI。",
+            CpuDataSource.WindowsApi => "来自 Windows 拓扑 API。",
+            CpuDataSource.Cpuid => "来自 CPUID。",
+            CpuDataSource.Mapping => "来自本地处理器资料库。",
+            CpuDataSource.Computed => "由已采集字段推导。",
+            CpuDataSource.Placeholder => "后续阶段接入。",
+            _ => "来源未知。"
+        };
+
+        if (isEstimated)
+        {
+            description += " 带 * 表示估算或映射值。";
+        }
+
+        return string.IsNullOrWhiteSpace(note) ? description : $"{description} {note}";
+    }
 }
 
 public sealed record CpuSectionView(string Title, IReadOnlyList<CpuFieldRowView> Rows);
 
-public sealed record CpuFieldRowView(string Label, string Value, string Source);
+public sealed record CpuFieldRowView(string Label, string Value, string Source, string SourceDescription);
 
 public sealed record CpuFeatureView(string Name);
