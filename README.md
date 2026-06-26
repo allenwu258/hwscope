@@ -39,21 +39,21 @@ docs/
 GUI：
 
 ```powershell
-dotnet run --project .\src\HwScope.App
+dotnet run --project .\src\HwScope.App\HwScope.App.csproj
 ```
 
 CLI 硬件摘要：
 
 ```powershell
-dotnet run --project .\src\HwScope.Cli
-dotnet run --project .\src\HwScope.Cli -- --json
-dotnet run --project .\src\HwScope.Cli -- --copy
+dotnet run --project .\src\HwScope.Cli\HwScope.Cli.csproj
+dotnet run --project .\src\HwScope.Cli\HwScope.Cli.csproj -- --json
+dotnet run --project .\src\HwScope.Cli\HwScope.Cli.csproj -- --copy
 ```
 
 CLI 内存跑分：
 
 ```powershell
-dotnet run --project .\src\HwScope.Cli -- benchmark memory
+dotnet run --project .\src\HwScope.Cli\HwScope.Cli.csproj -- benchmark memory
 ```
 
 ## 构建
