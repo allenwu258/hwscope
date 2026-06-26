@@ -19,6 +19,20 @@ Relevant files:
 - `src/HwScope.Core/Benchmark/MemoryBenchmarkProcessRunner.cs`
 - `src/HwScope.App/MemoryBenchmarkWindow.xaml`
 
+## Current GUI Integration
+
+The WPF app opens the benchmark in a separate Fluent window, matching the AIDA64 pattern where the benchmark table is not embedded into the main dashboard.
+
+The window is reachable from:
+
+- Top toolbar: `跑分`
+- Left navigation: `性能测试 -> 内存跑分`
+- Main menu: `工具 -> 内存跑分`
+
+The benchmark table intentionally keeps a white background and black text for now, while the window chrome and surrounding shell use the shared HwScope theme resources. This preserves the AIDA64-like benchmark table while still allowing the window to follow the app theme service.
+
+Theme integration is handled through `ThemeService`. The benchmark window attaches after `Loaded` to avoid calling WPF-UI `SystemThemeWatcher` before the window handle exists.
+
 ## Intended Architecture
 
 The long-term benchmark design has three layers:
