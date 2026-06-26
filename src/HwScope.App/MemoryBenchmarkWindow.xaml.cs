@@ -16,12 +16,38 @@ public partial class MemoryBenchmarkWindow : FluentWindow
     {
         InitializeComponent();
 
+        Loaded += MemoryBenchmarkWindow_Loaded;
+
         if (report is not null)
         {
             CpuTypeText.Text = report.Processor;
             MemoryTypeText.Text = report.Memory;
             MotherboardText.Text = report.Motherboard;
         }
+    }
+
+    private void MemoryBenchmarkWindow_Loaded(object sender, RoutedEventArgs e)
+    {
+        App.ThemeService.Attach(this);
+        App.ThemeService.StatusChanged += ThemeService_StatusChanged;
+
+        if (!string.IsNullOrWhiteSpace(App.ThemeService.LastStatusMessage))
+        {
+            StatusText.Text = App.ThemeService.LastStatusMessage;
+        }
+
+        Loaded -= MemoryBenchmarkWindow_Loaded;
+    }
+
+    private void ThemeService_StatusChanged(object? sender, string status)
+    {
+        StatusText.Text = status;
+    }
+
+    protected override void OnClosed(EventArgs e)
+    {
+        App.ThemeService.StatusChanged -= ThemeService_StatusChanged;
+        base.OnClosed(e);
     }
 
     private async void StartBenchmarkButton_Click(object sender, RoutedEventArgs e)

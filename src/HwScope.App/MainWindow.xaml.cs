@@ -1,18 +1,15 @@
+using System.IO;
 using System.Windows;
+using HwScope.App.Theming;
 using HwScope.App.Pages;
 using HwScope.Core.Hardware;
-using Wpf.Ui.Appearance;
 using Wpf.Ui.Controls;
 
 namespace HwScope.App;
 
 public partial class MainWindow : FluentWindow
 {
-    private const string LightThemeResource = "Themes/HwScope.Light.xaml";
-    private const string DarkThemeResource = "Themes/HwScope.Dark.xaml";
-
     private readonly HardwareSummaryPage _hardwareSummaryPage = new();
-    private WindowBackdropType _backdropType = WindowBackdropType.Mica;
     private HardwareReport? _currentReport;
 
     public MainWindow()
@@ -21,8 +18,20 @@ public partial class MainWindow : FluentWindow
 
         _hardwareSummaryPage.StatusChanged += (_, status) => SetFooterStatus(status);
         _hardwareSummaryPage.CurrentReportChanged += (_, report) => _currentReport = report;
+        App.ThemeService.StatusChanged += (_, status) => SetFooterStatus(status);
 
-        Loaded += (_, _) => ShowHardwareSummary();
+        Loaded += (_, _) =>
+        {
+            App.ThemeService.Attach(this);
+            ApplyConfiguredWindowState();
+            SyncThemeMenuState();
+            ShowHardwareSummary();
+
+            if (!string.IsNullOrWhiteSpace(App.ThemeService.LastStatusMessage))
+            {
+                SetFooterStatus(App.ThemeService.LastStatusMessage);
+            }
+        };
     }
 
     private void RootNavigation_SelectionChanged(object sender, RoutedEventArgs e)
@@ -61,35 +70,32 @@ public partial class MainWindow : FluentWindow
     private void StatusBarMenuItem_Click(object sender, RoutedEventArgs e)
     {
         RootStatusBar.Visibility = StatusBarMenuItem.IsChecked ? Visibility.Visible : Visibility.Collapsed;
+        App.ThemeService.SetShowStatusBar(StatusBarMenuItem.IsChecked);
     }
 
     private void FollowSystemThemeMenuItem_Click(object sender, RoutedEventArgs e)
     {
-        var systemTheme = ToApplicationTheme(ApplicationThemeManager.GetSystemTheme());
-        ApplyTheme(systemTheme);
-        SetThemeMenuState(isFollowSystem: true, systemTheme);
-        SystemThemeWatcher.Watch(this, _backdropType, true);
+        App.ThemeService.SetThemeMode(ThemeMode.System);
+        SyncThemeMenuState();
     }
 
     private void LightThemeMenuItem_Click(object sender, RoutedEventArgs e)
     {
-        SystemThemeWatcher.UnWatch(this);
-        ApplyTheme(ApplicationTheme.Light);
-        SetThemeMenuState(isFollowSystem: false, ApplicationTheme.Light);
+        App.ThemeService.SetThemeMode(ThemeMode.Light);
+        SyncThemeMenuState();
     }
 
     private void DarkThemeMenuItem_Click(object sender, RoutedEventArgs e)
     {
-        SystemThemeWatcher.UnWatch(this);
-        ApplyTheme(ApplicationTheme.Dark);
-        SetThemeMenuState(isFollowSystem: false, ApplicationTheme.Dark);
+        App.ThemeService.SetThemeMode(ThemeMode.Dark);
+        SyncThemeMenuState();
     }
 
     private void MicaBackdropMenuItem_Click(object sender, RoutedEventArgs e)
     {
-        _backdropType = MicaBackdropMenuItem.IsChecked ? WindowBackdropType.Mica : WindowBackdropType.None;
-        WindowBackdropType = _backdropType;
-        ApplicationThemeManager.Apply(ApplicationThemeManager.GetAppTheme(), _backdropType, true);
+        var backdrop = MicaBackdropMenuItem.IsChecked ? BackdropMode.Mica : BackdropMode.None;
+        App.ThemeService.SetBackdrop(backdrop);
+        SyncThemeMenuState();
     }
 
     private void ShowHardwareSummary()
@@ -100,18 +106,28 @@ public partial class MainWindow : FluentWindow
 
     private void ShowMemoryBenchmark()
     {
-        if (_currentReport is null)
+        try
         {
-            _hardwareSummaryPage.RefreshHardwareSummary();
-            _currentReport = _hardwareSummaryPage.CurrentReport;
-        }
+            if (_currentReport is null)
+            {
+                _hardwareSummaryPage.RefreshHardwareSummary();
+                _currentReport = _hardwareSummaryPage.CurrentReport;
+            }
 
-        var window = new MemoryBenchmarkWindow(_currentReport)
+            var window = new MemoryBenchmarkWindow(_currentReport)
+            {
+                Owner = this
+            };
+            window.Show();
+            SetFooterStatus("已打开内存跑分窗口。");
+        }
+        catch (Exception ex)
         {
-            Owner = this
-        };
-        window.Show();
-        SetFooterStatus("已打开内存跑分窗口。");
+            SetFooterStatus($"打开内存跑分窗口失败：{ex.Message}");
+            File.AppendAllText(Path.Combine(Path.GetTempPath(), "HwScope-crash.log"),
+                $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] ShowMemoryBenchmark{Environment.NewLine}{ex}{Environment.NewLine}{new string('-', 80)}{Environment.NewLine}");
+            System.Windows.MessageBox.Show(this, ex.ToString(), "打开内存跑分窗口失败", System.Windows.MessageBoxButton.OK, MessageBoxImage.Error);
+        }
     }
 
     private void SetFooterStatus(string text)
@@ -119,52 +135,19 @@ public partial class MainWindow : FluentWindow
         FooterStatusText.Text = text;
     }
 
-    private void ApplyTheme(ApplicationTheme theme)
+    private void ApplyConfiguredWindowState()
     {
-        ApplyHwScopeThemeResources(theme);
-        ApplicationThemeManager.Apply(theme, _backdropType, true);
+        StatusBarMenuItem.IsChecked = App.ThemeService.WindowSettings.ShowStatusBar;
+        RootStatusBar.Visibility = StatusBarMenuItem.IsChecked ? Visibility.Visible : Visibility.Collapsed;
     }
 
-    private void SetThemeMenuState(bool isFollowSystem, ApplicationTheme theme)
+    private void SyncThemeMenuState()
     {
-        FollowSystemThemeMenuItem.IsChecked = isFollowSystem;
-        LightThemeMenuItem.IsChecked = !isFollowSystem && theme == ApplicationTheme.Light;
-        DarkThemeMenuItem.IsChecked = !isFollowSystem && theme == ApplicationTheme.Dark;
-    }
+        var themeSettings = App.ThemeService.ThemeSettings;
 
-    private static ApplicationTheme ToApplicationTheme(SystemTheme theme)
-    {
-        return theme switch
-        {
-            SystemTheme.Dark => ApplicationTheme.Dark,
-            SystemTheme.HCWhite or SystemTheme.HCBlack or SystemTheme.HC1 or SystemTheme.HC2 => ApplicationTheme.HighContrast,
-            _ => ApplicationTheme.Light
-        };
-    }
-
-    private static void ApplyHwScopeThemeResources(ApplicationTheme theme)
-    {
-        var source = theme == ApplicationTheme.Dark ? DarkThemeResource : LightThemeResource;
-        var dictionaries = Application.Current.Resources.MergedDictionaries;
-        var currentTheme = dictionaries.FirstOrDefault(IsHwScopeThemeDictionary);
-
-        if (currentTheme is not null)
-        {
-            dictionaries.Remove(currentTheme);
-        }
-
-        dictionaries.Add(new ResourceDictionary
-        {
-            Source = new Uri(source, UriKind.Relative)
-        });
-    }
-
-    private static bool IsHwScopeThemeDictionary(ResourceDictionary dictionary)
-    {
-        var source = dictionary.Source?.OriginalString;
-        return source is not null
-            && (source.EndsWith("HwScope.Colors.xaml", StringComparison.OrdinalIgnoreCase)
-                || source.EndsWith("HwScope.Light.xaml", StringComparison.OrdinalIgnoreCase)
-                || source.EndsWith("HwScope.Dark.xaml", StringComparison.OrdinalIgnoreCase));
+        FollowSystemThemeMenuItem.IsChecked = themeSettings.Mode == ThemeMode.System;
+        LightThemeMenuItem.IsChecked = themeSettings.Mode == ThemeMode.Light;
+        DarkThemeMenuItem.IsChecked = themeSettings.Mode == ThemeMode.Dark;
+        MicaBackdropMenuItem.IsChecked = themeSettings.Backdrop == BackdropMode.Mica;
     }
 }

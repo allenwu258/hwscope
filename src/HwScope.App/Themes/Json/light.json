@@ -1,0 +1,17 @@
+{
+  "id": "light",
+  "displayName": "浅色",
+  "base": "Light",
+  "tokens": {
+    "HwScopePanelColor": "#F5F5F5",
+    "HwScopeContentColor": "#F5F5F5",
+    "HwScopeCardColor": "#FFFFFFFF",
+    "HwScopeLineColor": "#E5E5E5",
+    "HwScopeTextColor": "#2F2F2F",
+    "HwScopeStrongTextColor": "#4B5563",
+    "HwScopeMutedTextColor": "#626262",
+    "HwScopeIconColor": "#3F4752",
+    "HwScopeIconBackplateColor": "#F3F4F6",
+    "HwScopeActiveViewColor": "#EDEDED"
+  }
+}

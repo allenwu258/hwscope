@@ -7,9 +7,9 @@
                  Width="780"
                  MinHeight="540"
                  MinWidth="740"
-                 Background="#FFFFFF"
+                 Background="{DynamicResource HwScopePanelBrush}"
                  ExtendsContentIntoTitleBar="True"
-                 WindowBackdropType="None"
+                 WindowBackdropType="Mica"
                  WindowStartupLocation="CenterOwner">
     <ui:FluentWindow.Resources>
         <SolidColorBrush x:Key="BenchmarkLineBrush" Color="#808080" />
@@ -33,7 +33,7 @@
         </Style>
     </ui:FluentWindow.Resources>
 
-    <Grid Background="#FFFFFF">
+    <Grid Background="{DynamicResource HwScopePanelBrush}">
         <Grid.RowDefinitions>
             <RowDefinition Height="44" />
             <RowDefinition Height="*" />
@@ -48,8 +48,9 @@
         <Border Grid.Row="1"
                 Margin="12,4,12,0"
                 BorderBrush="{StaticResource BenchmarkLineBrush}"
-                BorderThickness="1">
-            <Grid Margin="16">
+                BorderThickness="1"
+                Background="#FFFFFF">
+            <Grid Margin="16" Background="#FFFFFF">
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto" />
                     <RowDefinition Height="Auto" />
@@ -172,7 +173,9 @@
             </Grid>
         </Border>
 
-        <Grid Grid.Row="2" Margin="12">
+        <Grid Grid.Row="2"
+              Margin="12"
+              Background="{DynamicResource HwScopePanelBrush}">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="Auto" />
                 <ColumnDefinition Width="*" />

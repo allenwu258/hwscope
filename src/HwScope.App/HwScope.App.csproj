@@ -8,6 +8,10 @@
     <PackageReference Include="WPF-UI" Version="4.3.0" />
   </ItemGroup>
 
+  <ItemGroup>
+    <Content Include="Themes\Json\*.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
     <TargetFramework>net8.0-windows</TargetFramework>
