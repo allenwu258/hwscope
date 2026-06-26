@@ -136,26 +136,32 @@
                                            Content="硬件概览"
                                            Tag="summary"
                                            IsActive="True"
-                                           Icon="{ui:SymbolIcon Home24}" />
+                                           Icon="{ui:SymbolIcon Home24}"
+                                           Click="NavigationItem_Click" />
                     <ui:NavigationViewItem Content="硬件"
                                            IsExpanded="True"
                                            Icon="{ui:SymbolIcon DeveloperBoard20}">
                         <ui:NavigationViewItem.MenuItems>
                             <ui:NavigationViewItem Content="中央处理器 (CPU)"
-                                                   Tag="summary"
-                                                   Icon="{ui:SymbolIcon DeveloperBoard20}" />
+                                                   Tag="cpu-detail"
+                                                   Icon="{ui:SymbolIcon DeveloperBoard20}"
+                                                   Click="NavigationItem_Click" />
                             <ui:NavigationViewItem Content="内存"
                                                    Tag="summary"
-                                                   Icon="{ui:SymbolIcon Database24}" />
+                                                   Icon="{ui:SymbolIcon Database24}"
+                                                   Click="NavigationItem_Click" />
                             <ui:NavigationViewItem Content="显示设备"
                                                    Tag="summary"
-                                                   Icon="{ui:SymbolIcon Desktop20}" />
+                                                   Icon="{ui:SymbolIcon Desktop20}"
+                                                   Click="NavigationItem_Click" />
                             <ui:NavigationViewItem Content="存储设备"
                                                    Tag="summary"
-                                                   Icon="{ui:SymbolIcon HardDrive20}" />
+                                                   Icon="{ui:SymbolIcon HardDrive20}"
+                                                   Click="NavigationItem_Click" />
                             <ui:NavigationViewItem Content="网络设备"
                                                    Tag="summary"
-                                                   Icon="{ui:SymbolIcon WifiSettings20}" />
+                                                   Icon="{ui:SymbolIcon WifiSettings20}"
+                                                   Click="NavigationItem_Click" />
                         </ui:NavigationViewItem.MenuItems>
                     </ui:NavigationViewItem>
                     <ui:NavigationViewItem Content="性能测试"
@@ -164,7 +170,8 @@
                         <ui:NavigationViewItem.MenuItems>
                             <ui:NavigationViewItem Content="内存跑分"
                                                    Tag="memory-benchmark"
-                                                   Icon="{ui:SymbolIcon Gauge32}" />
+                                                   Icon="{ui:SymbolIcon Gauge32}"
+                                                   Click="NavigationItem_Click" />
                         </ui:NavigationViewItem.MenuItems>
                     </ui:NavigationViewItem>
                 </ui:NavigationView.MenuItems>

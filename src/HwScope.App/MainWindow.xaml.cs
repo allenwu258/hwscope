@@ -10,6 +10,7 @@ namespace HwScope.App;
 public partial class MainWindow : FluentWindow
 {
     private readonly HardwareSummaryPage _hardwareSummaryPage = new();
+    private readonly CpuDetailPage _cpuDetailPage = new();
     private HardwareReport? _currentReport;
 
     public MainWindow()
@@ -18,6 +19,7 @@ public partial class MainWindow : FluentWindow
 
         _hardwareSummaryPage.StatusChanged += (_, status) => SetFooterStatus(status);
         _hardwareSummaryPage.CurrentReportChanged += (_, report) => _currentReport = report;
+        _cpuDetailPage.StatusChanged += (_, status) => SetFooterStatus(status);
         App.ThemeService.StatusChanged += (_, status) => SetFooterStatus(status);
 
         Loaded += (_, _) =>
@@ -46,10 +48,26 @@ public partial class MainWindow : FluentWindow
             return;
         }
 
-        switch (item.Tag as string)
+        NavigateByTag(item.Tag as string);
+    }
+
+    private void NavigationItem_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is NavigationViewItem item)
+        {
+            NavigateByTag(item.Tag as string);
+        }
+    }
+
+    private void NavigateByTag(string? tag)
+    {
+        switch (tag)
         {
             case "memory-benchmark":
                 ShowMemoryBenchmark();
+                break;
+            case "cpu-detail":
+                ShowCpuDetail();
                 break;
             case "summary":
                 ShowHardwareSummary();
@@ -102,6 +120,12 @@ public partial class MainWindow : FluentWindow
     {
         PageHost.Content = _hardwareSummaryPage;
         SetFooterStatus("硬件概览。");
+    }
+
+    private void ShowCpuDetail()
+    {
+        PageHost.Content = _cpuDetailPage;
+        SetFooterStatus("CPU 详情。");
     }
 
     private void ShowMemoryBenchmark()
