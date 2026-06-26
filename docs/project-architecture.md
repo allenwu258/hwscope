@@ -82,10 +82,10 @@ GUI 依赖 `WPF-UI`，当前版本为 `4.3.0`。
 CLI 目前支持：
 
 ```powershell
-dotnet run --project .\src\HwScope.Cli
-dotnet run --project .\src\HwScope.Cli -- --json
-dotnet run --project .\src\HwScope.Cli -- --copy
-dotnet run --project .\src\HwScope.Cli -- benchmark memory
+dotnet run --project .\src\HwScope.Cli\HwScope.Cli.csproj
+dotnet run --project .\src\HwScope.Cli\HwScope.Cli.csproj -- --json
+dotnet run --project .\src\HwScope.Cli\HwScope.Cli.csproj -- --copy
+dotnet run --project .\src\HwScope.Cli\HwScope.Cli.csproj -- benchmark memory
 ```
 
 CLI 是验证 Core 能力的轻量入口，也适合后续自动化测试和脚本集成。

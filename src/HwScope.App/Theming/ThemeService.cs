@@ -54,7 +54,6 @@ public sealed class ThemeService
             window.Closed += AttachedWindow_Closed;
         }
 
-        window.WindowBackdropType = CurrentBackdropType;
         Apply(watchSystemTheme: _settings.Theme.Mode == ThemeMode.System);
     }
 
@@ -148,8 +147,6 @@ public sealed class ThemeService
         {
             return;
         }
-
-        window.WindowBackdropType = CurrentBackdropType;
 
         if (_settings.Theme.Mode == ThemeMode.System)
         {
