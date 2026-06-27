@@ -76,7 +76,7 @@
                            Padding="10,0"
                            Icon="{ui:SymbolIcon Save24}"
                            Content="保存"
-                           IsEnabled="False" />
+                           Click="SaveButton_Click" />
             </StackPanel>
         </Grid>
 
@@ -148,7 +148,7 @@
                     </ItemsControl.ItemsPanel>
                     <ItemsControl.ItemTemplate>
                         <DataTemplate DataType="{x:Type local:CpuSectionView}">
-                            <Border Width="420"
+                            <Border Width="440"
                                     MinHeight="190"
                                     Style="{StaticResource CpuSectionBorderStyle}">
                                 <StackPanel>
@@ -164,7 +164,7 @@
                                                         MinHeight="30">
                                                     <Grid>
                                                         <Grid.ColumnDefinitions>
-                                                            <ColumnDefinition Width="132" />
+                                                            <ColumnDefinition Width="138" />
                                                             <ColumnDefinition Width="*" />
                                                             <ColumnDefinition Width="Auto" />
                                                         </Grid.ColumnDefinitions>
@@ -182,7 +182,8 @@
                                                                    TextWrapping="Wrap" />
                                                         <Border Grid.Column="2"
                                                                 Style="{StaticResource CpuSourceBadgeStyle}"
-                                                                Margin="8,4,0,4">
+                                                                Margin="8,4,0,4"
+                                                                ToolTip="{Binding SourceDescription}">
                                                             <TextBlock Text="{Binding Source}"
                                                                        HorizontalAlignment="Center"
                                                                        VerticalAlignment="Center"

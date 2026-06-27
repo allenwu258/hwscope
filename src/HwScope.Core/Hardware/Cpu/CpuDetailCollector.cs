@@ -21,6 +21,7 @@ public sealed class CpuDetailCollector
         var memoryModules = Wmi.Query("SELECT Capacity, Speed, ConfiguredClockSpeed, SMBIOSMemoryType, MemoryType FROM Win32_PhysicalMemory").ToList();
         var videoControllers = Wmi.Query("SELECT Name, AdapterRAM, PNPDeviceID FROM Win32_VideoController").ToList();
         var perfClock = CollectPerfClockMHz();
+        var topologyAnalysis = CpuTopologyAnalyzer.TryAnalyze();
 
         var processorName = CleanName(Wmi.GetString(cpu, "Name"));
         var knownInfo = CpuKnownProcessorCatalog.Match(processorName);
@@ -28,10 +29,14 @@ public sealed class CpuDetailCollector
 
         if (knownInfo is not null)
         {
-            notes.Add(new CpuDataNote("部分代号、工艺、TDP、缓存和指令集来自处理器型号映射，后续将由 native CPUID 校验。", CpuDataSource.Mapping));
+            notes.Add(new CpuDataNote("带 * 的映射值来自本地处理器资料库，用于补充 WMI 未提供的代号、工艺、TDP、缓存和指令集。", CpuDataSource.Mapping));
         }
 
-        notes.Add(new CpuDataNote("Stage 1 使用 WMI 作为主要数据源；Family/Revision/Stepping 不等同于完整 raw CPUID。", CpuDataSource.Wmi));
+        notes.Add(new CpuDataNote("WMI 是当前主要数据源；CPUID、Windows 拓扑 API 和传感器字段会在后续阶段继续补齐。", CpuDataSource.Wmi));
+        if (topologyAnalysis is not null)
+        {
+            notes.AddRange(topologyAnalysis.Notes);
+        }
 
         var coreCount = SumUInt(processors, "NumberOfCores");
         var logicalCount = SumUInt(processors, "NumberOfLogicalProcessors");
@@ -61,7 +66,7 @@ public sealed class CpuDetailCollector
                 ExtendedFamily: CpuField.Placeholder<string>(),
                 ExtendedModel: CpuField.Placeholder<string>(),
                 Revision: CpuField.Text(knownInfo?.Revision ?? FormatRevision(Wmi.GetUInt(cpu, "Revision")), knownInfo is null ? CpuDataSource.Wmi : CpuDataSource.Mapping, isEstimated: knownInfo is not null)),
-            Topology: new CpuTopology(
+            Topology: topologyAnalysis?.Topology ?? new CpuTopology(
                 PackageCount: CpuField.Number(processors.Count, CpuDataSource.Wmi),
                 CoreCount: CpuField.Number(coreCount, CpuDataSource.Wmi),
                 LogicalProcessorCount: CpuField.Number(logicalCount, CpuDataSource.Wmi),
@@ -74,7 +79,8 @@ public sealed class CpuDetailCollector
                 MaxMHz: CpuField.MHz(maxClock, CpuDataSource.Wmi),
                 BusMHz: CpuField.MHz(busClock, CpuDataSource.Computed, isEstimated: true, note: "按常见 100 MHz 基准时钟估算。"),
                 Multiplier: CpuField.Ratio(multiplier, CpuDataSource.Computed, isEstimated: true)),
-            Caches: knownInfo?.Caches ?? CreatePlaceholderCaches(),
+            Caches: topologyAnalysis?.Caches ?? knownInfo?.Caches ?? CreatePlaceholderCaches(),
+            CoreMappings: topologyAnalysis?.CoreMappings ?? [],
             Features: knownInfo?.Features ?? CreatePlaceholderFeatures(),
             Platform: new CpuPlatformContext(
                 Motherboard: CpuField.Text(JoinUseful(Wmi.GetString(board, "Manufacturer"), Wmi.GetString(board, "Product")), CpuDataSource.Wmi),
@@ -101,7 +107,7 @@ public sealed class CpuDetailCollector
 
     private static CpuCacheInfo PlaceholderCache(CpuCacheLevel level, string name)
     {
-        return new CpuCacheInfo(level, name, null, null, null, null, null, CpuDataSource.Placeholder, Note: "待接入 native CPUID 或 Windows 拓扑 API。");
+        return new CpuCacheInfo(level, name, null, null, null, null, null, null, [], CpuDataSource.Placeholder, Note: "待接入 native CPUID 或 Windows 拓扑 API。");
     }
 
     private static IReadOnlyList<CpuFeature> CreatePlaceholderFeatures()

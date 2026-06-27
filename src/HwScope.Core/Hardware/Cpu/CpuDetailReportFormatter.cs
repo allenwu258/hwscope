@@ -36,8 +36,7 @@ public static class CpuDetailReportFormatter
         builder.AppendLine();
 
         AppendLine(builder, "当前频率", report.Clocks.CurrentMHz);
-        AppendLine(builder, "基础频率", report.Clocks.BaseMHz);
-        AppendLine(builder, "最大频率", report.Clocks.MaxMHz);
+        AppendLine(builder, "标称/最大频率", report.Clocks.BaseMHz);
         AppendLine(builder, "总线频率", report.Clocks.BusMHz);
         AppendLine(builder, "倍频", report.Clocks.Multiplier);
         builder.AppendLine();
@@ -51,6 +50,23 @@ public static class CpuDetailReportFormatter
             builder.AppendLine(FormatCache(cache));
         }
         builder.AppendLine();
+
+        if (report.CoreMappings.Count > 0)
+        {
+            builder.AppendLine("核心映射：");
+            foreach (var core in report.CoreMappings)
+            {
+                builder.Append("  Core ");
+                builder.Append(core.CoreIndex.ToString("D2"));
+                builder.Append("：SMT ");
+                builder.Append(core.HasSmt ? "是" : "否");
+                builder.Append("，Efficiency ");
+                builder.Append(core.EfficiencyClass);
+                builder.Append("，");
+                builder.AppendLine(string.Join("; ", core.LogicalProcessors.Select(mask => mask.DisplayText)));
+            }
+            builder.AppendLine();
+        }
 
         builder.AppendLine("指令集：");
         var features = report.Features.Where(feature => feature.IsSupported).Select(feature => feature.Name).ToList();
@@ -93,7 +109,9 @@ public static class CpuDetailReportFormatter
         var size = FormatBytes(cache.SizeBytes.Value);
         var count = cache.InstanceCount is > 0 ? $"{cache.InstanceCount} x " : string.Empty;
         var ways = cache.Ways is > 0 ? $"，{cache.Ways}-way" : string.Empty;
-        return $"{count}{size}{ways}";
+        var line = cache.LineSizeBytes is > 0 ? $"，line {cache.LineSizeBytes} B" : string.Empty;
+        var shared = cache.SharedLogicalProcessorCount is > 0 ? $"，shared {cache.SharedLogicalProcessorCount} LP" : string.Empty;
+        return $"{count}{size}{ways}{line}{shared}";
     }
 
     private static void AppendLine<T>(StringBuilder builder, string label, CpuFieldValue<T> value)
