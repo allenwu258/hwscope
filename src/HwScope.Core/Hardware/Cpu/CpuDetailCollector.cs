@@ -81,6 +81,7 @@ public sealed class CpuDetailCollector
                 Multiplier: CpuField.Ratio(multiplier, CpuDataSource.Computed, isEstimated: true)),
             Caches: topologyAnalysis?.Caches ?? knownInfo?.Caches ?? CreatePlaceholderCaches(),
             CoreMappings: topologyAnalysis?.CoreMappings ?? [],
+            TopologyInspect: topologyAnalysis?.InspectReport,
             Features: knownInfo?.Features ?? CreatePlaceholderFeatures(),
             Platform: new CpuPlatformContext(
                 Motherboard: CpuField.Text(JoinUseful(Wmi.GetString(board, "Manufacturer"), Wmi.GetString(board, "Product")), CpuDataSource.Wmi),

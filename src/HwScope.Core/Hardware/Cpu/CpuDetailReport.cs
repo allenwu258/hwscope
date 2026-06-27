@@ -7,6 +7,7 @@ public sealed record CpuDetailReport(
     CpuClockInfo Clocks,
     IReadOnlyList<CpuCacheInfo> Caches,
     IReadOnlyList<CpuCoreMappingInfo> CoreMappings,
+    CpuTopologyInspectReport? TopologyInspect,
     IReadOnlyList<CpuFeature> Features,
     CpuPlatformContext Platform,
     IReadOnlyList<CpuDataNote> Notes,

@@ -25,6 +25,8 @@
             <Setter Property="CornerRadius" Value="5" />
             <Setter Property="Background" Value="{DynamicResource HwScopeIconBackplateBrush}" />
         </Style>
+
+        <local:NullToVisibilityConverter x:Key="NullToVisibilityConverter" />
     </UserControl.Resources>
 
     <Grid Background="{DynamicResource HwScopeContentBrush}">
@@ -152,10 +154,25 @@
                                     MinHeight="190"
                                     Style="{StaticResource CpuSectionBorderStyle}">
                                 <StackPanel>
-                                    <TextBlock Text="{Binding Title}"
-                                               FontSize="15"
-                                               FontWeight="SemiBold"
-                                               Foreground="{DynamicResource HwScopeStrongTextBrush}" />
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+
+                                        <TextBlock Text="{Binding Title}"
+                                                   FontSize="15"
+                                                   FontWeight="SemiBold"
+                                                   Foreground="{DynamicResource HwScopeStrongTextBrush}" />
+                                        <ui:Button Grid.Column="1"
+                                                   Height="28"
+                                                   MinWidth="72"
+                                                   Padding="8,0"
+                                                   Content="{Binding Action.Text}"
+                                                   Icon="{ui:SymbolIcon Search24}"
+                                                   Visibility="{Binding Action, Converter={StaticResource NullToVisibilityConverter}}"
+                                                   Click="SectionActionButton_Click" />
+                                    </Grid>
                                     <ItemsControl ItemsSource="{Binding Rows}" Margin="0,8,0,0">
                                         <ItemsControl.ItemTemplate>
                                             <DataTemplate DataType="{x:Type local:CpuFieldRowView}">

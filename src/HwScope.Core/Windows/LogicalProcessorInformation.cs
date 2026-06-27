@@ -139,13 +139,13 @@ internal static class LogicalProcessorInformation
     private static unsafe bool TryReadNumaNode(byte* body, uint bodySize, out LogicalNumaNodeInfo node)
     {
         node = default!;
-        if (bodySize < 24)
+        if (bodySize < 40)
         {
             return false;
         }
 
         var nodeNumber = *(uint*)body;
-        var mask = ReadGroupMask(body + 8);
+        var mask = ReadGroupMask(body + 24);
         node = new LogicalNumaNodeInfo(nodeNumber, mask);
         return true;
     }
