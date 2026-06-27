@@ -79,9 +79,13 @@ GUI 中可以通过左侧导航 `硬件 -> 中央处理器 (CPU)` 打开 CPU 详
 - 复制和保存 `.txt` CPU 报告。
 - 缓存行展示容量、路数、line size 和 shared logical processor count。
 - 核心映射展示每个 physical core 对应的 processor group/mask。
+- 缓存 Inspect 窗口，包含 raw topology report 和绘制版 Visual Map。
+- 通用 topology drawing skeleton，CPU topology visual adapter 已接入，后续可复用于 PCIe topology。
 
 后续重点：
 
+- 抽出 topology selection/highlight/details 服务，完善 Visual Map 交互。
+- 增加 topology PNG / JSON 导出。
 - native CPUID worker，用于 raw family/model/stepping 和真实 feature flags。
 - L3 / CCD / V-Cache 洞察，作为启发式信息明确标注。
 - 实时频率、传感器、电压、温度和功耗。
@@ -165,6 +169,7 @@ src\HwScope.App\Themes\Json\dark.json
 - 当前只支持 Windows。
 - 硬件摘要依赖 WMI，部分设备字段可能显示为“未识别”。
 - CPU 详情页的拓扑/缓存来自 Windows OS topology，不等于完整 CPUID；feature flags 仍等待 native CPUID worker 完整接入。
+- CPU topology Visual Map 当前使用 nested domain layout，tree/radial 布局和 PNG/JSON 导出仍在后续阶段。
 - CPU code name、工艺、TDP 和部分指令集仍可能来自本地型号映射，页面会标注来源。
 - 内存跑分结果目前不应直接对标 AIDA64，算法和线程策略仍在演进。
 - native worker 的打包复制还未完全自动化。

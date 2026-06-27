@@ -665,9 +665,9 @@ Mitigation:
 
 ## Recommended Next Steps
 
-1. Add focused tests for mask range compression and cache grouping.
-2. Build a drawn topology visualization tool for cache/core/LP sharing. See `docs/cpu-topology-visualization-plan.md`.
-3. Add L3 sharing summary and optional CCD/V-Cache heuristic insight, clearly marked as inferred.
+1. Add focused tests for mask range compression, cache grouping and CPU visual adapter conversion.
+2. Continue the drawn topology visualization work: extract selection/highlight/details services and add PNG/JSON export. See `docs/cpu-topology-visualization-plan.md`.
+3. Add richer L3 sharing summary and optional CCD/V-Cache heuristic insight, clearly marked as inferred.
 4. Improve core mapping UI for high-core systems with collapse/search/virtualization.
 5. Start the native CPUID stage for raw family/model/stepping and real feature flags.
 6. Keep Windows API topology as the primary OS topology source even after CPUID lands.

@@ -14,6 +14,35 @@ C:\Users\Trivedi\Downloads\cpu-topology-inspector.txt
 - Stage 2.1 已增加 `CpuTopologyInspectReport` 和 raw text inspect 窗口。
 - CPU 页面已经有缓存摘要卡片和 Inspect 按钮。
 
+## Implementation Status
+
+当前已完成：
+
+- Stage 2.2A：新增通用 `HwScope.App.Topology` 绘制骨架。
+  - `TopologyDocument` / `TopologyNode` / `TopologyGroup` / `TopologyEdge` / `TopologyStyle`。
+  - `NestedDomainLayoutEngine`。
+  - `TopologyCanvas`，支持 document 渲染、zoom、selected item、highlighted item ids 和 item selected event。
+  - 通用绘制层不引用 CPU / Core / Hardware 命名空间。
+- Stage 2.2B：新增 `CpuTopologyVisualAdapter`。
+  - `CpuTopologyInspectReport -> TopologyDocument`。
+  - package group、L3 domain group、core nodes。
+  - core node properties 包含 SMT、Efficiency、LP、L1D/L1I/L2/L3。
+  - L3 badge 基于结构化 L3 cache size/domain count 推断，不依赖 raw text contains。
+  - 多 package / multi-socket 使用 mask overlap 归属 L3 和 core。
+- Stage 2.2C：Inspect 窗口已接入 Visual Map。
+  - `Visual Map` / `Raw Report` tabs。
+  - Visual Map 默认显示 drawn topology。
+  - Raw Report 保留原始文本复制/保存。
+  - zoom slider 使用 layout-aware scaling。
+  - 右侧显示 Details / Legend / Notes。
+
+尚未完成：
+
+- Stage 2.2D：selection/highlight/details 抽象到通用 service/control。
+- Stage 2.2E：PNG / JSON export。
+- Tree / radial layouts。
+- PCIe topology adapter。
+
 ## Goals
 
 Topology 可视化要解决这些问题：
@@ -501,7 +530,7 @@ This is why CPU-specific logic must stay out of `TopologyCanvas`.
 
 ## Development Plan
 
-### Stage 2.2A: Generic Topology Drawing Skeleton
+### Stage 2.2A: Generic Topology Drawing Skeleton - Done
 
 Add:
 
@@ -519,7 +548,7 @@ Acceptance:
 - No CPU-specific references inside topology controls.
 - `dotnet build` passes.
 
-### Stage 2.2B: CPU Visual Adapter
+### Stage 2.2B: CPU Visual Adapter - Done
 
 Add:
 
@@ -541,7 +570,7 @@ Acceptance:
 - Each core tile shows core index, SMT, efficiency class, LP chips.
 - Detail panel can show L1/L2/L3 data for selected core.
 
-### Stage 2.2C: Integrate Visual Map Into Inspect Window
+### Stage 2.2C: Integrate Visual Map Into Inspect Window - Done
 
 Modify:
 
@@ -556,7 +585,12 @@ Acceptance:
 - Raw Report keeps existing text behavior.
 - Copy/save raw report still works.
 
-### Stage 2.2D: Selection And Highlight
+Current notes:
+
+- Basic selection, recursive group highlight and details rendering are implemented in window code-behind.
+- Stage 2.2D should move this logic into reusable topology selection/highlight/details components.
+
+### Stage 2.2D: Selection And Highlight - Planned
 
 Add:
 
@@ -573,7 +607,7 @@ Acceptance:
 - Selecting LP highlights parent core and cache domains.
 - Right panel updates selected item details.
 
-### Stage 2.2E: Export
+### Stage 2.2E: Export - Planned
 
 Add:
 
@@ -703,4 +737,3 @@ Stage 2.2 is complete when:
 - AMD/Intel heuristic badges are visible and clearly marked.
 - Drawing layer has no CPU-specific dependency.
 - `dotnet build` passes.
-
