@@ -6,16 +6,17 @@
 
 当前项目相关状态：
 
-- `HwScope.Core.Hardware.HardwareCollector` 只提供硬件摘要字符串。
+- `HwScope.Core.Hardware.HardwareCollector` 提供硬件摘要字符串。
+- `HwScope.Core.Hardware.Cpu` 已提供 CPU 详情模型、WMI 采集、Windows topology API 聚合和文本报告格式化。
 - `HardwareReport` 是展示模型，不适合承载 CPU 详情。
-- `MainWindow` 的 `中央处理器 (CPU)` 导航项当前 `Tag="summary"`，点击后仍显示摘要页。
+- `MainWindow` 的 `中央处理器 (CPU)` 导航项已路由到 `CpuDetailPage`。
 - `HardwareSummaryPage` 在 UI 线程同步调用 WMI。
 - `MemoryBenchmarkProcessRunner` 已经建立了 “Core 调 native worker 进程” 的先例，但 CPU 详情尚无 native worker。
 - 主题系统已经支持 `DynamicResource`，新页面应复用 `HwScopePanelBrush`、`HwScopeContentBrush`、`HwScopeCardBrush`、`HwScopeLineBrush`、`HwScopeTextBrush` 等 token。
 
 实现策略：
 
-1. 第一版不要等 native CPUID worker，先用 WMI + Windows API 做结构化 CPU 页面。
+1. 已先用 WMI + Windows API 做结构化 CPU 页面，不阻塞在 native CPUID worker。
 2. 第一版不要改 `HardwareReport` 语义，新增 CPU 详情模型。
 3. 第一版 UI 必须异步加载，避免继续扩大 UI 线程 WMI 阻塞问题。
 4. 所有不可靠、推导、待接入字段必须明确标注来源或状态。
@@ -364,35 +365,42 @@ src/HwScope.Core/Windows/LogicalProcessorInformation.cs
 
 Purpose: wrap `GetLogicalProcessorInformationEx` behind a small Core API.
 
-Initial public shape:
+Status: complete in Stage 2.
+
+Implemented internal shape:
 
 ```csharp
 internal sealed record LogicalProcessorTopology(
     int PackageCount,
-    int CoreCount,
+    int PhysicalCoreCount,
     int LogicalProcessorCount,
+    int ActiveGroupCount,
+    int MaximumGroupCount,
     int NumaNodeCount,
-    int CpuGroupCount,
-    IReadOnlyList<LogicalProcessorCache> Caches);
+    IReadOnlyList<LogicalProcessorGroup> Groups,
+    IReadOnlyList<LogicalCoreInfo> Cores,
+    IReadOnlyList<LogicalCacheInfo> Caches,
+    IReadOnlyList<LogicalPackageInfo> Packages,
+    IReadOnlyList<LogicalNumaNodeInfo> NumaNodes);
 ```
 
 Cache shape:
 
 ```csharp
-internal sealed record LogicalProcessorCache(
+internal sealed record LogicalCacheInfo(
     byte Level,
+    LogicalCacheType Type,
     long SizeBytes,
     int LineSizeBytes,
     int Associativity,
-    int SharedLogicalProcessorCount,
-    string Type);
+    LogicalProcessorMask Mask);
 ```
 
 Implementation notes:
 
 - Use P/Invoke only in `HwScope.Core.Windows`.
 - Keep unsafe/marshalling code isolated.
-- If API fails, return an empty topology plus note rather than throwing.
+- If API fails, return `null` and let `CpuDetailCollector` fall back to WMI/mapping.
 - This API can provide package/core/cache data without needing CPUID first.
 
 Development order recommendation:
@@ -616,7 +624,7 @@ Recommended first pass: enable Copy, keep Save disabled with tooltip/status `报
 
 ## Milestone 7: Native CPUID Worker
 
-Native CPUID should be a second-phase implementation after WMI-backed page is merged.
+Native CPUID is the next CPU data stage after the WMI-backed page and Windows topology API are in place.
 
 ### Project Shape
 
@@ -731,7 +739,7 @@ Recommended testable units:
 - `CpuDetailReportFormatter.Format`
 - memory type formatter
 - field value helpers
-- native CPUID JSON parser after Stage 2
+- native CPUID JSON parser for Stage 3
 
 Manual validation checklist:
 
@@ -773,7 +781,7 @@ WMI values vary by vendor and firmware. `Family`, `Revision`, `SocketDesignation
 
 ### Hardcoded CPU Catalog
 
-A small mapping catalog is useful for the current AMD Ryzen 7 8745H machine, but it can become stale. Treat it as a fallback only. Native CPUID should replace it for feature flags and cache topology.
+A small mapping catalog is useful for the current AMD Ryzen 7 8745H machine, but it can become stale. Treat it as a fallback only. Native CPUID should replace it for feature flags and raw CPUID identity fields; Windows topology API should remain the preferred OS topology/cache-sharing source.
 
 ### UI Thread Blocking
 
@@ -781,7 +789,7 @@ The existing summary page blocks during WMI collection. The CPU detail page shou
 
 ### P/Invoke Complexity
 
-`GetLogicalProcessorInformationEx` requires careful buffer parsing. Implement it after the first page works, and isolate all P/Invoke code in `HwScope.Core.Windows`.
+`GetLogicalProcessorInformationEx` requires careful buffer parsing. The Stage 2 implementation isolates all P/Invoke code in `HwScope.Core.Windows`.
 
 ### Native Worker Packaging
 
@@ -804,14 +812,26 @@ Stage 1 is complete when:
 
 Stage 2 is complete when:
 
-- `GetLogicalProcessorInformationEx` contributes topology/cache data, or native CPUID does.
-- Feature flags come from CPUID JSON rather than model-name mapping.
-- CPUID worker missing/failure is non-fatal.
-- All native worker output is schema-versioned JSON.
+- `GetLogicalProcessorInformationEx` contributes topology/cache data.
+- CPU page shows API-backed package/core/logical processor, SMT, CPU group and NUMA values.
+- Cache rows show cache type, instance count, size, associativity, line size and shared logical processor count.
+- Core-to-logical-processor mapping is available in UI and text export.
+- API failure remains non-fatal, with WMI/mapping fallback.
+
+Current status: complete.
 
 ## Stage 3 Definition Of Done
 
 Stage 3 is complete when:
+
+- Native CPUID worker returns schema-versioned JSON.
+- Feature flags come from CPUID JSON rather than model-name mapping.
+- CPUID worker missing/failure is non-fatal.
+- Raw family/model/stepping/ext family/ext model come from CPUID.
+
+## Stage 4 Definition Of Done
+
+Stage 4 is complete when:
 
 - The page has an optional live refresh mode.
 - Current clock updates periodically.

@@ -76,22 +76,35 @@ CPU 详情页分三层交付。
 - 保存为文本或后续报告入口的占位按钮。
 - 字段级不可用状态，例如 `未识别`、`不支持`、`需要 native CPUID worker`。
 
-### Stage 2: Native CPUID Worker
+### Stage 2: Windows Topology And Cache
 
-第二阶段引入 native CPUID worker 或复用扩展 native module，补足 WMI 拿不到或不可靠的字段。
+第二阶段引入 Windows `GetLogicalProcessorInformationEx`，补足 WMI 拿不到或不可靠的 OS 拓扑和缓存共享字段。
+
+目标字段：
+
+- CPU groups、NUMA node、package/core/logical processor 拓扑。
+- 每个物理核心对应哪些 logical processors。
+- SMT 是否开启。
+- Efficiency class，后续用于 Intel P-core / E-core 区分。
+- Cache topology，包括 cache type、size、line size、ways、shared logical processors。
+
+当前状态：已实现。Native CPUID 不属于 Stage 2 的完成条件。
+
+### Stage 3: Native CPUID Worker
+
+第三阶段引入 native CPUID worker 或复用扩展 native module，补足 WMI 和 Windows topology API 拿不到的 CPU 原始身份与 feature flags。
 
 目标字段：
 
 - CPUID leaf 原始 family/model/stepping/ext family/ext model。
 - 标准和扩展 feature flags。
-- Cache topology，包括 line size、partitions、ways、sets、shared logical processors。
 - Brand string、vendor string。
-- Hybrid topology，例如 Intel P-core / E-core。
-- CPU groups、NUMA node、package/core/logical processor 拓扑。
+- CPUID cache leaf 中的 partitions、sets 等更底层字段。
+- Hybrid topology 的 CPUID 侧信息。
 
-### Stage 3: Live Sampling
+### Stage 4: Live Sampling
 
-第三阶段做实时监控性质的字段刷新。
+第四阶段做实时监控性质的字段刷新。
 
 目标能力：
 
@@ -512,6 +525,19 @@ Windows API to evaluate:
 
 ### Stage 2 Sources
 
+Use Windows topology API:
+
+- `GetLogicalProcessorInformationEx(RelationAll)`
+- `RelationProcessorCore`
+- `RelationCache`
+- `RelationProcessorPackage`
+- `RelationGroup`
+- `RelationNumaNode`
+
+Keep `(Group, Mask)` through the model instead of flattening processor indexes.
+
+### Stage 3 Sources
+
 Add a native CPUID worker or library. For consistency with memory benchmark, a process worker is acceptable:
 
 ```text
@@ -584,13 +610,19 @@ Load shell immediately
 - Add formatter for copy/export.
 - Implement CPU detail page with specification, topology, clocks, and platform context.
 
-### Milestone 3: Cache And Instruction Features
+### Milestone 3: Windows Topology, Cache And Core Mapping
 
 - Add `GetLogicalProcessorInformationEx` cache/topology provider.
-- Add feature list from native CPUID worker or a minimal managed/native bridge.
-- Replace placeholder cache and instruction rows with real data.
+- Replace placeholder/mapped topology and cache rows with API data.
+- Add core-to-logical-processor mapping.
 
-### Milestone 4: Live Core Data
+### Milestone 4: Native CPUID Features
+
+- Add feature list from native CPUID worker or a minimal managed/native bridge.
+- Replace mapped instruction rows with real CPUID data.
+- Replace WMI family/model/stepping with raw CPUID values.
+
+### Milestone 5: Live Core Data
 
 - Add core selector.
 - Add current frequency refresh.
@@ -609,6 +641,13 @@ For Stage 1:
 
 For Stage 2:
 
-- Native CPUID data is versioned JSON.
-- Feature list and cache fields no longer rely on hardcoded CPU-specific text.
+- Windows API topology values are preferred over WMI when available.
+- Cache fields no longer rely on hardcoded CPU-specific text when Windows API succeeds.
+- Core mapping is visible in the page and included in exported text.
 - The page can disclose data source for values that are mapped or computed.
+
+For Stage 3:
+
+- Native CPUID data is versioned JSON.
+- Feature list no longer relies on hardcoded CPU-specific text.
+- CPUID worker missing/failure is non-fatal.

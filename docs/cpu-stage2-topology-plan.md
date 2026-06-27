@@ -1,6 +1,6 @@
-# CPU Stage 2 Topology And Cache Plan
+# CPU Stage 2 Topology And Cache Status
 
-本文档定义 HwScope CPU 模块 Stage 2 的完整开发方案。Stage 2 的目标是把当前 Stage 1 的 `WMI + 本地映射` CPU 页面升级为 `Windows 真实拓扑 + 真实缓存共享` 页面，优先接入 `GetLogicalProcessorInformationEx`，而不是继续扩大 `CpuKnownProcessorCatalog`。
+本文档记录 HwScope CPU 模块 Stage 2 的设计、实现状态和后续边界。Stage 2 已把 Stage 1 的 `WMI + 本地映射` CPU 页面升级为 `Windows 真实拓扑 + 真实缓存共享` 页面，优先接入 `GetLogicalProcessorInformationEx`，而不是继续扩大 `CpuKnownProcessorCatalog`。
 
 参考项目：
 
@@ -10,9 +10,30 @@ C:\Users\Trivedi\projects\cpu-topology-inspector
 
 该项目是一个 .NET 8 console，核心逻辑在 `Program.cs`，通过 Windows `GetLogicalProcessorInformationEx(RelationAll)` 一次性读取 processor groups、packages、physical cores、cache topology 和 group masks。
 
+## Implementation Status
+
+Stage 2 当前已完成：
+
+- 新增 `HwScope.Core.Windows.LogicalProcessorInformation`，通过 `GetLogicalProcessorInformationEx(RelationAll)` 读取 Windows 逻辑处理器拓扑。
+- 新增 `HwScope.Core.Hardware.Cpu.CpuTopologyAnalyzer`，把 Windows 原始拓扑转换为 CPU 详情页领域模型。
+- `CpuDetailCollector` 已优先使用 Windows API 提供 package/core/logical processor、SMT、CPU group、NUMA node 和 cache 数据。
+- `CpuCacheInfo` 已扩展 `CacheType` 和 `SharedMasks`。
+- `CpuDetailReport` 已扩展 `CoreMappings`。
+- CPU 页面已增加 `核心映射` section。
+- 文本报告导出已包含核心映射，并在缓存行展示 line size 和 shared logical processor count。
+- `dotnet build` 已验证通过。
+
+Stage 2 暂未实现：
+
+- L3 / CCD 洞察 section。
+- native CPUID worker。
+- 真实 instruction set feature flags。
+- 传感器、电压、温度、功耗。
+- UI 上针对超多核心机器的折叠/虚拟化列表优化。
+
 ## Goals
 
-Stage 2 要补齐这些当前 HwScope 缺失或只靠映射的数据：
+Stage 2 已补齐这些原本缺失或只靠映射的数据：
 
 - 物理 package 数。
 - 物理核心数。
@@ -31,7 +52,7 @@ Stage 2 要补齐这些当前 HwScope 缺失或只靠映射的数据：
 
 ## Non-Goals
 
-Stage 2 不做：
+Stage 2 不做，后续阶段再接入：
 
 - 不做 native CPUID worker。
 - 不做真实 instruction set feature flags。
@@ -39,7 +60,7 @@ Stage 2 不做：
 - 不做线程亲和性控制。
 - 不把 CCD 推断当作事实。
 
-CPUID worker 仍应作为 Stage 3。Windows topology API 给的是 OS topology，不等于完整 CPUID。
+CPUID worker 仍应作为后续阶段。Windows topology API 给的是 OS topology，不等于完整 CPUID。
 
 ## Reference Project Findings
 
@@ -101,14 +122,14 @@ P/Invoke and unsafe offset parsing must stay inside `HwScope.Core.Windows`. The 
 src/HwScope.Core/Windows/LogicalProcessorInformation.cs
 ```
 
-### Public Shape
+### Implemented Shape
 
 Keep it internal to Core first:
 
 ```csharp
 internal static class LogicalProcessorInformation
 {
-    public static LogicalProcessorTopology Collect();
+    public static LogicalProcessorTopology? TryCollect();
 }
 ```
 
@@ -127,6 +148,8 @@ internal sealed record LogicalProcessorTopology(
     IReadOnlyList<LogicalCacheInfo> Caches,
     IReadOnlyList<LogicalPackageInfo> Packages);
 ```
+
+当前实现还保留了 `IReadOnlyList<LogicalNumaNodeInfo> NumaNodes`，用于 NUMA node 计数和后续拓扑展示扩展。
 
 Group mask:
 
@@ -256,7 +279,7 @@ Extend existing CPU model without breaking Stage 1 callers.
 
 ### CpuCacheInfo
 
-Current:
+Stage 1 shape:
 
 ```csharp
 public sealed record CpuCacheInfo(
@@ -272,14 +295,14 @@ public sealed record CpuCacheInfo(
     string? Note = null);
 ```
 
-This already has most Stage 2 fields. Stage 2 should add:
+Stage 2 已添加：
 
 ```csharp
 string? CacheType
 string? SharedLogicalProcessors
 ```
 
-or introduce a nested display/share record:
+并引入：
 
 ```csharp
 public sealed record CpuProcessorMaskView(
@@ -289,7 +312,7 @@ public sealed record CpuProcessorMaskView(
     int Count);
 ```
 
-Recommended minimal change:
+实际实现：
 
 ```csharp
 IReadOnlyList<CpuProcessorMaskView> SharedMasks
@@ -444,7 +467,7 @@ Core 01    SMT yes    Eff 0    group 0 [2-3]    mask=0xC
 ...
 ```
 
-For Stage 2 first pass, a normal section below `拓扑` is acceptable. If it becomes visually long on high-core systems, make it collapsible in Stage 2.1.
+当前实现采用普通 section，位置在 `拓扑` 后面。后续如果高核心数机器上列表过长，再在 Stage 2.1 做折叠、搜索或虚拟化。
 
 ### Topology Insight Section
 
@@ -485,7 +508,7 @@ CCD 提示基于 L3 cache 分组和容量推断，仅供参考。
 
 ## Milestones
 
-### Milestone 1: Port Topology Reader
+### Milestone 1: Port Topology Reader - Done
 
 Add `LogicalProcessorInformation.cs`.
 
@@ -495,7 +518,7 @@ Acceptance:
 - A temporary smoke call can collect topology on current machine.
 - No UI changes yet.
 
-### Milestone 2: Merge Topology Into CpuDetailCollector
+### Milestone 2: Merge Topology Into CpuDetailCollector - Done
 
 Use topology API as preferred source for:
 
@@ -513,7 +536,7 @@ Acceptance:
 - Cache source badge becomes `API`.
 - Cache rows show line size and shared logical processor count.
 
-### Milestone 3: Core Mapping UI
+### Milestone 3: Core Mapping UI - Done
 
 Add core mapping section.
 
@@ -523,7 +546,7 @@ Acceptance:
 - Current machine should show 8 cores, each with 2 logical processors.
 - Long lists remain scrollable and do not break layout.
 
-### Milestone 4: L3 / CCD Insight
+### Milestone 4: L3 / CCD Insight - Planned
 
 Add optional L3 grouping summary.
 
@@ -560,7 +583,7 @@ Core 07 -> group 0 [14-15]
 
 ## Testing Plan
 
-Current repo has no test project. Stage 2 should at least add smoke coverage via internal formatting helpers. If adding tests:
+Current repo has no test project. Stage 2 当前以 build + smoke/manual validation 为主。如果添加测试：
 
 ```text
 src/HwScope.Core.Tests/
@@ -578,7 +601,6 @@ Manual validation:
 
 ```powershell
 dotnet build
-dotnet run --project .\src\HwScope.Cli -- --json
 dotnet run --project .\src\HwScope.App
 ```
 
@@ -641,14 +663,10 @@ Mitigation:
 - Put mapping in scrollable/collapsible section.
 - Show summary first, details below.
 
-## Recommended Implementation Order
+## Recommended Next Steps
 
-1. Add `LogicalProcessorInformation` typed Windows API reader.
-2. Add `CpuTopologyAnalyzer`.
-3. Merge topology into `CpuDetailCollector`.
-4. Update cache formatter and CPU page cache rows.
-5. Add core mapping section.
-6. Add optional L3/CCD insight section.
-7. Add tests or smoke helper coverage.
-
-This order keeps the highest-value part, real cache/topology data, available early while isolating the riskiest code in one Windows API layer.
+1. Add focused tests for mask range compression and cache grouping.
+2. Add L3 sharing summary and optional CCD/V-Cache heuristic insight, clearly marked as inferred.
+3. Improve core mapping UI for high-core systems with collapse/search/virtualization.
+4. Start the native CPUID stage for raw family/model/stepping and real feature flags.
+5. Keep Windows API topology as the primary OS topology source even after CPUID lands.
