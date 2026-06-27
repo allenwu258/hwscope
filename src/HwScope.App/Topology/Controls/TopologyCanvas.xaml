@@ -7,9 +7,9 @@
             <Canvas x:Name="DrawingCanvas"
                     Background="Transparent"
                     SnapsToDevicePixels="True">
-                <Canvas.RenderTransform>
+                <Canvas.LayoutTransform>
                     <ScaleTransform x:Name="ZoomTransform" />
-                </Canvas.RenderTransform>
+                </Canvas.LayoutTransform>
             </Canvas>
         </ScrollViewer>
     </Grid>
