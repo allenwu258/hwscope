@@ -6,6 +6,7 @@ public sealed record CpuDetailReport(
     CpuTopology Topology,
     CpuClockInfo Clocks,
     IReadOnlyList<CpuCacheInfo> Caches,
+    IReadOnlyList<CpuCoreMappingInfo> CoreMappings,
     IReadOnlyList<CpuFeature> Features,
     CpuPlatformContext Platform,
     IReadOnlyList<CpuDataNote> Notes,
@@ -52,9 +53,27 @@ public sealed record CpuCacheInfo(
     int? Ways,
     int? LineSizeBytes,
     int? SharedLogicalProcessorCount,
+    string? CacheType,
+    IReadOnlyList<CpuProcessorMaskView> SharedMasks,
     CpuDataSource Source,
     bool IsEstimated = false,
     string? Note = null);
+
+public sealed record CpuCoreMappingInfo(
+    int CoreIndex,
+    bool HasSmt,
+    int EfficiencyClass,
+    IReadOnlyList<CpuProcessorMaskView> LogicalProcessors,
+    CpuDataSource Source);
+
+public sealed record CpuProcessorMaskView(
+    ushort Group,
+    string ProcessorRange,
+    string HexMask,
+    int Count)
+{
+    public string DisplayText => $"group {Group} [{ProcessorRange}] mask={HexMask}";
+}
 
 public sealed record CpuFeature(
     string Name,

@@ -177,6 +177,7 @@ public partial class CpuDetailPage : UserControl
                 Row("CPU Groups", report.Topology.CpuGroupCount),
                 Row("NUMA Nodes", report.Topology.NumaNodeCount)
             ]),
+            new CpuSectionView("核心映射", BuildCoreMappingRows(report)),
             new CpuSectionView("缓存", report.Caches
                 .Select(cache => new CpuFieldRowView(cache.Name, CpuDetailReportFormatter.FormatCache(cache), FormatSource(cache.Source, cache.IsEstimated), DescribeSource(cache.Source, cache.IsEstimated, cache.Note)))
                 .ToList()),
@@ -190,6 +191,25 @@ public partial class CpuDetailPage : UserControl
                 Row("DRAM:FSB", report.Platform.DramFsbRatio)
             ])
         ];
+    }
+
+    private static IReadOnlyList<CpuFieldRowView> BuildCoreMappingRows(CpuDetailReport report)
+    {
+        if (report.CoreMappings.Count == 0)
+        {
+            return
+            [
+                new CpuFieldRowView("核心映射", CpuField.PendingCpuidText, "待接入", "后续阶段接入。")
+            ];
+        }
+
+        return report.CoreMappings
+            .Select(core => new CpuFieldRowView(
+                $"Core {core.CoreIndex:D2}",
+                $"SMT {(core.HasSmt ? "是" : "否")} · Eff {core.EfficiencyClass} · {string.Join("; ", core.LogicalProcessors.Select(mask => mask.DisplayText))}",
+                FormatSource(core.Source, isEstimated: false),
+                DescribeSource(core.Source, isEstimated: false, note: null)))
+            .ToList();
     }
 
     private static CpuFieldRowView Row<T>(string label, CpuFieldValue<T> value)

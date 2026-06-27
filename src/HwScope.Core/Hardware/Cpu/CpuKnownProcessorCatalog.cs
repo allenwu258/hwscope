@@ -73,6 +73,8 @@ internal static class CpuKnownProcessorCatalog
             ways,
             LineSizeBytes: null,
             SharedLogicalProcessorCount: null,
+            CacheType: null,
+            SharedMasks: [],
             CpuDataSource.Mapping,
             IsEstimated: true,
             Note: "来自处理器型号映射，后续将由 native CPUID 或 Windows 拓扑 API 校验。");
