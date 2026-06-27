@@ -6,6 +6,7 @@ internal sealed record CpuTopologyAnalysis(
     CpuTopology Topology,
     IReadOnlyList<CpuCacheInfo> Caches,
     IReadOnlyList<CpuCoreMappingInfo> CoreMappings,
+    CpuTopologyInspectReport InspectReport,
     IReadOnlyList<CpuDataNote> Notes);
 
 internal static class CpuTopologyAnalyzer
@@ -42,6 +43,30 @@ internal static class CpuTopologyAnalyzer
             .Select(group => ToCpuCacheInfo(group.Key.Level, group.Key.Type, group.Count(), group.Key.SizeBytes, group.Key.LineSizeBytes, group.Key.Associativity, group.Key.SharedLogicalProcessorCount, group.Select(cache => ToMaskView(cache.Mask)).ToList()))
             .ToList();
 
+        var cacheInstances = topology.Caches
+            .Select((cache, index) => new CpuCacheInstanceInfo(
+                index,
+                cache.Level,
+                FormatCacheType(cache.Type),
+                cache.SizeBytes,
+                cache.LineSizeBytes,
+                cache.Associativity,
+                ToMaskView(cache.Mask)))
+            .ToList();
+
+        var inspectReport = new CpuTopologyInspectReport(
+            topology.Groups.Select(group => new CpuTopologyGroupInfo(group.Group, group.MaximumProcessorCount, group.ActiveProcessorCount, ToMaskView(group.ActiveMask))).ToList(),
+            topology.Packages.Select(package => new CpuTopologyPackageInfo(package.Index, package.Masks.Select(ToMaskView).ToList())).ToList(),
+            topology.NumaNodes.Select(node => new CpuTopologyNumaNodeInfo(node.NodeNumber, ToMaskView(node.Mask))).ToList(),
+            coreMappings,
+            cacheInstances,
+            BuildInsights(coreMappings, cacheInstances),
+            [
+                "Topology and cache data are from Windows GetLogicalProcessorInformationEx.",
+                "CCD and hybrid-core hints are heuristic. Validate with Ryzen Master, Intel tools, or HWiNFO before using the mapping for affinity rules."
+            ],
+            DateTimeOffset.Now);
+
         var smtEnabled = topology.Cores.Any(core => core.HasSmt || core.Masks.Sum(mask => mask.Count) > 1);
         var notes = new List<CpuDataNote>
         {
@@ -58,6 +83,7 @@ internal static class CpuTopologyAnalyzer
                 NumaNodeCount: CpuField.Number(topology.NumaNodeCount, CpuDataSource.WindowsApi)),
             caches,
             coreMappings,
+            inspectReport,
             notes);
     }
 
@@ -130,5 +156,96 @@ internal static class CpuTopologyAnalyzer
             LogicalCacheType.Trace => 3,
             _ => 4
         };
+    }
+
+    private static IReadOnlyList<CpuTopologyInsight> BuildInsights(IReadOnlyList<CpuCoreMappingInfo> cores, IReadOnlyList<CpuCacheInstanceInfo> caches)
+    {
+        var insights = new List<CpuTopologyInsight>();
+        AddL3Insights(insights, caches);
+        AddHybridInsights(insights, cores, caches);
+        return insights;
+    }
+
+    private static void AddL3Insights(List<CpuTopologyInsight> insights, IReadOnlyList<CpuCacheInstanceInfo> caches)
+    {
+        var l3Caches = caches
+            .Where(cache => cache.Level == 3)
+            .OrderByDescending(cache => cache.SizeBytes)
+            .ThenBy(cache => cache.LogicalProcessors.Group)
+            .ThenBy(cache => cache.LogicalProcessors.ProcessorRange)
+            .ToList();
+
+        if (l3Caches.Count == 0)
+        {
+            insights.Add(new CpuTopologyInsight("L3 group", "No L3 cache information returned by Windows topology API.", CpuTopologyInsightKind.Information));
+            return;
+        }
+
+        for (var i = 0; i < l3Caches.Count; i++)
+        {
+            var cache = l3Caches[i];
+            var hint = cache.SizeBytes >= 64L * 1024L * 1024L
+                ? "likely V-Cache CCD"
+                : l3Caches.Count == 1
+                    ? "single L3 domain / likely standard frequency CCD"
+                    : "likely frequency CCD";
+            insights.Add(new CpuTopologyInsight($"L3 group {i}", $"{FormatBytes(cache.SizeBytes)}, {hint}, logical processors: {cache.LogicalProcessors.DisplayText}", CpuTopologyInsightKind.Heuristic));
+        }
+    }
+
+    private static void AddHybridInsights(List<CpuTopologyInsight> insights, IReadOnlyList<CpuCoreMappingInfo> cores, IReadOnlyList<CpuCacheInstanceInfo> caches)
+    {
+        var classes = cores.GroupBy(core => core.EfficiencyClass).OrderBy(group => group.Key).ToList();
+        if (classes.Count <= 1)
+        {
+            insights.Add(new CpuTopologyInsight("Hybrid topology", "No heterogeneous efficiency classes detected from Windows topology API.", CpuTopologyInsightKind.Information));
+        }
+        else
+        {
+            var maxClass = classes.Max(group => group.Key);
+            var minClass = classes.Min(group => group.Key);
+            foreach (var group in classes)
+            {
+                var role = group.Key == maxClass
+                    ? "likely performance-core class"
+                    : group.Key == minClass
+                        ? "likely efficiency-core class"
+                        : "intermediate efficiency class";
+                var smtCores = group.Count(core => core.HasSmt);
+                insights.Add(new CpuTopologyInsight("Hybrid efficiency class", $"class {group.Key}: {group.Count()} cores, {smtCores} SMT-capable cores, {role}", CpuTopologyInsightKind.Heuristic));
+            }
+        }
+
+        var l2Clusters = caches
+            .Where(cache => cache.Level == 2 && cache.LogicalProcessors.Count > 2)
+            .OrderBy(cache => cache.LogicalProcessors.Group)
+            .ThenBy(cache => cache.LogicalProcessors.ProcessorRange)
+            .ToList();
+
+        for (var i = 0; i < l2Clusters.Count; i++)
+        {
+            var cluster = l2Clusters[i];
+            insights.Add(new CpuTopologyInsight($"L2 cluster {i}", $"{FormatBytes(cluster.SizeBytes)}, shared by {cluster.LogicalProcessors.Count} logical processors, logical processors: {cluster.LogicalProcessors.DisplayText}, likely E-core cluster or shared L2 domain", CpuTopologyInsightKind.Heuristic));
+        }
+    }
+
+    private static string FormatBytes(long bytes)
+    {
+        if (bytes >= 1024L * 1024L * 1024L)
+        {
+            return $"{bytes / 1024L / 1024L / 1024L} GB";
+        }
+
+        if (bytes >= 1024L * 1024L)
+        {
+            return $"{bytes / 1024L / 1024L} MB";
+        }
+
+        if (bytes >= 1024L)
+        {
+            return $"{bytes / 1024L} KB";
+        }
+
+        return $"{bytes} B";
     }
 }

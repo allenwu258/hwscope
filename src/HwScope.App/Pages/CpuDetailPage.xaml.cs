@@ -1,9 +1,12 @@
 using System.Threading;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Data;
 using System.Windows.Input;
 using System.IO;
+using System.Globalization;
 using HwScope.Core.Hardware.Cpu;
+using HwScope.App.Windows;
 using Microsoft.Win32;
 
 namespace HwScope.App.Pages;
@@ -112,6 +115,27 @@ public partial class CpuDetailPage : UserControl
         SetStatus($"CPU 详情已保存：{dialog.FileName}");
     }
 
+    private void SectionActionButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button { DataContext: CpuSectionView section } || section.Action?.Id != CpuSectionActionIds.CacheInspect)
+        {
+            return;
+        }
+
+        if (_currentReport?.TopologyInspect is null)
+        {
+            SetStatus("当前 CPU 拓扑明细不可用。");
+            return;
+        }
+
+        var window = new CpuTopologyInspectWindow(_currentReport.Identity.SpecificationName.DisplayText, _currentReport.TopologyInspect)
+        {
+            Owner = Window.GetWindow(this)
+        };
+        window.Show();
+        SetStatus("已打开 CPU 拓扑 Inspect。");
+    }
+
     private void Render(CpuDetailReport report)
     {
         ProcessorNameText.Text = report.Identity.SpecificationName.DisplayText;
@@ -180,7 +204,8 @@ public partial class CpuDetailPage : UserControl
             new CpuSectionView("核心映射", BuildCoreMappingRows(report)),
             new CpuSectionView("缓存", report.Caches
                 .Select(cache => new CpuFieldRowView(cache.Name, CpuDetailReportFormatter.FormatCache(cache), FormatSource(cache.Source, cache.IsEstimated), DescribeSource(cache.Source, cache.IsEstimated, cache.Note)))
-                .ToList()),
+                .ToList(),
+                report.TopologyInspect is null ? null : new CpuSectionActionView(CpuSectionActionIds.CacheInspect, "Inspect")),
             new CpuSectionView("平台上下文", [
                 Row("主板", report.Platform.Motherboard),
                 Row("BIOS", report.Platform.BiosVersion),
@@ -276,8 +301,34 @@ public partial class CpuDetailPage : UserControl
     }
 }
 
-public sealed record CpuSectionView(string Title, IReadOnlyList<CpuFieldRowView> Rows);
+public sealed record CpuSectionView(string Title, IReadOnlyList<CpuFieldRowView> Rows, CpuSectionActionView? Action)
+{
+    public CpuSectionView(string title, IReadOnlyList<CpuFieldRowView> rows)
+        : this(title, rows, null)
+    {
+    }
+}
+
+public sealed record CpuSectionActionView(string Id, string Text);
+
+public static class CpuSectionActionIds
+{
+    public const string CacheInspect = "cache-inspect";
+}
 
 public sealed record CpuFieldRowView(string Label, string Value, string Source, string SourceDescription);
 
 public sealed record CpuFeatureView(string Name);
+
+public sealed class NullToVisibilityConverter : IValueConverter
+{
+    public object Convert(object? value, Type targetType, object? parameter, CultureInfo culture)
+    {
+        return value is null ? Visibility.Collapsed : Visibility.Visible;
+    }
+
+    public object ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture)
+    {
+        throw new NotSupportedException();
+    }
+}

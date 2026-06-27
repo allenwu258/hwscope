@@ -1,0 +1,229 @@
+<ui:FluentWindow x:Class="HwScope.App.Windows.CpuTopologyInspectWindow"
+                 xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                 xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                 xmlns:topology="clr-namespace:HwScope.App.Topology.Controls"
+                 xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
+                 Title="CPU Topology Inspect"
+                 Height="720"
+                 Width="1040"
+                 MinHeight="560"
+                 MinWidth="820"
+                 Background="{DynamicResource HwScopePanelBrush}"
+                 ExtendsContentIntoTitleBar="True"
+                 WindowBackdropType="Mica"
+                 WindowStartupLocation="CenterOwner">
+    <Grid Background="{DynamicResource HwScopePanelBrush}">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="44" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <ui:TitleBar Grid.Row="0"
+                     Height="44"
+                     Title="CPU Topology Inspect"
+                     Icon="{ui:SymbolIcon Search32}" />
+
+        <Grid Grid.Row="1" Margin="16,12,16,10">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+
+            <StackPanel>
+                <TextBlock x:Name="CpuNameText"
+                           FontSize="18"
+                           FontWeight="SemiBold"
+                           Foreground="{DynamicResource HwScopeTextBrush}"
+                           TextWrapping="Wrap" />
+                <TextBlock x:Name="GeneratedAtText"
+                           Margin="0,4,0,0"
+                           FontSize="12"
+                           Foreground="{DynamicResource HwScopeMutedTextBrush}" />
+            </StackPanel>
+
+            <StackPanel Grid.Column="1"
+                        Orientation="Horizontal"
+                        VerticalAlignment="Center">
+                <ui:Button Height="32"
+                           MinWidth="78"
+                           Padding="10,0"
+                           Icon="{ui:SymbolIcon Copy24}"
+                           Content="复制"
+                           Click="CopyButton_Click" />
+                <ui:Button Height="32"
+                           MinWidth="78"
+                           Margin="6,0,0,0"
+                           Padding="10,0"
+                           Icon="{ui:SymbolIcon Save24}"
+                           Content="保存"
+                           Click="SaveButton_Click" />
+            </StackPanel>
+        </Grid>
+
+        <TabControl Grid.Row="2"
+                    Margin="16,0,16,12">
+            <TabItem Header="Visual Map">
+                <Grid Margin="0,10,0,0">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+
+                    <Border Grid.Row="0"
+                            Margin="0,0,0,10"
+                            Padding="10,8"
+                            Background="{DynamicResource HwScopeCardBrush}"
+                            BorderBrush="{DynamicResource HwScopeLineBrush}"
+                            BorderThickness="1"
+                            CornerRadius="7">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="180" />
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+
+                            <TextBlock Text="Zoom"
+                                       VerticalAlignment="Center"
+                                       FontSize="12"
+                                       Foreground="{DynamicResource HwScopeMutedTextBrush}" />
+                            <Slider x:Name="ZoomSlider"
+                                    Grid.Column="1"
+                                    Margin="8,0,12,0"
+                                    Minimum="0.5"
+                                    Maximum="2.0"
+                                    SmallChange="0.1"
+                                    LargeChange="0.25"
+                                    Value="1"
+                                    ValueChanged="ZoomSlider_ValueChanged" />
+                            <TextBlock x:Name="ZoomText"
+                                       Grid.Column="2"
+                                       VerticalAlignment="Center"
+                                       FontSize="12"
+                                       Foreground="{DynamicResource HwScopeTextBrush}"
+                                       Text="100%" />
+                            <ui:Button Grid.Column="3"
+                                       Height="28"
+                                       MinWidth="74"
+                                       Margin="12,0,0,0"
+                                       Padding="8,0"
+                                       Content="Reset"
+                                       Click="FitButton_Click" />
+                            <TextBlock Grid.Column="4"
+                                       Margin="14,0,0,0"
+                                       VerticalAlignment="Center"
+                                       FontSize="12"
+                                       Foreground="{DynamicResource HwScopeMutedTextBrush}"
+                                       Text="Domain Map · drawn from structured topology data" />
+                        </Grid>
+                    </Border>
+
+                    <Grid Grid.Row="1">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="260" />
+                        </Grid.ColumnDefinitions>
+
+                        <Border Background="{DynamicResource HwScopeCardBrush}"
+                                BorderBrush="{DynamicResource HwScopeLineBrush}"
+                                BorderThickness="1"
+                                CornerRadius="7">
+                            <topology:TopologyCanvas x:Name="VisualTopologyCanvas"
+                                                     Margin="1"
+                                                     ItemSelected="VisualTopologyCanvas_ItemSelected" />
+                        </Border>
+
+                        <Border Grid.Column="1"
+                                Margin="12,0,0,0"
+                                Padding="12"
+                                Background="{DynamicResource HwScopeCardBrush}"
+                                BorderBrush="{DynamicResource HwScopeLineBrush}"
+                                BorderThickness="1"
+                                CornerRadius="7">
+                            <ScrollViewer VerticalScrollBarVisibility="Auto">
+                                <StackPanel>
+                                    <TextBlock Text="Details"
+                                               FontSize="14"
+                                               FontWeight="SemiBold"
+                                               Foreground="{DynamicResource HwScopeStrongTextBrush}" />
+                                    <TextBlock x:Name="SelectedItemText"
+                                               Margin="0,6,0,14"
+                                               FontSize="12"
+                                               Foreground="{DynamicResource HwScopeMutedTextBrush}"
+                                               Text="Select a group or core."
+                                               TextWrapping="Wrap" />
+
+                                    <TextBlock Text="Legend"
+                                               FontSize="14"
+                                               FontWeight="SemiBold"
+                                               Foreground="{DynamicResource HwScopeStrongTextBrush}" />
+                                    <ItemsControl x:Name="LegendList" Margin="0,6,0,14">
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate>
+                                                <TextBlock Text="{Binding}"
+                                                           Margin="0,0,0,5"
+                                                           FontSize="12"
+                                                           Foreground="{DynamicResource HwScopeTextBrush}"
+                                                           TextWrapping="Wrap" />
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+
+                                    <TextBlock Text="Notes"
+                                               FontSize="14"
+                                               FontWeight="SemiBold"
+                                               Foreground="{DynamicResource HwScopeStrongTextBrush}" />
+                                    <ItemsControl x:Name="VisualNotesList" Margin="0,6,0,0">
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate>
+                                                <TextBlock Text="{Binding}"
+                                                           Margin="0,0,0,5"
+                                                           FontSize="12"
+                                                           Foreground="{DynamicResource HwScopeMutedTextBrush}"
+                                                           TextWrapping="Wrap" />
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                </StackPanel>
+                            </ScrollViewer>
+                        </Border>
+                    </Grid>
+                </Grid>
+            </TabItem>
+
+            <TabItem Header="Raw Report">
+                <Border Margin="0,10,0,0"
+                        Padding="0"
+                        Background="{DynamicResource HwScopeCardBrush}"
+                        BorderBrush="{DynamicResource HwScopeLineBrush}"
+                        BorderThickness="1"
+                        CornerRadius="7">
+                    <TextBox x:Name="ReportTextBox"
+                             Margin="1"
+                             Padding="12"
+                             AcceptsReturn="True"
+                             AcceptsTab="True"
+                             Background="Transparent"
+                             BorderThickness="0"
+                             FontFamily="Cascadia Mono, Consolas"
+                             FontSize="13"
+                             Foreground="{DynamicResource HwScopeTextBrush}"
+                             HorizontalScrollBarVisibility="Auto"
+                             IsReadOnly="True"
+                             TextWrapping="NoWrap"
+                             VerticalScrollBarVisibility="Auto" />
+                </Border>
+            </TabItem>
+        </TabControl>
+
+        <TextBlock x:Name="StatusText"
+                   Grid.Row="3"
+                   Margin="16,0,16,12"
+                   FontSize="12"
+                   Foreground="{DynamicResource HwScopeMutedTextBrush}" />
+    </Grid>
+</ui:FluentWindow>

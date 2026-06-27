@@ -1,0 +1,16 @@
+<UserControl x:Class="HwScope.App.Topology.Controls.TopologyCanvas"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <Grid Background="Transparent">
+        <ScrollViewer HorizontalScrollBarVisibility="Auto"
+                      VerticalScrollBarVisibility="Auto">
+            <Canvas x:Name="DrawingCanvas"
+                    Background="Transparent"
+                    SnapsToDevicePixels="True">
+                <Canvas.LayoutTransform>
+                    <ScaleTransform x:Name="ZoomTransform" />
+                </Canvas.LayoutTransform>
+            </Canvas>
+        </ScrollViewer>
+    </Grid>
+</UserControl>
