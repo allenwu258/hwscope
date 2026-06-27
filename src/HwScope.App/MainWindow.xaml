@@ -26,14 +26,11 @@
                      Height="44"
                      Title="">
             <ui:TitleBar.Header>
-                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                    <ui:SymbolIcon Symbol="Desktop20"
-                                   Width="20"
-                                   Height="20"
-                                   Margin="0,0,10,0" />
+                <StackPanel Orientation="Horizontal"
+                            VerticalAlignment="Center">
                     <TextBlock Text="HwScope"
                                VerticalAlignment="Center"
-                               Margin="0,0,18,0"
+                               Margin="0,0,16,0"
                                FontSize="14" />
                     <Menu Background="Transparent"
                           BorderThickness="0"
