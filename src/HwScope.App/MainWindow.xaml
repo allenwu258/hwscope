@@ -171,12 +171,6 @@
                     </Button>
                 </StackPanel>
 
-                <TextBox Width="236"
-                         Height="34"
-                         HorizontalAlignment="Right"
-                         VerticalAlignment="Center"
-                         Text="查找"
-                         Foreground="{DynamicResource HwScopeMutedTextBrush}" />
             </DockPanel>
         </Border>
 
