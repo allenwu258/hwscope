@@ -35,6 +35,7 @@ docs/
   cpu-detail-page-design.md
   cpu-detail-implementation-plan.md
   cpu-stage2-topology-plan.md
+  cpu-topology-visualization-plan.md
   theme-system.md
   memory-benchmark-design.md
 ```
@@ -90,6 +91,7 @@ GUI 中可以通过左侧导航 `硬件 -> 中央处理器 (CPU)` 打开 CPU 详
 - [docs/cpu-detail-page-design.md](docs/cpu-detail-page-design.md)
 - [docs/cpu-detail-implementation-plan.md](docs/cpu-detail-implementation-plan.md)
 - [docs/cpu-stage2-topology-plan.md](docs/cpu-stage2-topology-plan.md)
+- [docs/cpu-topology-visualization-plan.md](docs/cpu-topology-visualization-plan.md)
 
 ## 构建
 
