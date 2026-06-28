@@ -155,6 +155,97 @@ Units can also differ. The native worker reports `MiB/s`. The UI currently conve
 
 Latency is expected to be closer than bandwidth, but still differs due to thread placement, page size, TLB behavior, power state, background load, NUMA placement, and test buffer size.
 
+## Accuracy Roadmap
+
+Improving the memory benchmark should not only chase higher numbers. The goal is to make each score more accurate, more repeatable, and easier to compare with tools such as AIDA64.
+
+HwScope should improve accuracy in this order:
+
+1. Make results explainable: record metadata, samples, selected kernel, topology, timing source, and environment.
+2. Make measurement windows stable: use explicit timing, warmup policy, adaptive sample duration, and variance checks.
+3. Make thread placement deterministic: choose physical cores, handle SMT, CPU groups, NUMA locality, and hybrid-core hints.
+4. Make memory bandwidth representative: add multi-threaded read/write/copy paths that can saturate the memory controller.
+5. Make kernels comparable: add explicit SIMD and non-temporal variants while preserving scalar/CRT reference paths.
+6. Make cache rows real: derive L1/L2/L3 working sets from detected cache topology instead of reusing the memory row.
+7. Make the UI honest: surface result quality and warnings instead of showing a bare number without confidence context.
+
+### Measurement Metadata
+
+Each final result should include enough context to explain how it was produced:
+
+- Benchmark options: size, iterations or sample policy, latency steps, thread mode, working set kind, and selected kernel.
+- Worker metadata: worker version, protocol version, executable path, command line, and elapsed time.
+- Environment metadata: CPU name, physical/logical core count, NUMA node, power plan, AC power state, process priority, and virtualization hints.
+- Sample metadata: raw samples, median, min, max, mean, standard deviation, coefficient of variation, and any discarded warmup samples.
+- Quality flags: high variance, short sample duration, suspected background noise, suspected thermal or power throttling, and incomplete topology data.
+
+The current `MemoryBenchmarkResult` is intentionally small, but the next protocol version should carry these fields before adding more aggressive kernels. Without this evidence chain, a faster number is hard to trust.
+
+### Timing And Sampling
+
+The current worker uses fixed `iterations` and `std::chrono::steady_clock`, which is acceptable for a prototype but weak for cache-sized tests and noisy systems.
+
+The next timing model should use a target-duration loop:
+
+```text
+for each metric:
+  run separate warmup passes
+  collect at least min_samples
+  make each measured sample last at least target_sample_ms
+  stop after variance converges or max_samples is reached
+```
+
+On Windows, `QueryPerformanceCounter` should be the primary wall-clock timer. `RDTSCP` can be evaluated later for short cache tests, but only after validating invariant TSC behavior and serialization costs.
+
+Median should remain the default displayed aggregate. Mean, min, max, standard deviation, and coefficient of variation should be recorded for diagnostics and quality flags.
+
+### Thread Placement
+
+Thread placement has a direct effect on both bandwidth and latency.
+
+Single-thread tests should bind to a selected physical core instead of pinning to whichever logical processor the worker starts on. Multi-threaded tests should:
+
+- Prefer one logical processor per physical core before using SMT siblings.
+- Keep memory tests NUMA-local by default, with explicit modes for per-node and interleaved tests.
+- Handle Windows CPU groups on high-core-count systems.
+- Record the chosen logical processors in the result.
+- Keep single-thread mode available as a diagnostic baseline.
+
+Hybrid CPUs need special care. If reliable P-core/E-core classification is unavailable, the benchmark should record that the placement is heuristic instead of implying full accuracy.
+
+### Bandwidth Kernels
+
+The highest-impact step for AIDA64-like memory bandwidth is multi-threading. Each worker thread should own independent buffers and synchronize through a barrier so all threads measure the same window.
+
+Copy results should clearly define accounting. HwScope should record both:
+
+```text
+copy_payload_mib_s = copied_bytes / elapsed_seconds / MiB
+copy_traffic_mib_s = copied_bytes * 2 / elapsed_seconds / MiB
+```
+
+The UI can choose one convention, but the protocol and documentation should preserve both so comparisons with external tools are not ambiguous.
+
+SIMD kernels should be introduced after metadata, timing, and topology are in place:
+
+- Keep scalar and CRT paths as reference kernels.
+- Add CPU feature detection and dispatch for SSE2, AVX2, and AVX-512 where available.
+- Add cached and non-temporal store variants.
+- Restrict non-temporal stores to large memory working sets by default because they can distort cache-resident tests.
+- Record the selected kernel and store policy in the result.
+
+### Cache And Latency Rows
+
+The target benchmark table includes Memory, L1 Cache, L2 Cache, and L3 Cache rows. Those rows should be backed by topology-aware working sets:
+
+- Detect cache sizes, line size, and sharing topology through CPUID or `GetLogicalProcessorInformationEx`.
+- Use a working set comfortably inside the target cache level rather than at the exact boundary.
+- Treat shared L3 or CCD/CCX-local caches as topology domains, not global constants.
+- Prefer single-thread cache bandwidth tests because cache-local throughput is usually a per-core property.
+- Keep memory bandwidth tests available in both single-thread and multi-thread modes.
+
+Latency should continue to use pointer chasing. Future latency work should produce a curve across L1, L2, L3, and Memory working sets, and should record page size, random seed, node count, warmup count, and whether huge pages are used.
+
 ## Cache Benchmark Direction
 
 The original design target includes AIDA64-like rows:
@@ -193,20 +284,56 @@ Keep the current worker process model, but make packaging reliable.
 - Emit and parse progress JSON so the GUI can show read/write/copy/latency incrementally, while final parsing remains strict and diagnostic-friendly.
 - Add result metadata: worker version, options, executable path, elapsed time.
 
-### Stage 2: Multi-Threaded Memory Bandwidth
+### Stage 2: Result Metadata And Final JSON
+
+Make the result protocol explainable before adding faster measurement paths.
+
+- Add worker version, protocol version, options, executable path, arguments, elapsed time, and selected kernel to final output.
+- Add raw samples and aggregate statistics for each metric.
+- Add quality flags for variance, short sample duration, topology uncertainty, and likely environment interference.
+- Keep CSV compatibility for existing CLI flows, but use structured JSON as the preferred C# parsing path.
+
+### Stage 3: Better Timing And Adaptive Sampling
+
+The current worker uses `std::chrono::steady_clock`, which is good enough for the prototype.
+
+Future work:
+
+- Use `QueryPerformanceCounter` directly on Windows.
+- Consider `RDTSCP` with serialization for short cache tests.
+- Calibrate invariant TSC before relying on cycle-based timing.
+- Separate warmup rounds from measured rounds.
+- Replace fixed iteration counts with target sample duration, minimum sample count, maximum sample count, and variance convergence.
+- Increase inner-loop duration for small cache working sets to reduce timer noise.
+
+### Stage 4: Topology And Environment Awareness
+
+Benchmark scores are strongly affected by topology.
+
+- Detect CPU groups on high-core-count Windows systems.
+- Detect NUMA nodes and memory locality.
+- Choose test thread placement explicitly.
+- Prefer physical cores before SMT siblings for multi-thread runs.
+- Record selected logical processors and topology confidence in the result.
+- Identify hypervisor presence and show it in the benchmark window.
+- Record power plan, process priority, and whether the system is on AC power.
+
+### Stage 5: Multi-Threaded Memory Bandwidth
 
 This is the biggest expected improvement toward AIDA64-like memory bandwidth.
 
 - Add `--threads`.
 - Allocate independent buffers per worker thread.
-- Pin each thread to a distinct physical core.
+- Synchronize worker start with a barrier.
+- Pin each thread to a distinct physical core by default.
 - Avoid SMT sibling placement until physical cores are exhausted.
-- Aggregate per-thread bytes and report total throughput.
+- Aggregate per-thread bytes over a shared measurement window and report total throughput.
 - Keep single-thread mode available for diagnostic comparison.
+- Report both copy payload throughput and estimated copy traffic throughput.
 
-### Stage 3: SIMD Kernels
+### Stage 6: SIMD Kernels
 
-Replace generic scalar/CRT paths with explicit kernels.
+Replace generic scalar/CRT paths with explicit kernels after timing and topology are observable.
 
 - Add CPU feature detection.
 - Dispatch SSE2, AVX2, and AVX-512 paths where available.
@@ -214,10 +341,11 @@ Replace generic scalar/CRT paths with explicit kernels.
 - Implement write kernels with vector stores.
 - Implement copy kernels with load/store loops.
 - Evaluate non-temporal stores for large memory working sets.
+- Record the selected kernel and store policy in the result.
 
 Non-temporal stores should be optional because they can improve large streaming writes but distort cache-resident tests.
 
-### Stage 4: Cache Rows
+### Stage 7: Cache Rows
 
 Add cache-aware working set selection.
 
@@ -225,44 +353,27 @@ Add cache-aware working set selection.
 - Run benchmark rows for L1, L2, L3, and Memory.
 - Keep cache tests single-threaded by default because cache-local throughput is usually a per-core property.
 - Run memory tests with both single-thread and multi-thread modes.
+- Generate latency rows from pointer-chasing working sets sized for each cache level.
 
-### Stage 5: Better Timing
+### Stage 8: Result Quality And History
 
-The current worker uses `std::chrono::steady_clock`, which is good enough for the prototype.
+Improve repeatability, diagnostics, and user trust.
 
-Future options:
-
-- Use `QueryPerformanceCounter` directly on Windows.
-- Consider `RDTSCP` with serialization for short cache tests.
-- Calibrate invariant TSC before relying on cycle-based timing.
-- Increase inner-loop duration for small cache working sets to reduce timer noise.
-
-### Stage 6: Topology And Environment Awareness
-
-Benchmark scores are strongly affected by topology.
-
-- Detect CPU groups on high-core-count Windows systems.
-- Detect NUMA nodes and memory locality.
-- Choose test thread placement explicitly.
-- Identify hypervisor presence and show it in the benchmark window.
-- Record power plan, process priority, and whether the system is on AC power.
-
-### Stage 7: Result Quality
-
-Improve repeatability and diagnostics.
-
-- Use warmup rounds separate from measured rounds.
-- Keep median as the default aggregation.
-- Also record min, max, mean, and standard deviation.
+- Keep median as the default displayed aggregation.
+- Also record min, max, mean, standard deviation, coefficient of variation, and sample count.
 - Mark results unstable when variance is high.
+- Surface environment and topology warnings in the benchmark window.
 - Save benchmark history with hardware metadata and options.
 
 ## Near-Term Tasks For HwScope
 
 Recommended next steps:
 
-1. Add `--threads` to the native worker and expose it through `MemoryBenchmarkOptions`.
-2. Extend progress JSON with worker version, options, executable path, elapsed time, and result quality flags.
-3. Add L1/L2/L3 cache rows using detected cache sizes.
-4. Add a compact benchmark report export from `MemoryBenchmarkWindow`.
+1. Add structured final JSON with worker version, options, elapsed time, raw samples, aggregate statistics, and quality flags.
+2. Add adaptive timing: warmup samples, target sample duration, min/max sample count, and variance calculation.
+3. Add topology-aware placement metadata before enabling multi-thread default behavior.
+4. Add `--threads` to the native worker and expose it through `MemoryBenchmarkOptions`.
+5. Add explicit kernel metadata and then introduce SIMD kernels behind feature detection.
+6. Add L1/L2/L3 cache rows using detected cache sizes and sharing topology.
+7. Add a compact benchmark report export from `MemoryBenchmarkWindow`.
 
