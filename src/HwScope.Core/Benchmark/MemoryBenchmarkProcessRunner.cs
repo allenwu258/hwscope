@@ -92,7 +92,7 @@ public sealed class MemoryBenchmarkProcessRunner : IMemoryBenchmarkRunner
         {
             return progress is null ? ParseCsv(output) : ParseProgressJson(output);
         }
-        catch (Exception ex) when (ex is FormatException or OverflowException)
+        catch (Exception ex) when (ex is FormatException or OverflowException or JsonException or InvalidOperationException or KeyNotFoundException)
         {
             var logPath = WriteDiagnostics("ParseError", executable, arguments, process.ExitCode, output, error);
             throw new FormatException($"内存跑分输出解析失败。诊断日志：{logPath}", ex);
@@ -277,9 +277,9 @@ public sealed class MemoryBenchmarkProcessRunner : IMemoryBenchmarkRunner
                 DateTimeOffset.Now);
             return true;
         }
-        catch (JsonException ex)
+        catch (Exception ex) when (ex is FormatException or JsonException or InvalidOperationException or KeyNotFoundException)
         {
-            throw new FormatException("内存跑分进度事件不是有效 JSON。", ex);
+            return false;
         }
     }
 
