@@ -5,45 +5,86 @@ namespace HwScope.Core.Benchmark;
 
 public sealed class MemoryBenchmarkProcessRunner : IMemoryBenchmarkRunner
 {
-    private readonly string? _executablePath;
+    private static readonly TimeSpan DefaultTimeout = TimeSpan.FromMinutes(5);
 
-    public MemoryBenchmarkProcessRunner(string? executablePath = null)
+    private readonly string? _executablePath;
+    private readonly string _diagnosticLogPath;
+
+    public MemoryBenchmarkProcessRunner(string? executablePath = null, string? diagnosticLogPath = null)
     {
         _executablePath = executablePath;
+        _diagnosticLogPath = diagnosticLogPath ?? Path.Combine(Path.GetTempPath(), "HwScope-memory-benchmark.log");
     }
 
     public async Task<MemoryBenchmarkResult> RunAsync(MemoryBenchmarkOptions options, CancellationToken cancellationToken = default)
     {
+        ValidateOptions(options);
+
         var executable = ResolveExecutablePath();
         if (executable is null)
         {
-            throw new FileNotFoundException("未找到 membench.exe。请先构建 src/HwScope.Native.MemoryBench，或确认外部 memory-bench-cpp 构建产物存在。");
+            throw new FileNotFoundException("未找到 membench.exe。请先构建 src/HwScope.Native.MemoryBench，或确认构建产物已复制到应用输出目录的 native 子目录。");
         }
 
+        var arguments = BuildArguments(options);
         var startInfo = new ProcessStartInfo
         {
             FileName = executable,
-            Arguments = $"--size-mib {options.SizeMiB} --iterations {options.Iterations} --latency-steps {options.LatencySteps} --csv",
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             UseShellExecute = false,
             CreateNoWindow = true
         };
-
-        using var process = Process.Start(startInfo) ?? throw new InvalidOperationException("无法启动内存跑分进程。");
-        var outputTask = process.StandardOutput.ReadToEndAsync(cancellationToken);
-        var errorTask = process.StandardError.ReadToEndAsync(cancellationToken);
-
-        await process.WaitForExitAsync(cancellationToken).ConfigureAwait(false);
-
-        var output = await outputTask.ConfigureAwait(false);
-        var error = await errorTask.ConfigureAwait(false);
-        if (process.ExitCode != 0)
+        foreach (var argument in arguments)
         {
-            throw new InvalidOperationException($"内存跑分失败：{error.Trim()}");
+            startInfo.ArgumentList.Add(argument);
         }
 
-        return ParseCsv(output);
+        using var process = Process.Start(startInfo) ?? throw new InvalidOperationException("无法启动内存跑分进程。");
+        var outputTask = process.StandardOutput.ReadToEndAsync();
+        var errorTask = process.StandardError.ReadToEndAsync();
+
+        using var timeoutCts = new CancellationTokenSource(options.Timeout ?? DefaultTimeout);
+        using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeoutCts.Token);
+
+        try
+        {
+            await process.WaitForExitAsync(linkedCts.Token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException ex) when (timeoutCts.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
+        {
+            await KillProcessTreeAsync(process).ConfigureAwait(false);
+            var timeoutOutput = await CompleteReadAsync(outputTask).ConfigureAwait(false);
+            var timeoutError = await CompleteReadAsync(errorTask).ConfigureAwait(false);
+            var logPath = WriteDiagnostics("Timeout", executable, arguments, null, timeoutOutput, timeoutError);
+            throw new TimeoutException($"内存跑分超过 {(options.Timeout ?? DefaultTimeout).TotalSeconds:F0} 秒未完成，已终止 worker。诊断日志：{logPath}", ex);
+        }
+        catch (OperationCanceledException ex)
+        {
+            await KillProcessTreeAsync(process).ConfigureAwait(false);
+            var canceledOutput = await CompleteReadAsync(outputTask).ConfigureAwait(false);
+            var canceledError = await CompleteReadAsync(errorTask).ConfigureAwait(false);
+            var logPath = WriteDiagnostics("Canceled", executable, arguments, null, canceledOutput, canceledError);
+            throw new OperationCanceledException($"内存跑分已取消，已终止 worker。诊断日志：{logPath}", ex, cancellationToken);
+        }
+
+        var output = await CompleteReadAsync(outputTask).ConfigureAwait(false);
+        var error = await CompleteReadAsync(errorTask).ConfigureAwait(false);
+        if (process.ExitCode != 0)
+        {
+            var logPath = WriteDiagnostics("NonZeroExit", executable, arguments, process.ExitCode, output, error);
+            throw new InvalidOperationException($"内存跑分失败，worker 退出码 {process.ExitCode}：{FormatBriefError(error)}。诊断日志：{logPath}");
+        }
+
+        try
+        {
+            return ParseCsv(output);
+        }
+        catch (Exception ex) when (ex is FormatException or OverflowException)
+        {
+            var logPath = WriteDiagnostics("ParseError", executable, arguments, process.ExitCode, output, error);
+            throw new FormatException($"内存跑分输出解析失败。诊断日志：{logPath}", ex);
+        }
     }
 
     private string? ResolveExecutablePath()
@@ -57,10 +98,118 @@ public sealed class MemoryBenchmarkProcessRunner : IMemoryBenchmarkRunner
         var baseDirectory = AppContext.BaseDirectory;
         candidates.Add(Path.Combine(baseDirectory, "membench.exe"));
         candidates.Add(Path.Combine(baseDirectory, "native", "membench.exe"));
+        // Developer fallback: allows running from source after building the native worker manually.
         candidates.Add(Path.GetFullPath(Path.Combine(baseDirectory, "..", "..", "..", "..", "HwScope.Native.MemoryBench", "build", "Release", "membench.exe")));
-        candidates.Add(@"C:\Users\Trivedi\memory-bench-cpp\build\Release\membench.exe");
 
         return candidates.FirstOrDefault(File.Exists);
+    }
+
+    private static string[] BuildArguments(MemoryBenchmarkOptions options)
+    {
+        return
+        [
+            "--size-mib",
+            options.SizeMiB.ToString(CultureInfo.InvariantCulture),
+            "--iterations",
+            options.Iterations.ToString(CultureInfo.InvariantCulture),
+            "--latency-steps",
+            options.LatencySteps.ToString(CultureInfo.InvariantCulture),
+            "--csv"
+        ];
+    }
+
+    private static void ValidateOptions(MemoryBenchmarkOptions options)
+    {
+        if (options.SizeMiB < 16)
+        {
+            throw new ArgumentOutOfRangeException(nameof(options), "测试缓冲区至少需要 16 MiB。");
+        }
+
+        if (options.Iterations <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(options), "迭代次数必须大于 0。");
+        }
+
+        if (options.LatencySteps <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(options), "延迟测试步数必须大于 0。");
+        }
+
+        if (options.Timeout is { } timeout && timeout <= TimeSpan.Zero)
+        {
+            throw new ArgumentOutOfRangeException(nameof(options), "超时时间必须大于 0。");
+        }
+    }
+
+    private static async Task KillProcessTreeAsync(Process process)
+    {
+        try
+        {
+            if (!process.HasExited)
+            {
+                process.Kill(entireProcessTree: true);
+            }
+        }
+        catch (InvalidOperationException)
+        {
+            return;
+        }
+
+        await process.WaitForExitAsync(CancellationToken.None).ConfigureAwait(false);
+    }
+
+    private static async Task<string> CompleteReadAsync(Task<string> readTask)
+    {
+        try
+        {
+            return await readTask.ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            return $"<无法读取进程输出：{ex.Message}>";
+        }
+    }
+
+    private string WriteDiagnostics(
+        string reason,
+        string executable,
+        IReadOnlyList<string> arguments,
+        int? exitCode,
+        string output,
+        string error)
+    {
+        try
+        {
+            var directory = Path.GetDirectoryName(_diagnosticLogPath);
+            if (!string.IsNullOrWhiteSpace(directory))
+            {
+                Directory.CreateDirectory(directory);
+            }
+
+            var text = string.Join(Environment.NewLine,
+                $"[{DateTimeOffset.Now:yyyy-MM-dd HH:mm:ss zzz}] {reason}",
+                $"Executable: {executable}",
+                $"Arguments : {string.Join(' ', arguments)}",
+                $"ExitCode  : {(exitCode.HasValue ? exitCode.Value.ToString(CultureInfo.InvariantCulture) : "<none>")}",
+                "Stdout:",
+                string.IsNullOrWhiteSpace(output) ? "<empty>" : output.TrimEnd(),
+                "Stderr:",
+                string.IsNullOrWhiteSpace(error) ? "<empty>" : error.TrimEnd(),
+                new string('-', 80),
+                string.Empty);
+
+            File.AppendAllText(_diagnosticLogPath, text);
+            return _diagnosticLogPath;
+        }
+        catch (Exception ex)
+        {
+            return $"{_diagnosticLogPath}（写入失败：{ex.Message}）";
+        }
+    }
+
+    private static string FormatBriefError(string error)
+    {
+        return string.IsNullOrWhiteSpace(error) ? "无 stderr 输出" : error.Trim();
     }
 
     private static MemoryBenchmarkResult ParseCsv(string output)
