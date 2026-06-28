@@ -309,11 +309,13 @@
             </Grid.ColumnDefinitions>
 
             <ui:Button Grid.Column="0"
+                       x:Name="DiagnosticsButton"
                        Width="110"
                        Height="32"
-                       Icon="{ui:SymbolIcon Save24}"
-                       Content="Save"
-                       IsEnabled="False" />
+                       Icon="{ui:SymbolIcon DocumentBulletList24}"
+                       Content="Diagnostics"
+                       IsEnabled="False"
+                       Click="DiagnosticsButton_Click" />
             <ui:Button Grid.Column="1"
                        x:Name="StartBenchmarkButton"
                        Width="180"

@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <cmath>
 #include <iomanip>
 #include <iostream>
 #include <limits>
@@ -28,6 +29,8 @@ constexpr std::size_t kMiB = 1024ull * 1024ull;
 constexpr std::uint64_t kDefaultSizeMiB = 512;
 constexpr int kDefaultIterations = 7;
 constexpr std::uint64_t kDefaultLatencySteps = 20'000'000;
+constexpr std::string_view kWorkerVersion = "0.2.0";
+constexpr int kProtocolVersion = 2;
 
 volatile std::uint64_t g_sink = 0;
 
@@ -36,6 +39,7 @@ struct Options {
     int iterations = kDefaultIterations;
     std::uint64_t latency_steps = kDefaultLatencySteps;
     bool csv = false;
+    bool json = false;
     bool progress_json = false;
 };
 
@@ -56,11 +60,25 @@ struct BenchResult {
     double write_mib_s = 0.0;
     double copy_mib_s = 0.0;
     double latency_ns = 0.0;
+    std::vector<double> read_samples;
+    std::vector<double> write_samples;
+    std::vector<double> copy_samples;
+    std::vector<double> latency_samples;
+    double elapsed_ms = 0.0;
+};
+
+struct Aggregate {
+    double median = 0.0;
+    double min = 0.0;
+    double max = 0.0;
+    double mean = 0.0;
+    double stddev = 0.0;
+    double cv = 0.0;
 };
 
 void print_usage() {
     std::cout
-        << "Usage: membench [--size-mib N] [--iterations N] [--latency-steps N] [--csv] [--progress-json]\n"
+        << "Usage: membench [--size-mib N] [--iterations N] [--latency-steps N] [--csv] [--json] [--progress-json]\n"
         << "\n"
         << "Defaults:\n"
         << "  --size-mib " << kDefaultSizeMiB << "\n"
@@ -97,6 +115,10 @@ Options parse_args(int argc, char** argv) {
             options.csv = true;
             continue;
         }
+        if (arg == "--json") {
+            options.json = true;
+            continue;
+        }
         if (arg == "--progress-json") {
             options.progress_json = true;
             continue;
@@ -129,6 +151,9 @@ Options parse_args(int argc, char** argv) {
     }
     if (options.latency_steps == 0) {
         throw std::invalid_argument("--latency-steps must be greater than 0");
+    }
+    if ((options.csv ? 1 : 0) + (options.json ? 1 : 0) + (options.progress_json ? 1 : 0) > 1) {
+        throw std::invalid_argument("--csv, --json, and --progress-json are mutually exclusive");
     }
 
     return options;
@@ -178,6 +203,30 @@ double median(std::vector<double> values) {
     return *mid;
 }
 
+Aggregate aggregate(const std::vector<double>& values) {
+    Aggregate result;
+    if (values.empty()) {
+        return result;
+    }
+
+    result.median = median(values);
+    const auto [min_it, max_it] = std::minmax_element(values.begin(), values.end());
+    result.min = *min_it;
+    result.max = *max_it;
+    result.mean = std::accumulate(values.begin(), values.end(), 0.0) / static_cast<double>(values.size());
+
+    double variance = 0.0;
+    for (const double value : values) {
+        const double delta = value - result.mean;
+        variance += delta * delta;
+    }
+
+    variance /= static_cast<double>(values.size());
+    result.stddev = std::sqrt(variance);
+    result.cv = result.mean == 0.0 ? 0.0 : result.stddev / result.mean;
+    return result;
+}
+
 void touch_pages(std::uint8_t* data, std::size_t bytes) {
     constexpr std::size_t page = 4096;
     for (std::size_t i = 0; i < bytes; i += page) {
@@ -185,7 +234,7 @@ void touch_pages(std::uint8_t* data, std::size_t bytes) {
     }
 }
 
-double run_read(std::uint8_t* data, std::size_t bytes, int iterations) {
+std::vector<double> run_read(std::uint8_t* data, std::size_t bytes, int iterations) {
     constexpr std::size_t unroll = 8;
     constexpr std::size_t stride = sizeof(std::uint64_t) * unroll;
     const auto count = bytes / sizeof(std::uint64_t);
@@ -224,10 +273,10 @@ double run_read(std::uint8_t* data, std::size_t bytes, int iterations) {
         samples.push_back(static_cast<double>(bytes) / seconds / static_cast<double>(kMiB));
     }
 
-    return median(std::move(samples));
+    return samples;
 }
 
-double run_write(std::uint8_t* data, std::size_t bytes, int iterations) {
+std::vector<double> run_write(std::uint8_t* data, std::size_t bytes, int iterations) {
     std::vector<double> samples;
     samples.reserve(static_cast<std::size_t>(iterations));
 
@@ -240,10 +289,10 @@ double run_write(std::uint8_t* data, std::size_t bytes, int iterations) {
         samples.push_back(static_cast<double>(bytes) / seconds / static_cast<double>(kMiB));
     }
 
-    return median(std::move(samples));
+    return samples;
 }
 
-double run_copy(std::uint8_t* dst, const std::uint8_t* src, std::size_t bytes, int iterations) {
+std::vector<double> run_copy(std::uint8_t* dst, const std::uint8_t* src, std::size_t bytes, int iterations) {
     std::vector<double> samples;
     samples.reserve(static_cast<std::size_t>(iterations));
 
@@ -255,10 +304,10 @@ double run_copy(std::uint8_t* dst, const std::uint8_t* src, std::size_t bytes, i
         samples.push_back(static_cast<double>(bytes) / seconds / static_cast<double>(kMiB));
     }
 
-    return median(std::move(samples));
+    return samples;
 }
 
-double run_latency(std::size_t bytes, std::uint64_t steps) {
+std::vector<double> run_latency(std::size_t bytes, std::uint64_t steps, int iterations) {
     const std::size_t node_count = bytes / sizeof(std::uint32_t);
     if (node_count < 2) {
         throw std::invalid_argument("Latency buffer is too small");
@@ -279,19 +328,26 @@ double run_latency(std::size_t bytes, std::uint64_t steps) {
 
     volatile const std::uint32_t* chain = next.data();
     std::uint32_t index = order[0];
+    const std::uint64_t sample_steps = std::max<std::uint64_t>(1, steps / static_cast<std::uint64_t>(iterations));
 
     for (std::uint64_t i = 0; i < std::min<std::uint64_t>(steps / 10, 1'000'000); ++i) {
         index = chain[index];
     }
 
-    const double seconds = elapsed_seconds([&] {
-        for (std::uint64_t i = 0; i < steps; ++i) {
-            index = chain[index];
-        }
-    });
+    std::vector<double> samples;
+    samples.reserve(static_cast<std::size_t>(iterations));
+    for (int round = 0; round < iterations; ++round) {
+        const double seconds = elapsed_seconds([&] {
+            for (std::uint64_t i = 0; i < sample_steps; ++i) {
+                index = chain[index];
+            }
+        });
+
+        samples.push_back(seconds * 1'000'000'000.0 / static_cast<double>(sample_steps));
+    }
 
     g_sink ^= index;
-    return seconds * 1'000'000'000.0 / static_cast<double>(steps);
+    return samples;
 }
 
 void emit_progress_started(const Options& options) {
@@ -312,7 +368,90 @@ void emit_progress_completed() {
     std::cout << "{\"type\":\"completed\"}\n" << std::flush;
 }
 
+void print_json_string(std::ostream& os, std::string_view value) {
+    os << '"';
+    for (const char ch : value) {
+        switch (ch) {
+            case '\\':
+                os << "\\\\";
+                break;
+            case '"':
+                os << "\\\"";
+                break;
+            case '\n':
+                os << "\\n";
+                break;
+            case '\r':
+                os << "\\r";
+                break;
+            case '\t':
+                os << "\\t";
+                break;
+            default:
+                os << ch;
+                break;
+        }
+    }
+    os << '"';
+}
+
+void print_number_array(std::ostream& os, const std::vector<double>& values) {
+    os << '[';
+    for (std::size_t i = 0; i < values.size(); ++i) {
+        if (i > 0) {
+            os << ',';
+        }
+        os << std::fixed << std::setprecision(2) << values[i];
+    }
+    os << ']';
+}
+
+void print_aggregate(std::ostream& os, const Aggregate& value) {
+    os << "{\"median\":" << std::fixed << std::setprecision(2) << value.median
+       << ",\"min\":" << value.min
+       << ",\"max\":" << value.max
+       << ",\"mean\":" << value.mean
+       << ",\"stddev\":" << value.stddev
+       << ",\"cv\":" << std::setprecision(6) << value.cv
+       << '}';
+}
+
+void print_metric_result(std::ostream& os, std::string_view unit, const std::vector<double>& samples) {
+    os << "{\"unit\":";
+    print_json_string(os, unit);
+    os << ",\"samples\":";
+    print_number_array(os, samples);
+    os << ",\"aggregate\":";
+    print_aggregate(os, aggregate(samples));
+    os << '}';
+}
+
+void print_json_result(std::ostream& os, const Options& options, const BenchResult& result) {
+    os << std::fixed << std::setprecision(2)
+       << "{\"type\":\"result\""
+       << ",\"worker_version\":";
+    print_json_string(os, kWorkerVersion);
+    os << ",\"protocol_version\":" << kProtocolVersion
+       << ",\"elapsed_ms\":" << result.elapsed_ms
+       << ",\"options\":{\"size_mib\":" << options.size_mib
+       << ",\"iterations\":" << options.iterations
+       << ",\"latency_steps\":" << options.latency_steps
+       << ",\"threads\":1"
+       << ",\"working_set_kind\":\"memory\"}"
+       << ",\"kernel\":{\"read\":\"scalar_u64_unrolled\",\"write\":\"crt_memset\",\"copy\":\"crt_memcpy\",\"latency\":\"pointer_chase\"}"
+       << ",\"metrics\":{\"read\":";
+    print_metric_result(os, "mib_s", result.read_samples);
+    os << ",\"write\":";
+    print_metric_result(os, "mib_s", result.write_samples);
+    os << ",\"copy\":";
+    print_metric_result(os, "mib_s", result.copy_samples);
+    os << ",\"latency\":";
+    print_metric_result(os, "ns", result.latency_samples);
+    os << "}}\n";
+}
+
 BenchResult run_bench(const Options& options) {
+    const auto benchmark_start = std::chrono::steady_clock::now();
     const std::size_t bytes = static_cast<std::size_t>(options.size_mib) * kMiB;
     auto src = make_aligned_buffer(bytes);
     auto dst = make_aligned_buffer(bytes);
@@ -329,17 +468,20 @@ BenchResult run_bench(const Options& options) {
     (void)run_copy(dst.get(), src.get(), bytes, 1);
 
     BenchResult result;
-    result.read_mib_s = run_read(src.get(), bytes, options.iterations);
+    result.read_samples = run_read(src.get(), bytes, options.iterations);
+    result.read_mib_s = aggregate(result.read_samples).median;
     if (options.progress_json) {
         emit_progress_metric("read", result.read_mib_s, "mib_s");
     }
 
-    result.write_mib_s = run_write(dst.get(), bytes, options.iterations);
+    result.write_samples = run_write(dst.get(), bytes, options.iterations);
+    result.write_mib_s = aggregate(result.write_samples).median;
     if (options.progress_json) {
         emit_progress_metric("write", result.write_mib_s, "mib_s");
     }
 
-    result.copy_mib_s = run_copy(dst.get(), src.get(), bytes, options.iterations);
+    result.copy_samples = run_copy(dst.get(), src.get(), bytes, options.iterations);
+    result.copy_mib_s = aggregate(result.copy_samples).median;
     if (options.progress_json) {
         emit_progress_metric("copy", result.copy_mib_s, "mib_s");
     }
@@ -347,11 +489,14 @@ BenchResult run_bench(const Options& options) {
     src.reset();
     dst.reset();
 
-    result.latency_ns = run_latency(bytes, options.latency_steps);
+    result.latency_samples = run_latency(bytes, options.latency_steps, options.iterations);
+    result.latency_ns = aggregate(result.latency_samples).median;
     if (options.progress_json) {
         emit_progress_metric("latency", result.latency_ns, "ns");
     }
 
+    const auto benchmark_finish = std::chrono::steady_clock::now();
+    result.elapsed_ms = std::chrono::duration<double, std::milli>(benchmark_finish - benchmark_start).count();
     return result;
 }
 
@@ -364,6 +509,11 @@ void print_result(const Options& options, const BenchResult& result) {
                   << result.write_mib_s << ','
                   << result.copy_mib_s << ','
                   << result.latency_ns << '\n';
+        return;
+    }
+
+    if (options.json) {
+        print_json_result(std::cout, options, result);
         return;
     }
 
@@ -391,6 +541,7 @@ int main(int argc, char** argv) {
 
         const BenchResult result = run_bench(options);
         if (options.progress_json) {
+            print_json_result(std::cout, options, result);
             emit_progress_completed();
             return 0;
         }

@@ -30,7 +30,15 @@ The C# runner also keeps a source-tree `build\Release` developer fallback so App
 
 ## Invocation
 
-HwScope invokes the worker with:
+HwScope invokes the worker with structured final JSON by default:
+
+```text
+membench --size-mib 512 --iterations 7 --latency-steps 20000000 --json
+```
+
+JSON output includes worker/protocol metadata, options, elapsed time, raw samples, and aggregate statistics.
+
+CSV remains available for manual compatibility:
 
 ```text
 membench --size-mib 512 --iterations 7 --latency-steps 20000000 --csv
@@ -54,7 +62,7 @@ Each completed metric is flushed as one event:
 {"type":"metric","metric":"read","value":36000.00,"unit":"mib_s"}
 ```
 
-The progress stream is newline-delimited JSON. The C# runner treats live metric updates as best-effort, then strictly validates the full stream after process exit and writes stdout/stderr diagnostics for parse failures.
+The progress stream also emits a final `type=result` JSON event before `type=completed`. The C# runner treats live metric updates as best-effort, then strictly validates the full stream after process exit and writes stdout/stderr diagnostics for parse failures.
 
 See [`../../docs/memory-benchmark-design.md`](../../docs/memory-benchmark-design.md) for algorithm notes and the evolution plan.
 

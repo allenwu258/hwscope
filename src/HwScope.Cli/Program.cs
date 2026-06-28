@@ -39,6 +39,11 @@ try
         Console.WriteLine($"Write   : {result.WriteMBS:F0} MB/s");
         Console.WriteLine($"Copy    : {result.CopyMBS:F0} MB/s");
         Console.WriteLine($"Latency : {result.LatencyNs:F1} ns");
+        Console.WriteLine();
+        Console.WriteLine($"Worker  : {result.WorkerVersion ?? "unknown"} (protocol {result.ProtocolVersion?.ToString() ?? "unknown"})");
+        Console.WriteLine($"Options : {result.Options?.SizeMiB ?? result.SizeMiB} MiB, {result.Options?.Iterations ?? 0} samples, latency steps {result.Options?.LatencySteps ?? 0}, threads {result.Options?.Threads ?? 1}, {result.Options?.WorkingSetKind ?? "memory"}");
+        Console.WriteLine($"Elapsed : {(result.ElapsedMs is { } elapsedMs ? $"{elapsedMs:F0} ms" : "unknown")}");
+        Console.WriteLine($"Quality : {FormatQuality(result)}");
         return 0;
     }
 
@@ -67,6 +72,21 @@ catch (Exception ex)
 {
     Console.Error.WriteLine($"采集硬件信息失败：{ex.Message}");
     return 1;
+}
+
+static string FormatQuality(MemoryBenchmarkResult result)
+{
+    if (result.Quality is null)
+    {
+        return "unknown";
+    }
+
+    if (result.Quality.Flags.Count == 0)
+    {
+        return "stable";
+    }
+
+    return string.Join(", ", result.Quality.Flags);
 }
 
 internal sealed record CliOptions(bool Json, bool Copy, bool MemoryBenchmark, bool ShowHelp)

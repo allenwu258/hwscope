@@ -64,10 +64,16 @@ Current defaults:
 --latency-steps 20000000
 ```
 
-Minimum memory buffer size is 16 MiB. CSV output remains available for final-result parsing and CLI compatibility:
+Minimum memory buffer size is 16 MiB. CSV output remains available for manual compatibility:
 
 ```text
 size_mib,read_mib_s,write_mib_s,copy_mib_s,latency_ns
+```
+
+The preferred final-result protocol is structured JSON:
+
+```text
+{"type":"result","worker_version":"0.2.0","protocol_version":2,"elapsed_ms":1234.56,"options":{"size_mib":512,"iterations":7,"latency_steps":20000000,"threads":1,"working_set_kind":"memory"},"metrics":{"read":{"unit":"mib_s","samples":[36000.00],"aggregate":{"median":36000.00,"min":36000.00,"max":36000.00,"mean":36000.00,"stddev":0.00,"cv":0.000000}}}}
 ```
 
 The GUI uses newline-delimited progress JSON so each result can appear as soon as that metric finishes:
@@ -78,12 +84,15 @@ The GUI uses newline-delimited progress JSON so each result can appear as soon a
 {"type":"metric","metric":"write","value":51000.00,"unit":"mib_s"}
 {"type":"metric","metric":"copy","value":22000.00,"unit":"mib_s"}
 {"type":"metric","metric":"latency","value":138.50,"unit":"ns"}
+{"type":"result",...}
 {"type":"completed"}
 ```
 
 The worker flushes each progress JSON line immediately. `MemoryBenchmarkProcessRunner` reads stdout line-by-line, reports `MemoryBenchmarkProgress` updates to the UI, and still returns a complete `MemoryBenchmarkResult` when the worker exits successfully.
 
 Progress reporting is best-effort during the run: malformed or unknown progress lines are ignored for live UI updates so stdout collection can continue. After the worker exits with code 0, the runner strictly parses the accumulated output and requires `started`, all four metric events, and `completed`. Parse failures are recorded with executable path, arguments, stdout, and stderr in the benchmark diagnostic log before surfacing a managed `FormatException`.
+
+`MemoryBenchmarkProcessRunner` enriches the native result with the resolved executable path, environment metadata, and quality flags. The first quality pass is intentionally conservative: it marks high variance, likely background noise, short runs, simple downward throughput trends, and incomplete topology data. These flags are diagnostic hints, not proof of a specific thermal or scheduling cause.
 
 ### Allocation And Warmup
 
@@ -179,7 +188,7 @@ Each final result should include enough context to explain how it was produced:
 - Sample metadata: raw samples, median, min, max, mean, standard deviation, coefficient of variation, and any discarded warmup samples.
 - Quality flags: high variance, short sample duration, suspected background noise, suspected thermal or power throttling, and incomplete topology data.
 
-The current `MemoryBenchmarkResult` is intentionally small, but the next protocol version should carry these fields before adding more aggressive kernels. Without this evidence chain, a faster number is hard to trust.
+`MemoryBenchmarkResult` now carries these first-stage fields for the main memory row. Future phases should deepen the metadata rather than replace this shape. Without this evidence chain, a faster number is hard to trust.
 
 ### Timing And Sampling
 

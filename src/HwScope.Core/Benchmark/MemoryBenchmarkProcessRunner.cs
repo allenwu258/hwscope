@@ -1,6 +1,8 @@
 using System.Diagnostics;
 using System.Globalization;
 using System.Text.Json;
+using HwScope.Core.Hardware.Cpu;
+using HwScope.Core.Windows;
 
 namespace HwScope.Core.Benchmark;
 
@@ -90,7 +92,8 @@ public sealed class MemoryBenchmarkProcessRunner : IMemoryBenchmarkRunner
 
         try
         {
-            return progress is null ? ParseCsv(output) : ParseProgressJson(output);
+            var result = progress is null ? ParseJsonResult(output) : ParseProgressJson(output);
+            return EnrichResult(result, executable, options);
         }
         catch (Exception ex) when (ex is FormatException or OverflowException or JsonException or InvalidOperationException or KeyNotFoundException)
         {
@@ -126,7 +129,7 @@ public sealed class MemoryBenchmarkProcessRunner : IMemoryBenchmarkRunner
             options.Iterations.ToString(CultureInfo.InvariantCulture),
             "--latency-steps",
             options.LatencySteps.ToString(CultureInfo.InvariantCulture),
-            useProgressJson ? "--progress-json" : "--csv"
+            useProgressJson ? "--progress-json" : "--json"
         ];
     }
 
@@ -145,6 +148,21 @@ public sealed class MemoryBenchmarkProcessRunner : IMemoryBenchmarkRunner
         if (options.LatencySteps <= 0)
         {
             throw new ArgumentOutOfRangeException(nameof(options), "延迟测试步数必须大于 0。");
+        }
+
+        if (options.Threads <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(options), "线程数必须大于 0。");
+        }
+
+        if (options.Threads != 1)
+        {
+            throw new NotSupportedException("当前内存跑分阶段仅支持单线程，--threads 将在后续阶段接入。");
+        }
+
+        if (!string.Equals(options.WorkingSetKind, "memory", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new NotSupportedException("当前内存跑分阶段仅支持 memory working set，缓存行将在后续阶段接入。");
         }
 
         if (options.Timeout is { } timeout && timeout <= TimeSpan.Zero)
@@ -313,6 +331,7 @@ public sealed class MemoryBenchmarkProcessRunner : IMemoryBenchmarkRunner
         double? writeMiBS = null;
         double? copyMiBS = null;
         double? latencyNs = null;
+        MemoryBenchmarkResult? finalResult = null;
         var completed = false;
 
         var lines = output.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
@@ -352,15 +371,28 @@ public sealed class MemoryBenchmarkProcessRunner : IMemoryBenchmarkRunner
                             break;
                     }
                     break;
+                case "result":
+                    finalResult = ParseJsonResult(root);
+                    break;
                 case "completed":
                     completed = true;
                     break;
             }
         }
 
-        if (!completed || sizeMiB is null || readMiBS is null || writeMiBS is null || copyMiBS is null || latencyNs is null)
+        if (!completed)
         {
             throw new FormatException("内存跑分进度输出缺少完整结果。");
+        }
+
+        if (finalResult is not null)
+        {
+            return finalResult;
+        }
+
+        if (sizeMiB is null || readMiBS is null || writeMiBS is null || copyMiBS is null || latencyNs is null)
+        {
+            throw new FormatException("内存跑分进度输出缺少完整指标。");
         }
 
         return new MemoryBenchmarkResult(
@@ -370,6 +402,243 @@ public sealed class MemoryBenchmarkProcessRunner : IMemoryBenchmarkRunner
             CopyMiBS: copyMiBS.Value,
             LatencyNs: latencyNs.Value,
             CompletedAt: DateTimeOffset.Now);
+    }
+
+    private static MemoryBenchmarkResult ParseJsonResult(string output)
+    {
+        var lines = output.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        if (lines.Length == 0)
+        {
+            throw new FormatException("内存跑分 JSON 输出为空。");
+        }
+
+        using var document = JsonDocument.Parse(lines[^1]);
+        return ParseJsonResult(document.RootElement);
+    }
+
+    private static MemoryBenchmarkResult ParseJsonResult(JsonElement root)
+    {
+        if (!root.TryGetProperty("type", out var typeElement)
+            || !string.Equals(typeElement.GetString(), "result", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new FormatException("内存跑分 JSON 输出缺少 result 事件。");
+        }
+
+        var optionsElement = root.GetProperty("options");
+        var metricsElement = root.GetProperty("metrics");
+        var read = ParseMetricResult(metricsElement.GetProperty("read"));
+        var write = ParseMetricResult(metricsElement.GetProperty("write"));
+        var copy = ParseMetricResult(metricsElement.GetProperty("copy"));
+        var latency = ParseMetricResult(metricsElement.GetProperty("latency"));
+        var options = new MemoryBenchmarkOptionsSnapshot(
+            SizeMiB: optionsElement.GetProperty("size_mib").GetInt32(),
+            Iterations: optionsElement.GetProperty("iterations").GetInt32(),
+            LatencySteps: optionsElement.GetProperty("latency_steps").GetInt64(),
+            Threads: optionsElement.GetProperty("threads").GetInt32(),
+            WorkingSetKind: optionsElement.GetProperty("working_set_kind").GetString() ?? "memory");
+
+        return new MemoryBenchmarkResult(
+            SizeMiB: options.SizeMiB,
+            ReadMiBS: read.Aggregate.Median,
+            WriteMiBS: write.Aggregate.Median,
+            CopyMiBS: copy.Aggregate.Median,
+            LatencyNs: latency.Aggregate.Median,
+            CompletedAt: DateTimeOffset.Now,
+            Options: options,
+            WorkerVersion: root.TryGetProperty("worker_version", out var workerVersion) ? workerVersion.GetString() : null,
+            ProtocolVersion: root.TryGetProperty("protocol_version", out var protocolVersion) ? protocolVersion.GetInt32() : null,
+            ElapsedMs: root.TryGetProperty("elapsed_ms", out var elapsedMs) ? elapsedMs.GetDouble() : null,
+            Metrics: new MemoryBenchmarkMetricSet(read, write, copy, latency));
+    }
+
+    private static MemoryBenchmarkMetricResult ParseMetricResult(JsonElement element)
+    {
+        var samples = element.GetProperty("samples")
+            .EnumerateArray()
+            .Select(sample => sample.GetDouble())
+            .ToList();
+        var aggregate = element.GetProperty("aggregate");
+        return new MemoryBenchmarkMetricResult(
+            Unit: element.GetProperty("unit").GetString() ?? string.Empty,
+            Samples: samples,
+            Aggregate: new MemoryBenchmarkAggregate(
+                Median: aggregate.GetProperty("median").GetDouble(),
+                Min: aggregate.GetProperty("min").GetDouble(),
+                Max: aggregate.GetProperty("max").GetDouble(),
+                Mean: aggregate.GetProperty("mean").GetDouble(),
+                StdDev: aggregate.GetProperty("stddev").GetDouble(),
+                Cv: aggregate.GetProperty("cv").GetDouble()));
+    }
+
+    private static MemoryBenchmarkResult EnrichResult(MemoryBenchmarkResult result, string executable, MemoryBenchmarkOptions options)
+    {
+        var environment = CollectEnvironment();
+        var quality = EvaluateQuality(result, environment);
+        var snapshot = result.Options ?? new MemoryBenchmarkOptionsSnapshot(
+            options.SizeMiB,
+            options.Iterations,
+            options.LatencySteps,
+            options.Threads,
+            options.WorkingSetKind);
+
+        return result with
+        {
+            Options = snapshot,
+            ExecutablePath = executable,
+            Environment = environment,
+            Quality = quality
+        };
+    }
+
+    private static MemoryBenchmarkEnvironment CollectEnvironment()
+    {
+        var cpu = Wmi.Query("SELECT Name, NumberOfCores, NumberOfLogicalProcessors FROM Win32_Processor").FirstOrDefault();
+        var topology = CpuTopologyAnalyzer.TryAnalyze();
+        return new MemoryBenchmarkEnvironment(
+            CpuName: CleanName(Wmi.GetString(cpu, "Name")),
+            PhysicalCoreCount: topology?.Topology.CoreCount.Value ?? (int)Wmi.GetUInt(cpu, "NumberOfCores"),
+            LogicalProcessorCount: topology?.Topology.LogicalProcessorCount.Value ?? (int)Wmi.GetUInt(cpu, "NumberOfLogicalProcessors"),
+            NumaNodeCount: topology?.Topology.NumaNodeCount.Value ?? 0,
+            PowerPlan: GetActivePowerPlan(),
+            OnAcPower: GetAcPowerStatus(),
+            ProcessPriority: Process.GetCurrentProcess().PriorityClass.ToString());
+    }
+
+    private static MemoryBenchmarkQuality EvaluateQuality(MemoryBenchmarkResult result, MemoryBenchmarkEnvironment environment)
+    {
+        const double highVarianceCv = 0.08;
+        const double backgroundNoiseCv = 0.15;
+        const double shortDurationMs = 500.0;
+
+        var flags = new List<string>();
+        var metricCvs = new[]
+        {
+            result.Metrics?.Read.Aggregate.Cv,
+            result.Metrics?.Write.Aggregate.Cv,
+            result.Metrics?.Copy.Aggregate.Cv,
+            result.Metrics?.Latency.Aggregate.Cv
+        }.OfType<double>().ToList();
+
+        var highVariance = metricCvs.Any(cv => cv >= highVarianceCv);
+        if (highVariance)
+        {
+            flags.Add("highVariance");
+        }
+
+        var backgroundNoiseSuspected = metricCvs.Any(cv => cv >= backgroundNoiseCv);
+        if (backgroundNoiseSuspected)
+        {
+            flags.Add("backgroundNoiseSuspected");
+        }
+
+        var shortDuration = result.ElapsedMs is > 0 and < shortDurationMs;
+        if (shortDuration)
+        {
+            flags.Add("shortDuration");
+        }
+
+        var thermalSuspected = false;
+        if (result.Metrics is not null
+            && IsDownwardTrend(result.Metrics.Read.Samples)
+            && IsDownwardTrend(result.Metrics.Write.Samples)
+            && IsDownwardTrend(result.Metrics.Copy.Samples))
+        {
+            thermalSuspected = true;
+            flags.Add("thermalSuspected");
+        }
+
+        if (environment.PhysicalCoreCount == 0 || environment.LogicalProcessorCount == 0)
+        {
+            flags.Add("incompleteTopologyData");
+        }
+
+        return new MemoryBenchmarkQuality(
+            HighVariance: highVariance,
+            ThermalSuspected: thermalSuspected,
+            ShortDuration: shortDuration,
+            BackgroundNoiseSuspected: backgroundNoiseSuspected,
+            Flags: flags);
+    }
+
+    private static bool IsDownwardTrend(IReadOnlyList<double> samples)
+    {
+        if (samples.Count < 4)
+        {
+            return false;
+        }
+
+        var firstHalf = samples.Take(samples.Count / 2).Average();
+        var secondHalf = samples.Skip(samples.Count / 2).Average();
+        return firstHalf > 0 && secondHalf / firstHalf < 0.9;
+    }
+
+    private static string CleanName(string value)
+    {
+        return string.Join(' ', value.Split([' ', '\t', '\r', '\n'], StringSplitOptions.RemoveEmptyEntries));
+    }
+
+    private static string GetActivePowerPlan()
+    {
+        try
+        {
+            using var process = Process.Start(new ProcessStartInfo
+            {
+                FileName = "powercfg.exe",
+                ArgumentList = { "/getactivescheme" },
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            });
+
+            if (process is null)
+            {
+                return string.Empty;
+            }
+
+            if (!process.WaitForExit(2000))
+            {
+                try
+                {
+                    process.Kill(entireProcessTree: true);
+                }
+                catch
+                {
+                    // Best-effort environment metadata should never fail the benchmark result.
+                }
+
+                return string.Empty;
+            }
+
+            var output = process.StandardOutput.ReadToEnd();
+            if (process.ExitCode != 0)
+            {
+                return string.Empty;
+            }
+
+            return CleanName(output.Trim());
+        }
+        catch
+        {
+            return string.Empty;
+        }
+    }
+
+    private static bool? GetAcPowerStatus()
+    {
+        var batteries = Wmi.Query("SELECT BatteryStatus FROM Win32_Battery").ToList();
+        if (batteries.Count == 0)
+        {
+            return null;
+        }
+
+        var statuses = batteries.Select(battery => Wmi.GetUInt(battery, "BatteryStatus")).Where(status => status > 0).ToList();
+        if (statuses.Count == 0)
+        {
+            return null;
+        }
+
+        return statuses.Any(status => status is 2 or 6 or 7 or 8 or 9 or 10 or 11);
     }
 }
 
