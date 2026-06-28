@@ -20,11 +20,13 @@ The output is:
 build\Release\membench.exe
 ```
 
-During development, HwScope can also use the external prototype executable at:
+After the native Release artifact exists, `HwScope.App` and `HwScope.Cli` copy it to their output directories during `dotnet build`:
 
 ```text
-C:\Users\Trivedi\memory-bench-cpp\build\Release\membench.exe
+bin\Debug\net8.0-windows\native\membench.exe
 ```
+
+The C# runner also keeps a source-tree `build\Release` developer fallback so App/CLI can run directly after a manual native build.
 
 ## Invocation
 

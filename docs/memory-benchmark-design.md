@@ -171,10 +171,11 @@ Cache latency should also use pointer chasing. Sequential latency tests are misl
 Keep the current worker process model, but make packaging reliable.
 
 - Build `membench.exe` as part of the developer workflow.
-- Copy the native executable into the WPF output directory or a `native/` subdirectory.
-- Remove the fallback to the external prototype path before release.
+- Copy the native executable into the WPF/CLI output directory under a `native/` subdirectory when the Release native artifact exists.
+- Keep only a source-tree `build\Release` developer fallback; do not use personal external prototype paths.
 - Add result metadata: worker version, options, executable path, elapsed time.
 - Add cancellation and timeout handling in `MemoryBenchmarkProcessRunner`.
+- Record executable path, arguments, stdout, and stderr for timeout, cancellation, non-zero exit, and parse failures.
 
 ### Stage 2: Multi-Threaded Memory Bandwidth
 
@@ -246,8 +247,7 @@ Recommended next steps:
 
 1. Add `--threads` to the native worker and expose it through `MemoryBenchmarkOptions`.
 2. Add `--json` output to the worker so C# does not rely only on CSV column order.
-3. Copy `membench.exe` into `HwScope.App` output during build.
-4. Replace external prototype fallback with a clear developer-only path or remove it.
-5. Add L1/L2/L3 cache rows using detected cache sizes.
-6. Add a compact benchmark report export from `MemoryBenchmarkWindow`.
+3. Add result metadata: worker version, options, executable path, elapsed time, and result quality flags.
+4. Add L1/L2/L3 cache rows using detected cache sizes.
+5. Add a compact benchmark report export from `MemoryBenchmarkWindow`.
 

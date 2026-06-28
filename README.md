@@ -127,7 +127,8 @@ GUI 中可以通过顶部工具栏 `跑分` 或左侧导航 `性能测试 -> 内
 
 - 已实现 Memory Read / Write / Copy / Latency。
 - L1 / L2 / L3 Cache 行暂时是 UI 占位。
-- native worker 仍需要手动构建或放在 runner 能找到的位置。
+- native worker 仍需要先通过 CMake 构建；随后 `HwScope.App` / `HwScope.Cli` 构建会把已有的 `membench.exe` 复制到输出目录的 `native\` 子目录。
+- runner 带默认超时、取消时会终止 worker 进程树，并把失败诊断写入 `%TEMP%\HwScope-memory-benchmark.log`。
 - 后续会补多线程、SIMD kernel、cache row、结果稳定性标记和导出。
 
 详细设计见 [docs/memory-benchmark-design.md](docs/memory-benchmark-design.md)。
@@ -174,7 +175,7 @@ src\HwScope.App\Themes\Json\dark.json
 - CPU topology Visual Map 当前使用 nested domain layout，tree/radial 布局和 PNG/JSON 导出仍在后续阶段。
 - CPU code name、工艺、TDP 和部分指令集仍可能来自本地型号映射，页面会标注来源。
 - 内存跑分结果目前不应直接对标 AIDA64，算法和线程策略仍在演进。
-- native worker 的打包复制还未完全自动化。
+- native worker 不会由 `dotnet build` 自动编译；需要先运行 native 构建脚本生成 Release 产物。
 
 ## License
 
