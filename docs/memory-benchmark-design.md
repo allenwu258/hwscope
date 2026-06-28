@@ -83,6 +83,8 @@ The GUI uses newline-delimited progress JSON so each result can appear as soon a
 
 The worker flushes each progress JSON line immediately. `MemoryBenchmarkProcessRunner` reads stdout line-by-line, reports `MemoryBenchmarkProgress` updates to the UI, and still returns a complete `MemoryBenchmarkResult` when the worker exits successfully.
 
+Progress reporting is best-effort during the run: malformed or unknown progress lines are ignored for live UI updates so stdout collection can continue. After the worker exits with code 0, the runner strictly parses the accumulated output and requires `started`, all four metric events, and `completed`. Parse failures are recorded with executable path, arguments, stdout, and stderr in the benchmark diagnostic log before surfacing a managed `FormatException`.
+
 ### Allocation And Warmup
 
 The worker allocates 64-byte aligned buffers via `_aligned_malloc` on Windows. This matches common cache-line size and keeps future SIMD paths straightforward.
@@ -188,7 +190,7 @@ Keep the current worker process model, but make packaging reliable.
 - Keep only a source-tree `build\Release` developer fallback; do not use personal external prototype paths.
 - Add cancellation and timeout handling in `MemoryBenchmarkProcessRunner`.
 - Record executable path, arguments, stdout, and stderr for timeout, cancellation, non-zero exit, and parse failures.
-- Emit and parse progress JSON so the GUI can show read/write/copy/latency incrementally.
+- Emit and parse progress JSON so the GUI can show read/write/copy/latency incrementally, while final parsing remains strict and diagnostic-friendly.
 - Add result metadata: worker version, options, executable path, elapsed time.
 
 ### Stage 2: Multi-Threaded Memory Bandwidth

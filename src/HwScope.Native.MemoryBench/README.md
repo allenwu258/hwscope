@@ -54,5 +54,7 @@ Each completed metric is flushed as one event:
 {"type":"metric","metric":"read","value":36000.00,"unit":"mib_s"}
 ```
 
+The progress stream is newline-delimited JSON. The C# runner treats live metric updates as best-effort, then strictly validates the full stream after process exit and writes stdout/stderr diagnostics for parse failures.
+
 See [`../../docs/memory-benchmark-design.md`](../../docs/memory-benchmark-design.md) for algorithm notes and the evolution plan.
 
