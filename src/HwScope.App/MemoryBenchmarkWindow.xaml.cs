@@ -59,12 +59,14 @@ public partial class MemoryBenchmarkWindow : FluentWindow
 
         _isRunning = true;
         StartBenchmarkButton.IsEnabled = false;
+        ClearBenchmarkResults();
         StatusText.Text = "正在运行内存跑分，请稍候...";
         Mouse.OverrideCursor = Cursors.Wait;
 
         try
         {
-            var result = await _runner.RunAsync(new MemoryBenchmarkOptions()).ConfigureAwait(true);
+            var progress = new Progress<MemoryBenchmarkProgress>(UpdateBenchmarkProgress);
+            var result = await _runner.RunAsync(new MemoryBenchmarkOptions(), progress).ConfigureAwait(true);
             MemoryReadText.Text = FormatThroughput(result.ReadMBS);
             MemoryWriteText.Text = FormatThroughput(result.WriteMBS);
             MemoryCopyText.Text = FormatThroughput(result.CopyMBS);
@@ -89,9 +91,45 @@ public partial class MemoryBenchmarkWindow : FluentWindow
         Close();
     }
 
+    private void UpdateBenchmarkProgress(MemoryBenchmarkProgress progress)
+    {
+        switch (progress.Metric)
+        {
+            case MemoryBenchmarkMetric.Read:
+                MemoryReadText.Text = FormatThroughputMiB(progress.Value);
+                StatusText.Text = "Memory Read 完成，正在继续测试...";
+                break;
+            case MemoryBenchmarkMetric.Write:
+                MemoryWriteText.Text = FormatThroughputMiB(progress.Value);
+                StatusText.Text = "Memory Write 完成，正在继续测试...";
+                break;
+            case MemoryBenchmarkMetric.Copy:
+                MemoryCopyText.Text = FormatThroughputMiB(progress.Value);
+                StatusText.Text = "Memory Copy 完成，正在继续测试...";
+                break;
+            case MemoryBenchmarkMetric.Latency:
+                MemoryLatencyText.Text = $"{progress.Value:F1} ns";
+                StatusText.Text = "Memory Latency 完成，正在整理结果...";
+                break;
+        }
+    }
+
+    private void ClearBenchmarkResults()
+    {
+        MemoryReadText.Text = string.Empty;
+        MemoryWriteText.Text = string.Empty;
+        MemoryCopyText.Text = string.Empty;
+        MemoryLatencyText.Text = string.Empty;
+    }
+
     private static string FormatThroughput(double value)
     {
         return $"{value.ToString("F0", CultureInfo.InvariantCulture)} MB/s";
+    }
+
+    private static string FormatThroughputMiB(double value)
+    {
+        return FormatThroughput(value * 1024.0 * 1024.0 / 1_000_000.0);
     }
 }
 

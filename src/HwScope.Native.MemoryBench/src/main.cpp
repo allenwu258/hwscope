@@ -36,6 +36,7 @@ struct Options {
     int iterations = kDefaultIterations;
     std::uint64_t latency_steps = kDefaultLatencySteps;
     bool csv = false;
+    bool progress_json = false;
 };
 
 struct AlignedFree {
@@ -59,7 +60,7 @@ struct BenchResult {
 
 void print_usage() {
     std::cout
-        << "Usage: membench [--size-mib N] [--iterations N] [--latency-steps N] [--csv]\n"
+        << "Usage: membench [--size-mib N] [--iterations N] [--latency-steps N] [--csv] [--progress-json]\n"
         << "\n"
         << "Defaults:\n"
         << "  --size-mib " << kDefaultSizeMiB << "\n"
@@ -94,6 +95,10 @@ Options parse_args(int argc, char** argv) {
         }
         if (arg == "--csv") {
             options.csv = true;
+            continue;
+        }
+        if (arg == "--progress-json") {
+            options.progress_json = true;
             continue;
         }
 
@@ -289,6 +294,24 @@ double run_latency(std::size_t bytes, std::uint64_t steps) {
     return seconds * 1'000'000'000.0 / static_cast<double>(steps);
 }
 
+void emit_progress_started(const Options& options) {
+    std::cout << "{\"type\":\"started\",\"size_mib\":" << options.size_mib
+              << ",\"iterations\":" << options.iterations
+              << ",\"latency_steps\":" << options.latency_steps << "}\n"
+              << std::flush;
+}
+
+void emit_progress_metric(std::string_view metric, double value, std::string_view unit) {
+    std::cout << "{\"type\":\"metric\",\"metric\":\"" << metric
+              << "\",\"value\":" << std::fixed << std::setprecision(2) << value
+              << ",\"unit\":\"" << unit << "\"}\n"
+              << std::flush;
+}
+
+void emit_progress_completed() {
+    std::cout << "{\"type\":\"completed\"}\n" << std::flush;
+}
+
 BenchResult run_bench(const Options& options) {
     const std::size_t bytes = static_cast<std::size_t>(options.size_mib) * kMiB;
     auto src = make_aligned_buffer(bytes);
@@ -307,13 +330,28 @@ BenchResult run_bench(const Options& options) {
 
     BenchResult result;
     result.read_mib_s = run_read(src.get(), bytes, options.iterations);
+    if (options.progress_json) {
+        emit_progress_metric("read", result.read_mib_s, "mib_s");
+    }
+
     result.write_mib_s = run_write(dst.get(), bytes, options.iterations);
+    if (options.progress_json) {
+        emit_progress_metric("write", result.write_mib_s, "mib_s");
+    }
+
     result.copy_mib_s = run_copy(dst.get(), src.get(), bytes, options.iterations);
+    if (options.progress_json) {
+        emit_progress_metric("copy", result.copy_mib_s, "mib_s");
+    }
 
     src.reset();
     dst.reset();
 
     result.latency_ns = run_latency(bytes, options.latency_steps);
+    if (options.progress_json) {
+        emit_progress_metric("latency", result.latency_ns, "ns");
+    }
+
     return result;
 }
 
@@ -347,7 +385,16 @@ int main(int argc, char** argv) {
     try {
         const Options options = parse_args(argc, argv);
         pin_to_current_cpu();
+        if (options.progress_json) {
+            emit_progress_started(options);
+        }
+
         const BenchResult result = run_bench(options);
+        if (options.progress_json) {
+            emit_progress_completed();
+            return 0;
+        }
+
         print_result(options, result);
         return 0;
     } catch (const std::exception& ex) {

@@ -42,7 +42,7 @@ HwScope.App / HwScope.Cli
   UI, commands, result presentation
 
 HwScope.Core.Benchmark
-  C# models, runner abstraction, process orchestration, CSV parsing
+  C# models, runner abstraction, process orchestration, CSV / progress JSON parsing
 
 HwScope.Native.MemoryBench
   C++ benchmark worker for low-level memory access patterns
@@ -64,11 +64,24 @@ Current defaults:
 --latency-steps 20000000
 ```
 
-Minimum memory buffer size is 16 MiB. CSV output is used by HwScope:
+Minimum memory buffer size is 16 MiB. CSV output remains available for final-result parsing and CLI compatibility:
 
 ```text
 size_mib,read_mib_s,write_mib_s,copy_mib_s,latency_ns
 ```
+
+The GUI uses newline-delimited progress JSON so each result can appear as soon as that metric finishes:
+
+```text
+{"type":"started","size_mib":512,"iterations":7,"latency_steps":20000000}
+{"type":"metric","metric":"read","value":36000.00,"unit":"mib_s"}
+{"type":"metric","metric":"write","value":51000.00,"unit":"mib_s"}
+{"type":"metric","metric":"copy","value":22000.00,"unit":"mib_s"}
+{"type":"metric","metric":"latency","value":138.50,"unit":"ns"}
+{"type":"completed"}
+```
+
+The worker flushes each progress JSON line immediately. `MemoryBenchmarkProcessRunner` reads stdout line-by-line, reports `MemoryBenchmarkProgress` updates to the UI, and still returns a complete `MemoryBenchmarkResult` when the worker exits successfully.
 
 ### Allocation And Warmup
 
@@ -173,9 +186,10 @@ Keep the current worker process model, but make packaging reliable.
 - Build `membench.exe` as part of the developer workflow.
 - Copy the native executable into the WPF/CLI output directory under a `native/` subdirectory when the Release native artifact exists.
 - Keep only a source-tree `build\Release` developer fallback; do not use personal external prototype paths.
-- Add result metadata: worker version, options, executable path, elapsed time.
 - Add cancellation and timeout handling in `MemoryBenchmarkProcessRunner`.
 - Record executable path, arguments, stdout, and stderr for timeout, cancellation, non-zero exit, and parse failures.
+- Emit and parse progress JSON so the GUI can show read/write/copy/latency incrementally.
+- Add result metadata: worker version, options, executable path, elapsed time.
 
 ### Stage 2: Multi-Threaded Memory Bandwidth
 
@@ -246,8 +260,7 @@ Improve repeatability and diagnostics.
 Recommended next steps:
 
 1. Add `--threads` to the native worker and expose it through `MemoryBenchmarkOptions`.
-2. Add `--json` output to the worker so C# does not rely only on CSV column order.
-3. Add result metadata: worker version, options, executable path, elapsed time, and result quality flags.
-4. Add L1/L2/L3 cache rows using detected cache sizes.
-5. Add a compact benchmark report export from `MemoryBenchmarkWindow`.
+2. Extend progress JSON with worker version, options, executable path, elapsed time, and result quality flags.
+3. Add L1/L2/L3 cache rows using detected cache sizes.
+4. Add a compact benchmark report export from `MemoryBenchmarkWindow`.
 

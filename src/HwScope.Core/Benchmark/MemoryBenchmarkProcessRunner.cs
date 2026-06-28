@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Globalization;
+using System.Text.Json;
 
 namespace HwScope.Core.Benchmark;
 
@@ -18,6 +19,14 @@ public sealed class MemoryBenchmarkProcessRunner : IMemoryBenchmarkRunner
 
     public async Task<MemoryBenchmarkResult> RunAsync(MemoryBenchmarkOptions options, CancellationToken cancellationToken = default)
     {
+        return await RunAsync(options, progress: null, cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task<MemoryBenchmarkResult> RunAsync(
+        MemoryBenchmarkOptions options,
+        IProgress<MemoryBenchmarkProgress>? progress,
+        CancellationToken cancellationToken = default)
+    {
         ValidateOptions(options);
 
         var executable = ResolveExecutablePath();
@@ -26,7 +35,7 @@ public sealed class MemoryBenchmarkProcessRunner : IMemoryBenchmarkRunner
             throw new FileNotFoundException("未找到 membench.exe。请先构建 src/HwScope.Native.MemoryBench，或确认构建产物已复制到应用输出目录的 native 子目录。");
         }
 
-        var arguments = BuildArguments(options);
+        var arguments = BuildArguments(options, useProgressJson: progress is not null);
         var startInfo = new ProcessStartInfo
         {
             FileName = executable,
@@ -41,7 +50,10 @@ public sealed class MemoryBenchmarkProcessRunner : IMemoryBenchmarkRunner
         }
 
         using var process = Process.Start(startInfo) ?? throw new InvalidOperationException("无法启动内存跑分进程。");
-        var outputTask = process.StandardOutput.ReadToEndAsync();
+        var outputLines = new List<string>();
+        var outputTask = progress is null
+            ? process.StandardOutput.ReadToEndAsync()
+            : ReadProgressOutputAsync(process.StandardOutput, outputLines, progress, cancellationToken);
         var errorTask = process.StandardError.ReadToEndAsync();
 
         using var timeoutCts = new CancellationTokenSource(options.Timeout ?? DefaultTimeout);
@@ -78,7 +90,7 @@ public sealed class MemoryBenchmarkProcessRunner : IMemoryBenchmarkRunner
 
         try
         {
-            return ParseCsv(output);
+            return progress is null ? ParseCsv(output) : ParseProgressJson(output);
         }
         catch (Exception ex) when (ex is FormatException or OverflowException)
         {
@@ -104,7 +116,7 @@ public sealed class MemoryBenchmarkProcessRunner : IMemoryBenchmarkRunner
         return candidates.FirstOrDefault(File.Exists);
     }
 
-    private static string[] BuildArguments(MemoryBenchmarkOptions options)
+    private static string[] BuildArguments(MemoryBenchmarkOptions options, bool useProgressJson)
     {
         return
         [
@@ -114,7 +126,7 @@ public sealed class MemoryBenchmarkProcessRunner : IMemoryBenchmarkRunner
             options.Iterations.ToString(CultureInfo.InvariantCulture),
             "--latency-steps",
             options.LatencySteps.ToString(CultureInfo.InvariantCulture),
-            "--csv"
+            useProgressJson ? "--progress-json" : "--csv"
         ];
     }
 
@@ -212,6 +224,65 @@ public sealed class MemoryBenchmarkProcessRunner : IMemoryBenchmarkRunner
         return string.IsNullOrWhiteSpace(error) ? "无 stderr 输出" : error.Trim();
     }
 
+    private static async Task<string> ReadProgressOutputAsync(
+        StreamReader reader,
+        List<string> outputLines,
+        IProgress<MemoryBenchmarkProgress> progress,
+        CancellationToken cancellationToken)
+    {
+        while (await reader.ReadLineAsync(cancellationToken).ConfigureAwait(false) is { } line)
+        {
+            outputLines.Add(line);
+            if (TryParseMetricEvent(line, out var update))
+            {
+                progress.Report(update);
+            }
+        }
+
+        return string.Join(Environment.NewLine, outputLines);
+    }
+
+    private static bool TryParseMetricEvent(string line, out MemoryBenchmarkProgress progress)
+    {
+        progress = default!;
+        if (string.IsNullOrWhiteSpace(line))
+        {
+            return false;
+        }
+
+        try
+        {
+            using var document = JsonDocument.Parse(line);
+            var root = document.RootElement;
+            if (!root.TryGetProperty("type", out var typeElement)
+                || !string.Equals(typeElement.GetString(), "metric", StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
+            var metricName = root.GetProperty("metric").GetString();
+            var metric = metricName?.ToLowerInvariant() switch
+            {
+                "read" => MemoryBenchmarkMetric.Read,
+                "write" => MemoryBenchmarkMetric.Write,
+                "copy" => MemoryBenchmarkMetric.Copy,
+                "latency" => MemoryBenchmarkMetric.Latency,
+                _ => throw new FormatException($"未知内存跑分指标：{metricName}")
+            };
+
+            progress = new MemoryBenchmarkProgress(
+                metric,
+                root.GetProperty("value").GetDouble(),
+                root.GetProperty("unit").GetString() ?? string.Empty,
+                DateTimeOffset.Now);
+            return true;
+        }
+        catch (JsonException ex)
+        {
+            throw new FormatException("内存跑分进度事件不是有效 JSON。", ex);
+        }
+    }
+
     private static MemoryBenchmarkResult ParseCsv(string output)
     {
         var lines = output.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
@@ -232,6 +303,72 @@ public sealed class MemoryBenchmarkProcessRunner : IMemoryBenchmarkRunner
             WriteMiBS: double.Parse(values[2], CultureInfo.InvariantCulture),
             CopyMiBS: double.Parse(values[3], CultureInfo.InvariantCulture),
             LatencyNs: double.Parse(values[4], CultureInfo.InvariantCulture),
+            CompletedAt: DateTimeOffset.Now);
+    }
+
+    private static MemoryBenchmarkResult ParseProgressJson(string output)
+    {
+        int? sizeMiB = null;
+        double? readMiBS = null;
+        double? writeMiBS = null;
+        double? copyMiBS = null;
+        double? latencyNs = null;
+        var completed = false;
+
+        var lines = output.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        foreach (var line in lines)
+        {
+            using var document = JsonDocument.Parse(line);
+            var root = document.RootElement;
+            if (!root.TryGetProperty("type", out var typeElement))
+            {
+                continue;
+            }
+
+            switch (typeElement.GetString()?.ToLowerInvariant())
+            {
+                case "started":
+                    if (root.TryGetProperty("size_mib", out var sizeElement))
+                    {
+                        sizeMiB = sizeElement.GetInt32();
+                    }
+                    break;
+                case "metric":
+                    var metric = root.GetProperty("metric").GetString()?.ToLowerInvariant();
+                    var value = root.GetProperty("value").GetDouble();
+                    switch (metric)
+                    {
+                        case "read":
+                            readMiBS = value;
+                            break;
+                        case "write":
+                            writeMiBS = value;
+                            break;
+                        case "copy":
+                            copyMiBS = value;
+                            break;
+                        case "latency":
+                            latencyNs = value;
+                            break;
+                    }
+                    break;
+                case "completed":
+                    completed = true;
+                    break;
+            }
+        }
+
+        if (!completed || sizeMiB is null || readMiBS is null || writeMiBS is null || copyMiBS is null || latencyNs is null)
+        {
+            throw new FormatException("内存跑分进度输出缺少完整结果。");
+        }
+
+        return new MemoryBenchmarkResult(
+            SizeMiB: sizeMiB.Value,
+            ReadMiBS: readMiBS.Value,
+            WriteMiBS: writeMiBS.Value,
+            CopyMiBS: copyMiBS.Value,
+            LatencyNs: latencyNs.Value,
             CompletedAt: DateTimeOffset.Now);
     }
 }
