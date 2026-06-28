@@ -12,6 +12,7 @@
                  Width="1280"
                  Background="{DynamicResource HwScopePanelBrush}"
                  ExtendsContentIntoTitleBar="True"
+                 Icon="Assets/HwScope.ico"
                  WindowBackdropType="Mica"
                  WindowStartupLocation="CenterScreen">
     <Grid>
