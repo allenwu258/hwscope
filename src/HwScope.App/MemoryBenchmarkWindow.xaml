@@ -12,30 +12,66 @@
                  WindowBackdropType="Mica"
                  WindowStartupLocation="CenterOwner">
     <ui:FluentWindow.Resources>
-        <SolidColorBrush x:Key="BenchmarkLineBrush" Color="#808080" />
-        <Style x:Key="CellBorderStyle" TargetType="Border">
-            <Setter Property="BorderBrush" Value="{StaticResource BenchmarkLineBrush}" />
+        <Style x:Key="BenchmarkCardStyle" TargetType="Border">
+            <Setter Property="Background" Value="{DynamicResource HwScopeCardBrush}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource HwScopeLineBrush}" />
             <Setter Property="BorderThickness" Value="1" />
-            <Setter Property="MinHeight" Value="28" />
+            <Setter Property="CornerRadius" Value="7" />
+            <Setter Property="Padding" Value="16" />
+        </Style>
+        <Style x:Key="CellBorderStyle" TargetType="Border">
+            <Setter Property="Background" Value="{DynamicResource HwScopeIconBackplateBrush}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource HwScopeLineBrush}" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="CornerRadius" Value="6" />
+            <Setter Property="MinHeight" Value="32" />
             <Setter Property="Margin" Value="4,3" />
-            <Setter Property="Background" Value="#FFFFFF" />
+            <Setter Property="Padding" Value="8,0" />
         </Style>
         <Style x:Key="LabelTextStyle" TargetType="TextBlock">
             <Setter Property="VerticalAlignment" Value="Center" />
-            <Setter Property="FontSize" Value="14" />
-            <Setter Property="Foreground" Value="#000000" />
+            <Setter Property="FontSize" Value="13" />
+            <Setter Property="Foreground" Value="{DynamicResource HwScopeMutedTextBrush}" />
+            <Setter Property="TextTrimming" Value="CharacterEllipsis" />
         </Style>
         <Style x:Key="ValueTextStyle" TargetType="TextBlock">
             <Setter Property="VerticalAlignment" Value="Center" />
             <Setter Property="HorizontalAlignment" Value="Center" />
             <Setter Property="FontSize" Value="14" />
-            <Setter Property="Foreground" Value="#000000" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="Foreground" Value="{DynamicResource HwScopeTextBrush}" />
+            <Setter Property="TextTrimming" Value="CharacterEllipsis" />
+        </Style>
+        <Style x:Key="ColumnHeaderTextStyle" TargetType="TextBlock" BasedOn="{StaticResource LabelTextStyle}">
+            <Setter Property="HorizontalAlignment" Value="Center" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="Foreground" Value="{DynamicResource HwScopeStrongTextBrush}" />
+        </Style>
+        <Style x:Key="RowHeaderTextStyle" TargetType="TextBlock" BasedOn="{StaticResource LabelTextStyle}">
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="Foreground" Value="{DynamicResource HwScopeStrongTextBrush}" />
+        </Style>
+        <Style x:Key="InfoRowStyle" TargetType="Border">
+            <Setter Property="BorderBrush" Value="{DynamicResource HwScopeLineBrush}" />
+            <Setter Property="BorderThickness" Value="0,0,0,1" />
+            <Setter Property="MinHeight" Value="34" />
+        </Style>
+        <Style x:Key="InfoValueTextStyle" TargetType="TextBlock" BasedOn="{StaticResource LabelTextStyle}">
+            <Setter Property="Foreground" Value="{DynamicResource HwScopeTextBrush}" />
+            <Setter Property="TextWrapping" Value="Wrap" />
+        </Style>
+        <Style x:Key="InfoCardTitleTextStyle" TargetType="TextBlock">
+            <Setter Property="FontSize" Value="14" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="Foreground" Value="{DynamicResource HwScopeStrongTextBrush}" />
+            <Setter Property="Margin" Value="0,0,0,8" />
         </Style>
     </ui:FluentWindow.Resources>
 
-    <Grid Background="{DynamicResource HwScopePanelBrush}">
+    <Grid Background="{DynamicResource HwScopeContentBrush}">
         <Grid.RowDefinitions>
             <RowDefinition Height="44" />
+            <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
             <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
@@ -45,136 +81,226 @@
                      Title="Cache &amp; Memory Benchmark"
                      Icon="{ui:SymbolIcon Gauge32}" />
 
-        <Border Grid.Row="1"
-                Margin="12,4,12,0"
-                BorderBrush="{StaticResource BenchmarkLineBrush}"
-                BorderThickness="1"
-                Background="#FFFFFF">
-            <Grid Margin="16" Background="#FFFFFF">
-                <Grid.RowDefinitions>
-                    <RowDefinition Height="Auto" />
-                    <RowDefinition Height="Auto" />
-                    <RowDefinition Height="Auto" />
-                    <RowDefinition Height="Auto" />
-                    <RowDefinition Height="Auto" />
-                    <RowDefinition Height="18" />
-                    <RowDefinition Height="Auto" />
-                    <RowDefinition Height="18" />
-                    <RowDefinition Height="Auto" />
-                    <RowDefinition Height="*" />
-                </Grid.RowDefinitions>
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="140" />
-                    <ColumnDefinition Width="*" />
-                    <ColumnDefinition Width="*" />
-                    <ColumnDefinition Width="*" />
-                    <ColumnDefinition Width="*" />
-                </Grid.ColumnDefinitions>
+        <Grid Grid.Row="1" Margin="16,12,16,10">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
 
-                <TextBlock Grid.Column="1" Text="Read" Style="{StaticResource LabelTextStyle}" HorizontalAlignment="Center" />
-                <TextBlock Grid.Column="2" Text="Write" Style="{StaticResource LabelTextStyle}" HorizontalAlignment="Center" />
-                <TextBlock Grid.Column="3" Text="Copy" Style="{StaticResource LabelTextStyle}" HorizontalAlignment="Center" />
-                <TextBlock Grid.Column="4" Text="Latency" Style="{StaticResource LabelTextStyle}" HorizontalAlignment="Center" />
-
-                <TextBlock Grid.Row="1" Text="Memory" Style="{StaticResource LabelTextStyle}" />
-                <Border Grid.Row="1" Grid.Column="1" Style="{StaticResource CellBorderStyle}">
-                    <TextBlock x:Name="MemoryReadText" Text="" Style="{StaticResource ValueTextStyle}" />
-                </Border>
-                <Border Grid.Row="1" Grid.Column="2" Style="{StaticResource CellBorderStyle}">
-                    <TextBlock x:Name="MemoryWriteText" Text="" Style="{StaticResource ValueTextStyle}" />
-                </Border>
-                <Border Grid.Row="1" Grid.Column="3" Style="{StaticResource CellBorderStyle}">
-                    <TextBlock x:Name="MemoryCopyText" Text="" Style="{StaticResource ValueTextStyle}" />
-                </Border>
-                <Border Grid.Row="1" Grid.Column="4" Style="{StaticResource CellBorderStyle}">
-                    <TextBlock x:Name="MemoryLatencyText" Text="" Style="{StaticResource ValueTextStyle}" />
-                </Border>
-
-                <TextBlock Grid.Row="2" Text="L1 Cache" Style="{StaticResource LabelTextStyle}" />
-                <TextBlock Grid.Row="3" Text="L2 Cache" Style="{StaticResource LabelTextStyle}" />
-                <TextBlock Grid.Row="4" Text="L3 Cache" Style="{StaticResource LabelTextStyle}" />
-
-                <Grid Grid.Row="6" Grid.ColumnSpan="5">
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="140" />
-                        <ColumnDefinition Width="*" />
-                    </Grid.ColumnDefinitions>
-                    <Grid.RowDefinitions>
-                        <RowDefinition Height="28" />
-                        <RowDefinition Height="28" />
-                        <RowDefinition Height="28" />
-                        <RowDefinition Height="28" />
-                        <RowDefinition Height="28" />
-                    </Grid.RowDefinitions>
-
-                    <TextBlock Grid.Row="0" Text="CPU Type" Style="{StaticResource LabelTextStyle}" />
-                    <Border Grid.Row="0" Grid.Column="1" Style="{StaticResource CellBorderStyle}" Margin="4,0,4,0">
-                        <TextBlock x:Name="CpuTypeText" Style="{StaticResource LabelTextStyle}" Margin="8,0" />
-                    </Border>
-                    <TextBlock Grid.Row="1" Text="CPU Clock" Style="{StaticResource LabelTextStyle}" />
-                    <Border Grid.Row="1" Grid.Column="1" Style="{StaticResource CellBorderStyle}" Margin="4,0,4,0">
-                        <TextBlock Text="" Style="{StaticResource LabelTextStyle}" Margin="8,0" />
-                    </Border>
-                    <TextBlock Grid.Row="2" Text="CPU FSB" Style="{StaticResource LabelTextStyle}" />
-                    <Border Grid.Row="2" Grid.Column="1" Style="{StaticResource CellBorderStyle}" Margin="4,0,4,0">
-                        <TextBlock Text="" Style="{StaticResource LabelTextStyle}" Margin="8,0" />
-                    </Border>
-                    <TextBlock Grid.Row="3" Text="CPU Multiplier" Style="{StaticResource LabelTextStyle}" />
-                    <Border Grid.Row="3" Grid.Column="1" Style="{StaticResource CellBorderStyle}" Margin="4,0,4,0">
-                        <TextBlock Text="" Style="{StaticResource LabelTextStyle}" Margin="8,0" />
-                    </Border>
-                    <TextBlock Grid.Row="4" Text="North Bridge Clock" Style="{StaticResource LabelTextStyle}" />
-                    <Border Grid.Row="4" Grid.Column="1" Style="{StaticResource CellBorderStyle}" Margin="4,0,4,0">
-                        <TextBlock Text="" Style="{StaticResource LabelTextStyle}" Margin="8,0" />
-                    </Border>
-                </Grid>
-
-                <Grid Grid.Row="8" Grid.ColumnSpan="5">
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="140" />
-                        <ColumnDefinition Width="*" />
-                    </Grid.ColumnDefinitions>
-                    <Grid.RowDefinitions>
-                        <RowDefinition Height="28" />
-                        <RowDefinition Height="28" />
-                        <RowDefinition Height="28" />
-                        <RowDefinition Height="28" />
-                        <RowDefinition Height="28" />
-                    </Grid.RowDefinitions>
-
-                    <TextBlock Grid.Row="0" Text="Memory Bus" Style="{StaticResource LabelTextStyle}" />
-                    <Border Grid.Row="0" Grid.Column="1" Style="{StaticResource CellBorderStyle}" Margin="4,0,4,0">
-                        <TextBlock Text="" Style="{StaticResource LabelTextStyle}" Margin="8,0" />
-                    </Border>
-                    <TextBlock Grid.Row="1" Text="Memory Type" Style="{StaticResource LabelTextStyle}" />
-                    <Border Grid.Row="1" Grid.Column="1" Style="{StaticResource CellBorderStyle}" Margin="4,0,4,0">
-                        <TextBlock x:Name="MemoryTypeText" Style="{StaticResource LabelTextStyle}" Margin="8,0" />
-                    </Border>
-                    <TextBlock Grid.Row="2" Text="Chipset" Style="{StaticResource LabelTextStyle}" />
-                    <Border Grid.Row="2" Grid.Column="1" Style="{StaticResource CellBorderStyle}" Margin="4,0,4,0">
-                        <TextBlock Text="" Style="{StaticResource LabelTextStyle}" Margin="8,0" />
-                    </Border>
-                    <TextBlock Grid.Row="3" Text="Motherboard" Style="{StaticResource LabelTextStyle}" />
-                    <Border Grid.Row="3" Grid.Column="1" Style="{StaticResource CellBorderStyle}" Margin="4,0,4,0">
-                        <TextBlock x:Name="MotherboardText" Style="{StaticResource LabelTextStyle}" Margin="8,0" />
-                    </Border>
-                    <TextBlock Grid.Row="4" Text="BIOS Version" Style="{StaticResource LabelTextStyle}" />
-                    <Border Grid.Row="4" Grid.Column="1" Style="{StaticResource CellBorderStyle}" Margin="4,0,4,0">
-                        <TextBlock Text="" Style="{StaticResource LabelTextStyle}" Margin="8,0" />
-                    </Border>
-                </Grid>
-
-                <TextBlock Grid.Row="9"
-                           Grid.ColumnSpan="5"
-                           x:Name="StatusText"
+            <StackPanel>
+                <TextBlock Text="Cache &amp; Memory Benchmark"
+                           FontSize="22"
+                           FontWeight="SemiBold"
+                           Foreground="{DynamicResource HwScopeTextBrush}" />
+                <TextBlock x:Name="StatusText"
+                           Margin="0,5,0,0"
                            Text="准备就绪"
-                           VerticalAlignment="Bottom"
-                           Foreground="#000000" />
-            </Grid>
+                           FontSize="12"
+                           Foreground="{DynamicResource HwScopeMutedTextBrush}"
+                           TextWrapping="Wrap" />
+            </StackPanel>
+
+            <Border Grid.Column="1"
+                    Width="56"
+                    Height="56"
+                    Margin="16,0,0,0"
+                    Background="{DynamicResource HwScopeIconBackplateBrush}"
+                    BorderBrush="{DynamicResource HwScopeLineBrush}"
+                    BorderThickness="1"
+                    CornerRadius="8">
+                <ui:SymbolIcon Symbol="Gauge32"
+                               FontSize="28"
+                               Foreground="{DynamicResource HwScopeIconBrush}" />
+            </Border>
+        </Grid>
+
+        <Border Grid.Row="2"
+                Margin="16,0,16,0"
+                Background="Transparent"
+                BorderThickness="0"
+                Padding="0">
+            <ScrollViewer VerticalScrollBarVisibility="Auto"
+                          HorizontalScrollBarVisibility="Disabled">
+                <StackPanel>
+                    <Border Style="{StaticResource BenchmarkCardStyle}">
+                        <Grid>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                            </Grid.RowDefinitions>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="140" />
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+
+                            <TextBlock Grid.Column="1" Text="Read" Style="{StaticResource ColumnHeaderTextStyle}" />
+                            <TextBlock Grid.Column="2" Text="Write" Style="{StaticResource ColumnHeaderTextStyle}" />
+                            <TextBlock Grid.Column="3" Text="Copy" Style="{StaticResource ColumnHeaderTextStyle}" />
+                            <TextBlock Grid.Column="4" Text="Latency" Style="{StaticResource ColumnHeaderTextStyle}" />
+
+                            <TextBlock Grid.Row="1" Text="Memory" Style="{StaticResource RowHeaderTextStyle}" />
+                            <Border Grid.Row="1" Grid.Column="1" Style="{StaticResource CellBorderStyle}">
+                                <TextBlock x:Name="MemoryReadText" Text="" Style="{StaticResource ValueTextStyle}" />
+                            </Border>
+                            <Border Grid.Row="1" Grid.Column="2" Style="{StaticResource CellBorderStyle}">
+                                <TextBlock x:Name="MemoryWriteText" Text="" Style="{StaticResource ValueTextStyle}" />
+                            </Border>
+                            <Border Grid.Row="1" Grid.Column="3" Style="{StaticResource CellBorderStyle}">
+                                <TextBlock x:Name="MemoryCopyText" Text="" Style="{StaticResource ValueTextStyle}" />
+                            </Border>
+                            <Border Grid.Row="1" Grid.Column="4" Style="{StaticResource CellBorderStyle}">
+                                <TextBlock x:Name="MemoryLatencyText" Text="" Style="{StaticResource ValueTextStyle}" />
+                            </Border>
+
+                            <TextBlock Grid.Row="2" Text="L1 Cache" Style="{StaticResource LabelTextStyle}" />
+                            <TextBlock Grid.Row="3" Text="L2 Cache" Style="{StaticResource LabelTextStyle}" />
+                            <TextBlock Grid.Row="4" Text="L3 Cache" Style="{StaticResource LabelTextStyle}" />
+                        </Grid>
+                    </Border>
+
+                    <Border Margin="0,12,0,0" Style="{StaticResource BenchmarkCardStyle}">
+                        <StackPanel>
+                            <TextBlock Text="CPU" Style="{StaticResource InfoCardTitleTextStyle}" />
+                            <Grid>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                </Grid.RowDefinitions>
+
+                                <Border Grid.Row="0" Style="{StaticResource InfoRowStyle}">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="140" />
+                                            <ColumnDefinition Width="*" />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Text="CPU Type" Style="{StaticResource LabelTextStyle}" />
+                                        <TextBlock x:Name="CpuTypeText" Grid.Column="1" Style="{StaticResource InfoValueTextStyle}" Margin="8,0,0,0" />
+                                    </Grid>
+                                </Border>
+                                <Border Grid.Row="1" Style="{StaticResource InfoRowStyle}">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="140" />
+                                            <ColumnDefinition Width="*" />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Text="CPU Clock" Style="{StaticResource LabelTextStyle}" />
+                                        <TextBlock Grid.Column="1" Text="" Style="{StaticResource InfoValueTextStyle}" Margin="8,0,0,0" />
+                                    </Grid>
+                                </Border>
+                                <Border Grid.Row="2" Style="{StaticResource InfoRowStyle}">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="140" />
+                                            <ColumnDefinition Width="*" />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Text="CPU FSB" Style="{StaticResource LabelTextStyle}" />
+                                        <TextBlock Grid.Column="1" Text="" Style="{StaticResource InfoValueTextStyle}" Margin="8,0,0,0" />
+                                    </Grid>
+                                </Border>
+                                <Border Grid.Row="3" Style="{StaticResource InfoRowStyle}">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="140" />
+                                            <ColumnDefinition Width="*" />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Text="CPU Multiplier" Style="{StaticResource LabelTextStyle}" />
+                                        <TextBlock Grid.Column="1" Text="" Style="{StaticResource InfoValueTextStyle}" Margin="8,0,0,0" />
+                                    </Grid>
+                                </Border>
+                                <Border Grid.Row="4" Style="{StaticResource InfoRowStyle}">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="140" />
+                                            <ColumnDefinition Width="*" />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Text="North Bridge Clock" Style="{StaticResource LabelTextStyle}" />
+                                        <TextBlock Grid.Column="1" Text="" Style="{StaticResource InfoValueTextStyle}" Margin="8,0,0,0" />
+                                    </Grid>
+                                </Border>
+                            </Grid>
+                        </StackPanel>
+                    </Border>
+
+                    <Border Margin="0,12,0,0" Style="{StaticResource BenchmarkCardStyle}">
+                        <StackPanel>
+                            <TextBlock Text="Memory" Style="{StaticResource InfoCardTitleTextStyle}" />
+                            <Grid>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                </Grid.RowDefinitions>
+
+                                <Border Grid.Row="0" Style="{StaticResource InfoRowStyle}">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="140" />
+                                            <ColumnDefinition Width="*" />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Text="Memory Bus" Style="{StaticResource LabelTextStyle}" />
+                                        <TextBlock Grid.Column="1" Text="" Style="{StaticResource InfoValueTextStyle}" Margin="8,0,0,0" />
+                                    </Grid>
+                                </Border>
+                                <Border Grid.Row="1" Style="{StaticResource InfoRowStyle}">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="140" />
+                                            <ColumnDefinition Width="*" />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Text="Memory Type" Style="{StaticResource LabelTextStyle}" />
+                                        <TextBlock x:Name="MemoryTypeText" Grid.Column="1" Style="{StaticResource InfoValueTextStyle}" Margin="8,0,0,0" />
+                                    </Grid>
+                                </Border>
+                                <Border Grid.Row="2" Style="{StaticResource InfoRowStyle}">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="140" />
+                                            <ColumnDefinition Width="*" />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Text="Chipset" Style="{StaticResource LabelTextStyle}" />
+                                        <TextBlock Grid.Column="1" Text="" Style="{StaticResource InfoValueTextStyle}" Margin="8,0,0,0" />
+                                    </Grid>
+                                </Border>
+                                <Border Grid.Row="3" Style="{StaticResource InfoRowStyle}">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="140" />
+                                            <ColumnDefinition Width="*" />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Text="Motherboard" Style="{StaticResource LabelTextStyle}" />
+                                        <TextBlock x:Name="MotherboardText" Grid.Column="1" Style="{StaticResource InfoValueTextStyle}" Margin="8,0,0,0" />
+                                    </Grid>
+                                </Border>
+                                <Border Grid.Row="4" Style="{StaticResource InfoRowStyle}">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="140" />
+                                            <ColumnDefinition Width="*" />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Text="BIOS Version" Style="{StaticResource LabelTextStyle}" />
+                                        <TextBlock Grid.Column="1" Text="" Style="{StaticResource InfoValueTextStyle}" Margin="8,0,0,0" />
+                                    </Grid>
+                                </Border>
+                            </Grid>
+                        </StackPanel>
+                    </Border>
+                </StackPanel>
+            </ScrollViewer>
         </Border>
 
-        <Grid Grid.Row="2"
-              Margin="12"
+        <Grid Grid.Row="3"
+              Margin="16,12,16,14"
               Background="{DynamicResource HwScopePanelBrush}">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="Auto" />
