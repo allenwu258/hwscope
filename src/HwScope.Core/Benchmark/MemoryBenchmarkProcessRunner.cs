@@ -472,8 +472,15 @@ public sealed class MemoryBenchmarkProcessRunner : IMemoryBenchmarkRunner
 
     private static MemoryBenchmarkResult EnrichResult(MemoryBenchmarkResult result, string executable, MemoryBenchmarkOptions options)
     {
+        var environmentCollectionFailed = false;
         var environment = CollectEnvironment();
-        var quality = EvaluateQuality(result, environment);
+        if (environment is null)
+        {
+            environmentCollectionFailed = true;
+            environment = CreateUnknownEnvironment();
+        }
+
+        var quality = EvaluateQuality(result, environment, environmentCollectionFailed);
         var snapshot = result.Options ?? new MemoryBenchmarkOptionsSnapshot(
             options.SizeMiB,
             options.Iterations,
@@ -490,21 +497,43 @@ public sealed class MemoryBenchmarkProcessRunner : IMemoryBenchmarkRunner
         };
     }
 
-    private static MemoryBenchmarkEnvironment CollectEnvironment()
+    private static MemoryBenchmarkEnvironment? CollectEnvironment()
     {
-        var cpu = Wmi.Query("SELECT Name, NumberOfCores, NumberOfLogicalProcessors FROM Win32_Processor").FirstOrDefault();
-        var topology = CpuTopologyAnalyzer.TryAnalyze();
-        return new MemoryBenchmarkEnvironment(
-            CpuName: CleanName(Wmi.GetString(cpu, "Name")),
-            PhysicalCoreCount: topology?.Topology.CoreCount.Value ?? (int)Wmi.GetUInt(cpu, "NumberOfCores"),
-            LogicalProcessorCount: topology?.Topology.LogicalProcessorCount.Value ?? (int)Wmi.GetUInt(cpu, "NumberOfLogicalProcessors"),
-            NumaNodeCount: topology?.Topology.NumaNodeCount.Value ?? 0,
-            PowerPlan: GetActivePowerPlan(),
-            OnAcPower: GetAcPowerStatus(),
-            ProcessPriority: Process.GetCurrentProcess().PriorityClass.ToString());
+        try
+        {
+            var cpu = Wmi.Query("SELECT Name, NumberOfCores, NumberOfLogicalProcessors FROM Win32_Processor").FirstOrDefault();
+            var topology = CpuTopologyAnalyzer.TryAnalyze();
+            return new MemoryBenchmarkEnvironment(
+                CpuName: CleanName(Wmi.GetString(cpu, "Name")),
+                PhysicalCoreCount: topology?.Topology.CoreCount.Value ?? (int)Wmi.GetUInt(cpu, "NumberOfCores"),
+                LogicalProcessorCount: topology?.Topology.LogicalProcessorCount.Value ?? (int)Wmi.GetUInt(cpu, "NumberOfLogicalProcessors"),
+                NumaNodeCount: topology?.Topology.NumaNodeCount.Value ?? 0,
+                PowerPlan: GetActivePowerPlan(),
+                OnAcPower: GetAcPowerStatus(),
+                ProcessPriority: Process.GetCurrentProcess().PriorityClass.ToString());
+        }
+        catch
+        {
+            return null;
+        }
     }
 
-    private static MemoryBenchmarkQuality EvaluateQuality(MemoryBenchmarkResult result, MemoryBenchmarkEnvironment environment)
+    private static MemoryBenchmarkEnvironment CreateUnknownEnvironment()
+    {
+        return new MemoryBenchmarkEnvironment(
+            CpuName: string.Empty,
+            PhysicalCoreCount: 0,
+            LogicalProcessorCount: 0,
+            NumaNodeCount: 0,
+            PowerPlan: string.Empty,
+            OnAcPower: null,
+            ProcessPriority: string.Empty);
+    }
+
+    private static MemoryBenchmarkQuality EvaluateQuality(
+        MemoryBenchmarkResult result,
+        MemoryBenchmarkEnvironment environment,
+        bool environmentCollectionFailed)
     {
         const double highVarianceCv = 0.08;
         const double backgroundNoiseCv = 0.15;
@@ -552,6 +581,11 @@ public sealed class MemoryBenchmarkProcessRunner : IMemoryBenchmarkRunner
             flags.Add("incompleteTopologyData");
         }
 
+        if (environmentCollectionFailed)
+        {
+            flags.Add("environmentCollectionFailed");
+        }
+
         return new MemoryBenchmarkQuality(
             HighVariance: highVariance,
             ThermalSuspected: thermalSuspected,
@@ -586,7 +620,6 @@ public sealed class MemoryBenchmarkProcessRunner : IMemoryBenchmarkRunner
                 FileName = "powercfg.exe",
                 ArgumentList = { "/getactivescheme" },
                 RedirectStandardOutput = true,
-                RedirectStandardError = true,
                 UseShellExecute = false,
                 CreateNoWindow = true
             });
@@ -596,7 +629,9 @@ public sealed class MemoryBenchmarkProcessRunner : IMemoryBenchmarkRunner
                 return string.Empty;
             }
 
-            if (!process.WaitForExit(2000))
+            var outputTask = process.StandardOutput.ReadToEndAsync();
+            var exitTask = process.WaitForExitAsync();
+            if (Task.WhenAny(exitTask, Task.Delay(TimeSpan.FromSeconds(2))).GetAwaiter().GetResult() != exitTask)
             {
                 try
                 {
@@ -610,7 +645,7 @@ public sealed class MemoryBenchmarkProcessRunner : IMemoryBenchmarkRunner
                 return string.Empty;
             }
 
-            var output = process.StandardOutput.ReadToEnd();
+            var output = outputTask.GetAwaiter().GetResult();
             if (process.ExitCode != 0)
             {
                 return string.Empty;
