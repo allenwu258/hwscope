@@ -38,6 +38,8 @@ src/HwScope.App/Themes/
 
 旧的 `HwScope.Light.xaml`、`HwScope.Dark.xaml` 和 `HwScope.Colors.xaml` 已经删除。颜色资源现在由 JSON 主题定义在运行时生成。
 
+`HwScope.Controls.xaml` 只保留应用级控件样式，不再承载固定主题颜色。当前主要包含硬件摘要卡片、CPU 详情字段、快捷工具栏按钮等共享样式；这些样式应通过 `DynamicResource` 消费 JSON 主题生成的 brush。
+
 ## User Settings
 
 用户设置路径：

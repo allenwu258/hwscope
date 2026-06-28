@@ -37,7 +37,7 @@ src/HwScope.Native.MemoryBench
 主要组成：
 
 - `MainWindow.xaml`
-  主窗口 shell，包含标题栏菜单、工具栏、左侧导航和页面宿主。
+  主窗口 shell，包含标题栏菜单、HWiNFO 风格快捷工具栏、左侧导航和页面宿主。
 
 - `Pages/HardwareSummaryPage.xaml`
   首页硬件概览页面，支持卡片视图和列表视图。
@@ -56,6 +56,9 @@ src/HwScope.Native.MemoryBench
 
 - `Themes/`
   WPF 控件样式和 JSON 主题 token。
+
+- `Assets/HwScope.ico`
+  应用图标资源，用于窗口、任务栏和可执行文件图标。
 
 GUI 依赖 `WPF-UI`，当前版本为 `4.3.0`。
 
@@ -125,7 +128,7 @@ C:\Users\Trivedi\memory-bench-cpp\build\Release\membench.exe
 - `fix/...`：问题修复。
 - `chore/...`：工程维护、文档、构建脚本等。
 
-当前 Fluent UI 和主题重构工作在 `feat/fluent-ui-refresh` 上推进。
+Fluent UI shell、主题系统、快捷工具栏和应用图标已在 `v0.1.1` 合入 `main`。`feat/...` 分支保留为阶段开发和历史追踪分支。
 
 ## Build And Validation
 

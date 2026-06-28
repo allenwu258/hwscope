@@ -2,16 +2,18 @@
 
 HwScope 是一个 Windows 本地硬件工具箱项目，目标是在一个程序里逐步整合硬件摘要、CPU-Z 类详情、传感器、跑分、压力测试和稳定性查询。
 
-当前版本已经具备：
+当前主线版本为 `v0.1.1`，已经具备：
 
-- WPF 图形界面，基于 WPF-UI / Fluent 风格。
+- WPF 图形界面，基于 WPF-UI / Fluent 风格，包含传统桌面应用式标题栏菜单、左侧导航和 HWiNFO 风格图标+文字快捷工具栏。
 - 首页硬件配置摘要，支持卡片视图和列表视图。
 - CPU 详情页，展示身份、规格、频率、拓扑、缓存、核心映射、指令集和平台上下文。
 - Windows `GetLogicalProcessorInformationEx` 拓扑采集，提供真实 package/core/thread、CPU group、NUMA、缓存共享和 core-to-logical-processor mapping。
+- CPU topology Inspect 窗口，包含 raw report 和绘制版 Visual Map。
 - CLI 硬件摘要输出，支持文本、JSON 和复制到剪贴板。
 - 独立内存跑分窗口，界面参考 AIDA64 Cache & Memory Benchmark。
 - C++ native 内存跑分 worker，当前测量 Memory Read / Write / Copy / Latency。
 - JSON 驱动的主题配置，支持跟随系统、浅色、深色和 Mica 开关。
+- 应用图标资源已接入 `HwScope.App`，用于窗口、任务栏和可执行文件图标。
 
 ## 项目结构
 
@@ -19,7 +21,7 @@ HwScope 是一个 Windows 本地硬件工具箱项目，目标是在一个程序
 HwScope.sln
 src/
   HwScope.App/
-    WPF GUI 入口，主窗口、硬件摘要页、CPU 详情页、主题系统、内存跑分窗口
+    WPF GUI 入口，主窗口、应用图标资源、硬件摘要页、CPU 详情页、主题系统、内存跑分窗口
 
   HwScope.Cli/
     命令行入口，复用 HwScope.Core 的硬件采集和跑分能力
