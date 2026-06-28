@@ -186,13 +186,22 @@ public partial class MemoryBenchmarkWindow : FluentWindow
             $"WorkerVersion     : {result.WorkerVersion ?? string.Empty}",
             $"ProtocolVersion   : {result.ProtocolVersion?.ToString(CultureInfo.InvariantCulture) ?? string.Empty}",
             string.Empty,
+            "Timer",
+            $"Name              : {result.Timer?.Name ?? string.Empty}",
+            $"FrequencyHz       : {result.Timer?.FrequencyHz.ToString(CultureInfo.InvariantCulture) ?? string.Empty}",
+            string.Empty,
             "Options"
         };
 
         if (result.Options is { } options)
         {
             lines.Add($"SizeMiB           : {options.SizeMiB}");
-            lines.Add($"Iterations        : {options.Iterations}");
+            lines.Add($"Iterations        : {options.Iterations} (legacy min samples)");
+            lines.Add($"WarmupRuns        : {options.WarmupRuns}");
+            lines.Add($"MinSamples        : {options.MinSamples}");
+            lines.Add($"MaxSamples        : {options.MaxSamples}");
+            lines.Add($"TargetSampleMs    : {options.TargetSampleMs.ToString("F2", CultureInfo.InvariantCulture)}");
+            lines.Add($"MaxCv             : {options.MaxCv.ToString("P2", CultureInfo.InvariantCulture)}");
             lines.Add($"LatencySteps      : {options.LatencySteps}");
             lines.Add($"Threads           : {options.Threads}");
             lines.Add($"WorkingSetKind    : {options.WorkingSetKind}");
@@ -246,6 +255,11 @@ public partial class MemoryBenchmarkWindow : FluentWindow
         lines.Add($"Mean      : {metric.Aggregate.Mean:F2}");
         lines.Add($"StdDev    : {metric.Aggregate.StdDev:F2}");
         lines.Add($"CV        : {metric.Aggregate.Cv:P2}");
+        lines.Add($"Converged : {metric.Converged}");
+        if (metric.InnerIterations.Count > 0)
+        {
+            lines.Add($"InnerLoop : {string.Join(", ", metric.InnerIterations.Select(sample => sample.ToString(CultureInfo.InvariantCulture)))}");
+        }
         lines.Add($"Samples   : {string.Join(", ", metric.Samples.Select(sample => sample.ToString("F2", CultureInfo.InvariantCulture)))}");
     }
 

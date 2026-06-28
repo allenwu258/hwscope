@@ -2,7 +2,7 @@
 
 Native C++ worker for HwScope memory benchmarking.
 
-This worker currently measures main-memory read, write, copy throughput and random-access latency. `HwScope.Core.Benchmark.MemoryBenchmarkProcessRunner` can invoke it with `--csv` for final-result parsing or `--progress-json` for live GUI updates.
+This worker currently measures main-memory read, write, copy throughput and random-access latency. `HwScope.Core.Benchmark.MemoryBenchmarkProcessRunner` invokes it with structured JSON by default, or `--progress-json` for live GUI updates.
 
 It does not yet measure L1, L2, or L3 cache rows. Those rows are currently UI placeholders in `HwScope.App`.
 
@@ -36,7 +36,15 @@ HwScope invokes the worker with structured final JSON by default:
 membench --size-mib 512 --iterations 7 --latency-steps 20000000 --json
 ```
 
-JSON output includes worker/protocol metadata, options, elapsed time, raw samples, and aggregate statistics.
+`--iterations` is a legacy alias for the minimum measured sample count. The adaptive run policy can also be controlled explicitly:
+
+```text
+membench --size-mib 512 --min-samples 7 --max-samples 11 --warmup-runs 1 --target-sample-ms 120 --max-cv 0.03 --json
+```
+
+On Windows, the worker times samples with `QueryPerformanceCounter` and records the timer frequency. Each metric warms up, increases its inner loop until the sample reaches the target duration, then stops after variance converges or `max-samples` is reached.
+
+JSON output includes worker/protocol metadata, options, timer metadata, elapsed time, raw samples, inner-loop counts, convergence state, and aggregate statistics.
 
 CSV remains available for manual compatibility:
 
@@ -63,6 +71,12 @@ Each completed metric is flushed as one event:
 ```
 
 The progress stream also emits a final `type=result` JSON event before `type=completed`. The C# runner treats live metric updates as best-effort, then strictly validates the full stream after process exit and writes stdout/stderr diagnostics for parse failures.
+
+Useful quick validation command:
+
+```powershell
+.\build\Release\membench.exe --size-mib 16 --min-samples 3 --max-samples 5 --target-sample-ms 20 --latency-steps 1000 --json
+```
 
 See [`../../docs/memory-benchmark-design.md`](../../docs/memory-benchmark-design.md) for algorithm notes and the evolution plan.
 

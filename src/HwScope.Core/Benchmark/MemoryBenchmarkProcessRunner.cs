@@ -129,6 +129,16 @@ public sealed class MemoryBenchmarkProcessRunner : IMemoryBenchmarkRunner
             options.Iterations.ToString(CultureInfo.InvariantCulture),
             "--latency-steps",
             options.LatencySteps.ToString(CultureInfo.InvariantCulture),
+            "--warmup-runs",
+            options.WarmupRuns.ToString(CultureInfo.InvariantCulture),
+            "--min-samples",
+            options.Iterations.ToString(CultureInfo.InvariantCulture),
+            "--max-samples",
+            Math.Max(options.MaxSamples, options.Iterations).ToString(CultureInfo.InvariantCulture),
+            "--target-sample-ms",
+            options.TargetSampleMs.ToString(CultureInfo.InvariantCulture),
+            "--max-cv",
+            options.MaxCv.ToString(CultureInfo.InvariantCulture),
             useProgressJson ? "--progress-json" : "--json"
         ];
     }
@@ -145,9 +155,49 @@ public sealed class MemoryBenchmarkProcessRunner : IMemoryBenchmarkRunner
             throw new ArgumentOutOfRangeException(nameof(options), "迭代次数必须大于 0。");
         }
 
+        if (options.Iterations > 1000)
+        {
+            throw new ArgumentOutOfRangeException(nameof(options), "迭代次数不能超过 1000。");
+        }
+
         if (options.LatencySteps <= 0)
         {
             throw new ArgumentOutOfRangeException(nameof(options), "延迟测试步数必须大于 0。");
+        }
+
+        if (options.WarmupRuns < 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(options), "预热次数不能小于 0。");
+        }
+
+        if (options.WarmupRuns > 100)
+        {
+            throw new ArgumentOutOfRangeException(nameof(options), "预热次数不能超过 100。");
+        }
+
+        if (options.MaxSamples <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(options), "最大样本数必须大于 0。");
+        }
+
+        if (options.MaxSamples > 1000)
+        {
+            throw new ArgumentOutOfRangeException(nameof(options), "最大样本数不能超过 1000。");
+        }
+
+        if (!double.IsFinite(options.TargetSampleMs) || options.TargetSampleMs <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(options), "目标样本时长必须大于 0。");
+        }
+
+        if (options.TargetSampleMs > 60_000)
+        {
+            throw new ArgumentOutOfRangeException(nameof(options), "目标样本时长不能超过 60000 ms。");
+        }
+
+        if (!double.IsFinite(options.MaxCv) || options.MaxCv is < 0 or > 1)
+        {
+            throw new ArgumentOutOfRangeException(nameof(options), "最大变异系数必须在 [0, 1]。");
         }
 
         if (options.Threads <= 0)
@@ -430,10 +480,20 @@ public sealed class MemoryBenchmarkProcessRunner : IMemoryBenchmarkRunner
         var write = ParseMetricResult(metricsElement.GetProperty("write"));
         var copy = ParseMetricResult(metricsElement.GetProperty("copy"));
         var latency = ParseMetricResult(metricsElement.GetProperty("latency"));
+        var timer = root.TryGetProperty("timer", out var timerElement)
+            ? new MemoryBenchmarkTimer(
+                Name: timerElement.TryGetProperty("name", out var timerName) ? timerName.GetString() ?? string.Empty : string.Empty,
+                FrequencyHz: timerElement.TryGetProperty("frequency_hz", out var frequency) ? frequency.GetInt64() : 0)
+            : null;
         var options = new MemoryBenchmarkOptionsSnapshot(
             SizeMiB: optionsElement.GetProperty("size_mib").GetInt32(),
             Iterations: optionsElement.GetProperty("iterations").GetInt32(),
             LatencySteps: optionsElement.GetProperty("latency_steps").GetInt64(),
+            WarmupRuns: optionsElement.TryGetProperty("warmup_runs", out var warmupRuns) ? warmupRuns.GetInt32() : 0,
+            MinSamples: optionsElement.TryGetProperty("min_samples", out var minSamples) ? minSamples.GetInt32() : optionsElement.GetProperty("iterations").GetInt32(),
+            MaxSamples: optionsElement.TryGetProperty("max_samples", out var maxSamples) ? maxSamples.GetInt32() : optionsElement.GetProperty("iterations").GetInt32(),
+            TargetSampleMs: optionsElement.TryGetProperty("target_sample_ms", out var targetSampleMs) ? targetSampleMs.GetDouble() : 0.0,
+            MaxCv: optionsElement.TryGetProperty("max_cv", out var maxCv) ? maxCv.GetDouble() : 0.0,
             Threads: optionsElement.GetProperty("threads").GetInt32(),
             WorkingSetKind: optionsElement.GetProperty("working_set_kind").GetString() ?? "memory");
 
@@ -448,6 +508,7 @@ public sealed class MemoryBenchmarkProcessRunner : IMemoryBenchmarkRunner
             WorkerVersion: root.TryGetProperty("worker_version", out var workerVersion) ? workerVersion.GetString() : null,
             ProtocolVersion: root.TryGetProperty("protocol_version", out var protocolVersion) ? protocolVersion.GetInt32() : null,
             ElapsedMs: root.TryGetProperty("elapsed_ms", out var elapsedMs) ? elapsedMs.GetDouble() : null,
+            Timer: timer,
             Metrics: new MemoryBenchmarkMetricSet(read, write, copy, latency));
     }
 
@@ -457,10 +518,15 @@ public sealed class MemoryBenchmarkProcessRunner : IMemoryBenchmarkRunner
             .EnumerateArray()
             .Select(sample => sample.GetDouble())
             .ToList();
+        var innerIterations = element.TryGetProperty("inner_iterations", out var innerIterationsElement)
+            ? innerIterationsElement.EnumerateArray().Select(sample => sample.GetInt64()).ToList()
+            : [];
         var aggregate = element.GetProperty("aggregate");
         return new MemoryBenchmarkMetricResult(
             Unit: element.GetProperty("unit").GetString() ?? string.Empty,
             Samples: samples,
+            InnerIterations: innerIterations,
+            Converged: element.TryGetProperty("converged", out var converged) && converged.GetBoolean(),
             Aggregate: new MemoryBenchmarkAggregate(
                 Median: aggregate.GetProperty("median").GetDouble(),
                 Min: aggregate.GetProperty("min").GetDouble(),
@@ -485,6 +551,11 @@ public sealed class MemoryBenchmarkProcessRunner : IMemoryBenchmarkRunner
             options.SizeMiB,
             options.Iterations,
             options.LatencySteps,
+            options.WarmupRuns,
+            options.Iterations,
+            Math.Max(options.MaxSamples, options.Iterations),
+            options.TargetSampleMs,
+            options.MaxCv,
             options.Threads,
             options.WorkingSetKind);
 

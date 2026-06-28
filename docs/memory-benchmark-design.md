@@ -62,6 +62,11 @@ Current defaults:
 --size-mib 512
 --iterations 7
 --latency-steps 20000000
+--warmup-runs 1
+--min-samples 7
+--max-samples 11
+--target-sample-ms 120
+--max-cv 0.03
 ```
 
 Minimum memory buffer size is 16 MiB. CSV output remains available for manual compatibility:
@@ -73,13 +78,13 @@ size_mib,read_mib_s,write_mib_s,copy_mib_s,latency_ns
 The preferred final-result protocol is structured JSON:
 
 ```text
-{"type":"result","worker_version":"0.2.0","protocol_version":2,"elapsed_ms":1234.56,"options":{"size_mib":512,"iterations":7,"latency_steps":20000000,"threads":1,"working_set_kind":"memory"},"metrics":{"read":{"unit":"mib_s","samples":[36000.00],"aggregate":{"median":36000.00,"min":36000.00,"max":36000.00,"mean":36000.00,"stddev":0.00,"cv":0.000000}}}}
+{"type":"result","worker_version":"0.3.0","protocol_version":3,"elapsed_ms":1234.56,"timer":{"name":"QueryPerformanceCounter","frequency_hz":10000000},"options":{"size_mib":512,"iterations":7,"latency_steps":20000000,"warmup_runs":1,"min_samples":7,"max_samples":11,"target_sample_ms":120.00,"max_cv":0.030000,"threads":1,"working_set_kind":"memory"},"metrics":{"read":{"unit":"mib_s","samples":[36000.00],"inner_iterations":[8],"converged":true,"aggregate":{"median":36000.00,"min":36000.00,"max":36000.00,"mean":36000.00,"stddev":0.00,"cv":0.000000}}}}
 ```
 
 The GUI uses newline-delimited progress JSON so each result can appear as soon as that metric finishes:
 
 ```text
-{"type":"started","size_mib":512,"iterations":7,"latency_steps":20000000}
+{"type":"started","size_mib":512,"iterations":7,"latency_steps":20000000,"warmup_runs":1,"min_samples":7,"max_samples":11,"target_sample_ms":120.00,"max_cv":0.03}
 {"type":"metric","metric":"read","value":36000.00,"unit":"mib_s"}
 {"type":"metric","metric":"write","value":51000.00,"unit":"mib_s"}
 {"type":"metric","metric":"copy","value":22000.00,"unit":"mib_s"}
@@ -94,13 +99,24 @@ Progress reporting is best-effort during the run: malformed or unknown progress 
 
 `MemoryBenchmarkProcessRunner` enriches the native result with the resolved executable path, environment metadata, and quality flags. The first quality pass is intentionally conservative: it marks high variance, likely background noise, short runs, simple downward throughput trends, and incomplete topology data. These flags are diagnostic hints, not proof of a specific thermal or scheduling cause.
 
-### Allocation And Warmup
+### Allocation, Timing, And Warmup
 
 The worker allocates 64-byte aligned buffers via `_aligned_malloc` on Windows. This matches common cache-line size and keeps future SIMD paths straightforward.
 
 Before timed runs, it touches pages in 4 KiB steps. This reduces first-touch page fault noise during measured loops.
 
-The worker also runs one untimed warmup pass of read, write, and copy before collecting official samples.
+The worker uses `QueryPerformanceCounter` on Windows and records the timer frequency in final JSON. Non-Windows builds keep a `std::chrono::steady_clock` fallback for development, but HwScope currently targets Windows.
+
+Each metric now uses an adaptive sample policy:
+
+```text
+run warmup_runs untimed passes
+collect at least min_samples measured samples
+increase inner_iterations until each sample lasts at least target_sample_ms
+stop when coefficient of variation is <= max_cv, or after max_samples
+```
+
+The `iterations` option remains as a legacy alias for `min_samples` so older commands still behave predictably.
 
 ### Read Throughput
 
@@ -112,19 +128,19 @@ Result calculation:
 read_mib_s = bytes_read / elapsed_seconds / 1024 / 1024
 ```
 
-Samples are collected for `iterations` rounds, then the median sample is reported.
+Samples are collected through the adaptive timing policy, then the median sample is reported. Each metric records its raw samples, inner-loop counts, aggregate statistics, and whether variance converged before `max_samples`.
 
 ### Write Throughput
 
 The write benchmark calls `std::memset` over the whole buffer with a changing byte value per round. One byte is mixed into the volatile sink after each round.
 
-This currently measures the platform C runtime's memset path rather than a custom AVX/non-temporal store path.
+This currently measures the platform C runtime's memset path rather than a custom AVX/non-temporal store path. It uses the same adaptive timing policy as read throughput.
 
 ### Copy Throughput
 
 The copy benchmark calls `std::memcpy(dst, src, bytes)` and reports copied bytes per second.
 
-Copy is naturally more demanding than read or write because it pressures both load and store paths. The current score is also dependent on the CRT memcpy implementation and does not use a HwScope-specific copy kernel yet.
+Copy is naturally more demanding than read or write because it pressures both load and store paths. The current score is also dependent on the CRT memcpy implementation and does not use a HwScope-specific copy kernel yet. It uses the same adaptive timing policy as read throughput.
 
 ### Latency
 
@@ -134,15 +150,17 @@ Latency uses randomized pointer chasing:
 2. Shuffle the node order with a fixed seed.
 3. Build a single cycle where each node points to the next shuffled node.
 4. Follow the chain for a warmup subset.
-5. Time `latency_steps` dependent loads.
+5. Time dependent loads through the adaptive sample policy.
 
 Each load depends on the previous loaded index, so the CPU cannot freely parallelize the loop. This suppresses the benefit of sequential hardware prefetching and makes the result closer to true random-access latency.
 
 Result calculation:
 
 ```text
-latency_ns = elapsed_seconds * 1_000_000_000 / latency_steps
+latency_ns = elapsed_seconds * 1_000_000_000 / measured_steps
 ```
+
+`latency_steps` remains the requested total baseline for the run policy. The worker derives per-sample base steps from `latency_steps / min_samples`, then increases the inner loop if a sample is shorter than `target_sample_ms`.
 
 ### Thread Pinning
 
@@ -192,9 +210,7 @@ Each final result should include enough context to explain how it was produced:
 
 ### Timing And Sampling
 
-The current worker uses fixed `iterations` and `std::chrono::steady_clock`, which is acceptable for a prototype but weak for cache-sized tests and noisy systems.
-
-The next timing model should use a target-duration loop:
+The worker now uses `QueryPerformanceCounter` on Windows and records timer name and frequency in the result. Fixed `iterations` has been replaced by a target-duration loop:
 
 ```text
 for each metric:
@@ -204,7 +220,7 @@ for each metric:
   stop after variance converges or max_samples is reached
 ```
 
-On Windows, `QueryPerformanceCounter` should be the primary wall-clock timer. `RDTSCP` can be evaluated later for short cache tests, but only after validating invariant TSC behavior and serialization costs.
+`RDTSCP` can be evaluated later for short cache tests, but only after validating invariant TSC behavior and serialization costs.
 
 Median should remain the default displayed aggregate. Mean, min, max, standard deviation, and coefficient of variation should be recorded for diagnostics and quality flags.
 
@@ -295,25 +311,27 @@ Keep the current worker process model, but make packaging reliable.
 
 ### Stage 2: Result Metadata And Final JSON
 
-Make the result protocol explainable before adding faster measurement paths.
+Implemented. The result protocol is explainable before adding faster measurement paths.
 
-- Add worker version, protocol version, options, executable path, arguments, elapsed time, and selected kernel to final output.
-- Add raw samples and aggregate statistics for each metric.
+- Add worker version, protocol version, options, executable path, elapsed time, timer metadata, and selected kernel to final output.
+- Add raw samples, inner-loop counts, convergence state, and aggregate statistics for each metric.
 - Add quality flags for variance, short sample duration, topology uncertainty, and likely environment interference.
 - Keep CSV compatibility for existing CLI flows, but use structured JSON as the preferred C# parsing path.
 
 ### Stage 3: Better Timing And Adaptive Sampling
 
-The current worker uses `std::chrono::steady_clock`, which is good enough for the prototype.
-
-Future work:
+Implemented for the current single-thread memory row.
 
 - Use `QueryPerformanceCounter` directly on Windows.
-- Consider `RDTSCP` with serialization for short cache tests.
-- Calibrate invariant TSC before relying on cycle-based timing.
 - Separate warmup rounds from measured rounds.
 - Replace fixed iteration counts with target sample duration, minimum sample count, maximum sample count, and variance convergence.
 - Increase inner-loop duration for small cache working sets to reduce timer noise.
+
+Future work:
+
+- Consider `RDTSCP` with serialization for short cache tests.
+- Calibrate invariant TSC before relying on cycle-based timing.
+- Record warmup sample measurements separately if they become useful for diagnostics.
 
 ### Stage 4: Topology And Environment Awareness
 
@@ -378,11 +396,9 @@ Improve repeatability, diagnostics, and user trust.
 
 Recommended next steps:
 
-1. Add structured final JSON with worker version, options, elapsed time, raw samples, aggregate statistics, and quality flags.
-2. Add adaptive timing: warmup samples, target sample duration, min/max sample count, and variance calculation.
-3. Add topology-aware placement metadata before enabling multi-thread default behavior.
-4. Add `--threads` to the native worker and expose it through `MemoryBenchmarkOptions`.
-5. Add explicit kernel metadata and then introduce SIMD kernels behind feature detection.
-6. Add L1/L2/L3 cache rows using detected cache sizes and sharing topology.
-7. Add a compact benchmark report export from `MemoryBenchmarkWindow`.
+1. Add topology-aware placement metadata before enabling multi-thread default behavior.
+2. Add `--threads` to the native worker and expose it through `MemoryBenchmarkOptions`.
+3. Add explicit kernel metadata and then introduce SIMD kernels behind feature detection.
+4. Add L1/L2/L3 cache rows using detected cache sizes and sharing topology.
+5. Add a compact benchmark report export from `MemoryBenchmarkWindow`.
 

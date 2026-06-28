@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Globalization;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Encodings.Web;
@@ -41,7 +42,8 @@ try
         Console.WriteLine($"Latency : {result.LatencyNs:F1} ns");
         Console.WriteLine();
         Console.WriteLine($"Worker  : {result.WorkerVersion ?? "unknown"} (protocol {result.ProtocolVersion?.ToString() ?? "unknown"})");
-        Console.WriteLine($"Options : {result.Options?.SizeMiB ?? result.SizeMiB} MiB, {result.Options?.Iterations ?? 0} samples, latency steps {result.Options?.LatencySteps ?? 0}, threads {result.Options?.Threads ?? 1}, {result.Options?.WorkingSetKind ?? "memory"}");
+        Console.WriteLine($"Timer   : {FormatTimer(result)}");
+        Console.WriteLine($"Options : {FormatOptions(result)}");
         Console.WriteLine($"Elapsed : {(result.ElapsedMs is { } elapsedMs ? $"{elapsedMs:F0} ms" : "unknown")}");
         Console.WriteLine($"Quality : {FormatQuality(result)}");
         return 0;
@@ -87,6 +89,34 @@ static string FormatQuality(MemoryBenchmarkResult result)
     }
 
     return string.Join(", ", result.Quality.Flags);
+}
+
+static string FormatTimer(MemoryBenchmarkResult result)
+{
+    if (result.Timer is null)
+    {
+        return "unknown";
+    }
+
+    return $"{result.Timer.Name} ({result.Timer.FrequencyHz.ToString(CultureInfo.InvariantCulture)} Hz)";
+}
+
+static string FormatOptions(MemoryBenchmarkResult result)
+{
+    if (result.Options is not { } options)
+    {
+        return $"{result.SizeMiB} MiB";
+    }
+
+    return string.Join(", ",
+        $"{options.SizeMiB} MiB",
+        $"samples {options.MinSamples}-{options.MaxSamples}",
+        $"warmup {options.WarmupRuns}",
+        $"target {options.TargetSampleMs.ToString("F0", CultureInfo.InvariantCulture)} ms",
+        $"max CV {options.MaxCv.ToString("P0", CultureInfo.InvariantCulture)}",
+        $"latency steps {options.LatencySteps}",
+        $"threads {options.Threads}",
+        options.WorkingSetKind);
 }
 
 internal sealed record CliOptions(bool Json, bool Copy, bool MemoryBenchmark, bool ShowHelp)

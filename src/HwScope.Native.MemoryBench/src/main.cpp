@@ -29,8 +29,12 @@ constexpr std::size_t kMiB = 1024ull * 1024ull;
 constexpr std::uint64_t kDefaultSizeMiB = 512;
 constexpr int kDefaultIterations = 7;
 constexpr std::uint64_t kDefaultLatencySteps = 20'000'000;
-constexpr std::string_view kWorkerVersion = "0.2.0";
-constexpr int kProtocolVersion = 2;
+constexpr int kDefaultWarmupRuns = 1;
+constexpr int kDefaultMaxSamples = 11;
+constexpr double kDefaultTargetSampleMs = 120.0;
+constexpr double kDefaultMaxCv = 0.03;
+constexpr std::string_view kWorkerVersion = "0.3.0";
+constexpr int kProtocolVersion = 3;
 
 volatile std::uint64_t g_sink = 0;
 
@@ -38,6 +42,11 @@ struct Options {
     std::uint64_t size_mib = kDefaultSizeMiB;
     int iterations = kDefaultIterations;
     std::uint64_t latency_steps = kDefaultLatencySteps;
+    int warmup_runs = kDefaultWarmupRuns;
+    int min_samples = kDefaultIterations;
+    int max_samples = kDefaultMaxSamples;
+    double target_sample_ms = kDefaultTargetSampleMs;
+    double max_cv = kDefaultMaxCv;
     bool csv = false;
     bool json = false;
     bool progress_json = false;
@@ -64,7 +73,16 @@ struct BenchResult {
     std::vector<double> write_samples;
     std::vector<double> copy_samples;
     std::vector<double> latency_samples;
+    std::vector<std::uint64_t> read_inner_iterations;
+    std::vector<std::uint64_t> write_inner_iterations;
+    std::vector<std::uint64_t> copy_inner_iterations;
+    std::vector<std::uint64_t> latency_inner_iterations;
     double elapsed_ms = 0.0;
+    std::uint64_t timer_frequency_hz = 0;
+    bool read_converged = false;
+    bool write_converged = false;
+    bool copy_converged = false;
+    bool latency_converged = false;
 };
 
 struct Aggregate {
@@ -76,14 +94,33 @@ struct Aggregate {
     double cv = 0.0;
 };
 
+struct TimedSample {
+    double value = 0.0;
+    double elapsed_ms = 0.0;
+};
+
+struct SampleSeries {
+    std::vector<double> values;
+    std::vector<std::uint64_t> inner_iterations;
+    bool converged = false;
+};
+
 void print_usage() {
     std::cout
-        << "Usage: membench [--size-mib N] [--iterations N] [--latency-steps N] [--csv] [--json] [--progress-json]\n"
+        << "Usage: membench [--size-mib N] [--iterations N] [--latency-steps N]\n"
+        << "                [--warmup-runs N] [--min-samples N] [--max-samples N]\n"
+        << "                [--target-sample-ms N] [--max-cv N]\n"
+        << "                [--csv] [--json] [--progress-json]\n"
         << "\n"
         << "Defaults:\n"
         << "  --size-mib " << kDefaultSizeMiB << "\n"
-        << "  --iterations " << kDefaultIterations << "\n"
-        << "  --latency-steps " << kDefaultLatencySteps << "\n";
+        << "  --iterations " << kDefaultIterations << " (legacy alias for --min-samples)\n"
+        << "  --latency-steps " << kDefaultLatencySteps << "\n"
+        << "  --warmup-runs " << kDefaultWarmupRuns << "\n"
+        << "  --min-samples " << kDefaultIterations << "\n"
+        << "  --max-samples " << kDefaultMaxSamples << "\n"
+        << "  --target-sample-ms " << kDefaultTargetSampleMs << "\n"
+        << "  --max-cv " << kDefaultMaxCv << "\n";
 }
 
 std::uint64_t parse_u64(std::string_view value, std::string_view name) {
@@ -101,8 +138,35 @@ std::uint64_t parse_u64(std::string_view value, std::string_view name) {
     return parsed;
 }
 
+double parse_double(std::string_view value, std::string_view name) {
+    std::size_t consumed = 0;
+    double parsed = 0.0;
+    try {
+        parsed = std::stod(std::string(value), &consumed);
+    } catch (const std::exception&) {
+        throw std::invalid_argument("Invalid number for " + std::string(name));
+    }
+
+    if (consumed != value.size()) {
+        throw std::invalid_argument("Invalid number for " + std::string(name));
+    }
+    if (!std::isfinite(parsed)) {
+        throw std::invalid_argument("Invalid finite number for " + std::string(name));
+    }
+    return parsed;
+}
+
+std::uint64_t checked_multiply_u64(std::uint64_t left, std::uint64_t right, std::string_view name) {
+    if (right != 0 && left > std::numeric_limits<std::uint64_t>::max() / right) {
+        throw std::overflow_error(std::string(name) + " overflow");
+    }
+
+    return left * right;
+}
+
 Options parse_args(int argc, char** argv) {
     Options options;
+    bool max_samples_specified = false;
 
     for (int i = 1; i < argc; ++i) {
         const std::string_view arg(argv[i]);
@@ -139,8 +203,33 @@ Options parse_args(int argc, char** argv) {
                 throw std::invalid_argument("--iterations must be in [1, 1000]");
             }
             options.iterations = static_cast<int>(value);
+            options.min_samples = static_cast<int>(value);
         } else if (arg == "--latency-steps") {
             options.latency_steps = parse_u64(require_value(arg), arg);
+        } else if (arg == "--warmup-runs") {
+            const auto value = parse_u64(require_value(arg), arg);
+            if (value > 100) {
+                throw std::invalid_argument("--warmup-runs must be in [0, 100]");
+            }
+            options.warmup_runs = static_cast<int>(value);
+        } else if (arg == "--min-samples") {
+            const auto value = parse_u64(require_value(arg), arg);
+            if (value == 0 || value > 1000) {
+                throw std::invalid_argument("--min-samples must be in [1, 1000]");
+            }
+            options.min_samples = static_cast<int>(value);
+            options.iterations = static_cast<int>(value);
+        } else if (arg == "--max-samples") {
+            const auto value = parse_u64(require_value(arg), arg);
+            if (value == 0 || value > 1000) {
+                throw std::invalid_argument("--max-samples must be in [1, 1000]");
+            }
+            options.max_samples = static_cast<int>(value);
+            max_samples_specified = true;
+        } else if (arg == "--target-sample-ms") {
+            options.target_sample_ms = parse_double(require_value(arg), arg);
+        } else if (arg == "--max-cv") {
+            options.max_cv = parse_double(require_value(arg), arg);
         } else {
             throw std::invalid_argument("Unknown argument: " + std::string(arg));
         }
@@ -152,12 +241,65 @@ Options parse_args(int argc, char** argv) {
     if (options.latency_steps == 0) {
         throw std::invalid_argument("--latency-steps must be greater than 0");
     }
+    if (!max_samples_specified && options.max_samples < options.min_samples) {
+        options.max_samples = options.min_samples;
+    }
+    if (options.max_samples < options.min_samples) {
+        throw std::invalid_argument("--max-samples must be greater than or equal to --min-samples");
+    }
+    if (options.target_sample_ms <= 0.0 || options.target_sample_ms > 60'000.0) {
+        throw std::invalid_argument("--target-sample-ms must be in (0, 60000]");
+    }
+    if (options.max_cv < 0.0 || options.max_cv > 1.0) {
+        throw std::invalid_argument("--max-cv must be in [0, 1]");
+    }
+    if (options.size_mib > std::numeric_limits<std::size_t>::max() / kMiB) {
+        throw std::invalid_argument("--size-mib is too large for this process");
+    }
     if ((options.csv ? 1 : 0) + (options.json ? 1 : 0) + (options.progress_json ? 1 : 0) > 1) {
         throw std::invalid_argument("--csv, --json, and --progress-json are mutually exclusive");
     }
 
     return options;
 }
+
+class Timer {
+public:
+    Timer() {
+#if defined(_WIN32)
+        LARGE_INTEGER value{};
+        if (!QueryPerformanceFrequency(&value) || value.QuadPart <= 0) {
+            throw std::runtime_error("QueryPerformanceFrequency failed");
+        }
+
+        frequency_ = value.QuadPart;
+#else
+        frequency_ = 1'000'000'000;
+#endif
+    }
+
+    std::uint64_t frequency_hz() const noexcept {
+        return frequency_;
+    }
+
+    std::uint64_t now_ticks() const {
+#if defined(_WIN32)
+        LARGE_INTEGER value{};
+        QueryPerformanceCounter(&value);
+        return static_cast<std::uint64_t>(value.QuadPart);
+#else
+        const auto now = std::chrono::steady_clock::now().time_since_epoch();
+        return static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(now).count());
+#endif
+    }
+
+    double elapsed_seconds(std::uint64_t start, std::uint64_t finish) const {
+        return static_cast<double>(finish - start) / static_cast<double>(frequency_);
+    }
+
+private:
+    std::uint64_t frequency_ = 0;
+};
 
 AlignedBuffer make_aligned_buffer(std::size_t bytes) {
 #if defined(_WIN32)
@@ -185,14 +327,6 @@ void pin_to_current_cpu() {
 #else
 void pin_to_current_cpu() {}
 #endif
-
-template <typename Fn>
-double elapsed_seconds(Fn&& fn) {
-    const auto start = std::chrono::steady_clock::now();
-    fn();
-    const auto finish = std::chrono::steady_clock::now();
-    return std::chrono::duration<double>(finish - start).count();
-}
 
 double median(std::vector<double> values) {
     if (values.empty()) {
@@ -227,6 +361,60 @@ Aggregate aggregate(const std::vector<double>& values) {
     return result;
 }
 
+bool has_converged(const std::vector<double>& values, double max_cv) {
+    return values.size() >= 2 && aggregate(values).cv <= max_cv;
+}
+
+template <typename Measure, typename Convert>
+TimedSample time_repeated(const Timer& timer, Measure&& measure, Convert&& convert, std::uint64_t inner_iterations) {
+    const auto start = timer.now_ticks();
+    const double work = measure(inner_iterations);
+    const auto finish = timer.now_ticks();
+    const auto elapsed_seconds = timer.elapsed_seconds(start, finish);
+    return TimedSample{
+        convert(work, elapsed_seconds),
+        elapsed_seconds * 1000.0
+    };
+}
+
+template <typename Measure, typename Convert>
+SampleSeries collect_adaptive_samples(const Options& options, const Timer& timer, Measure&& measure, Convert&& convert) {
+    for (int warmup = 0; warmup < options.warmup_runs; ++warmup) {
+        (void)time_repeated(timer, measure, convert, 1);
+    }
+
+    SampleSeries series;
+    series.values.reserve(static_cast<std::size_t>(options.max_samples));
+    series.inner_iterations.reserve(static_cast<std::size_t>(options.max_samples));
+
+    std::uint64_t inner_iterations = 1;
+    while (static_cast<int>(series.values.size()) < options.max_samples) {
+        TimedSample sample;
+        for (;;) {
+            sample = time_repeated(timer, measure, convert, inner_iterations);
+            if (sample.elapsed_ms >= options.target_sample_ms || inner_iterations >= (std::numeric_limits<std::uint64_t>::max() / 2)) {
+                break;
+            }
+
+            const auto scale = std::max<std::uint64_t>(
+                2,
+                static_cast<std::uint64_t>(std::ceil(options.target_sample_ms / std::max(sample.elapsed_ms, 0.001))));
+            const auto max_multiplier = (std::numeric_limits<std::uint64_t>::max() / inner_iterations);
+            inner_iterations *= std::min(scale, max_multiplier);
+        }
+
+        series.values.push_back(sample.value);
+        series.inner_iterations.push_back(inner_iterations);
+
+        if (static_cast<int>(series.values.size()) >= options.min_samples && has_converged(series.values, options.max_cv)) {
+            series.converged = true;
+            break;
+        }
+    }
+
+    return series;
+}
+
 void touch_pages(std::uint8_t* data, std::size_t bytes) {
     constexpr std::size_t page = 4096;
     for (std::size_t i = 0; i < bytes; i += page) {
@@ -234,80 +422,92 @@ void touch_pages(std::uint8_t* data, std::size_t bytes) {
     }
 }
 
-std::vector<double> run_read(std::uint8_t* data, std::size_t bytes, int iterations) {
+std::uint64_t run_read_once(std::uint8_t* data, std::size_t bytes) {
     constexpr std::size_t unroll = 8;
     constexpr std::size_t stride = sizeof(std::uint64_t) * unroll;
     const auto count = bytes / sizeof(std::uint64_t);
     const auto* words = reinterpret_cast<const std::uint64_t*>(data);
-    std::vector<double> samples;
-    samples.reserve(static_cast<std::size_t>(iterations));
+    std::uint64_t sum0 = 0;
+    std::uint64_t sum1 = 0;
+    std::uint64_t sum2 = 0;
+    std::uint64_t sum3 = 0;
+    std::uint64_t sum4 = 0;
+    std::uint64_t sum5 = 0;
+    std::uint64_t sum6 = 0;
+    std::uint64_t sum7 = 0;
 
-    for (int round = 0; round < iterations; ++round) {
-        std::uint64_t sum0 = 0;
-        std::uint64_t sum1 = 0;
-        std::uint64_t sum2 = 0;
-        std::uint64_t sum3 = 0;
-        std::uint64_t sum4 = 0;
-        std::uint64_t sum5 = 0;
-        std::uint64_t sum6 = 0;
-        std::uint64_t sum7 = 0;
-
-        const double seconds = elapsed_seconds([&] {
-            std::size_t i = 0;
-            for (; i + unroll <= count; i += unroll) {
-                sum0 += words[i + 0];
-                sum1 += words[i + 1];
-                sum2 += words[i + 2];
-                sum3 += words[i + 3];
-                sum4 += words[i + 4];
-                sum5 += words[i + 5];
-                sum6 += words[i + 6];
-                sum7 += words[i + 7];
-            }
-            for (; i < count; ++i) {
-                sum0 += words[i];
-            }
-        });
-
-        g_sink ^= sum0 ^ sum1 ^ sum2 ^ sum3 ^ sum4 ^ sum5 ^ sum6 ^ sum7 ^ stride;
-        samples.push_back(static_cast<double>(bytes) / seconds / static_cast<double>(kMiB));
+    std::size_t i = 0;
+    for (; i + unroll <= count; i += unroll) {
+        sum0 += words[i + 0];
+        sum1 += words[i + 1];
+        sum2 += words[i + 2];
+        sum3 += words[i + 3];
+        sum4 += words[i + 4];
+        sum5 += words[i + 5];
+        sum6 += words[i + 6];
+        sum7 += words[i + 7];
+    }
+    for (; i < count; ++i) {
+        sum0 += words[i];
     }
 
-    return samples;
+    g_sink ^= sum0 ^ sum1 ^ sum2 ^ sum3 ^ sum4 ^ sum5 ^ sum6 ^ sum7 ^ stride;
+    return static_cast<std::uint64_t>(bytes);
 }
 
-std::vector<double> run_write(std::uint8_t* data, std::size_t bytes, int iterations) {
-    std::vector<double> samples;
-    samples.reserve(static_cast<std::size_t>(iterations));
-
-    for (int round = 0; round < iterations; ++round) {
-        const auto value = static_cast<int>((round * 37) & 0xff);
-        const double seconds = elapsed_seconds([&] {
-            std::memset(data, value, bytes);
-        });
-        g_sink ^= data[static_cast<std::size_t>(round) % bytes];
-        samples.push_back(static_cast<double>(bytes) / seconds / static_cast<double>(kMiB));
-    }
-
-    return samples;
+std::uint64_t run_write_once(std::uint8_t* data, std::size_t bytes, std::uint64_t round) {
+    const auto value = static_cast<int>((round * 37) & 0xff);
+    std::memset(data, value, bytes);
+    g_sink ^= data[static_cast<std::size_t>(round) % bytes];
+    return static_cast<std::uint64_t>(bytes);
 }
 
-std::vector<double> run_copy(std::uint8_t* dst, const std::uint8_t* src, std::size_t bytes, int iterations) {
-    std::vector<double> samples;
-    samples.reserve(static_cast<std::size_t>(iterations));
-
-    for (int round = 0; round < iterations; ++round) {
-        const double seconds = elapsed_seconds([&] {
-            std::memcpy(dst, src, bytes);
-        });
-        g_sink ^= dst[(static_cast<std::size_t>(round) * 4099) % bytes];
-        samples.push_back(static_cast<double>(bytes) / seconds / static_cast<double>(kMiB));
-    }
-
-    return samples;
+std::uint64_t run_copy_once(std::uint8_t* dst, const std::uint8_t* src, std::size_t bytes, std::uint64_t round) {
+    std::memcpy(dst, src, bytes);
+    g_sink ^= dst[(static_cast<std::size_t>(round) * 4099) % bytes];
+    return static_cast<std::uint64_t>(bytes);
 }
 
-std::vector<double> run_latency(std::size_t bytes, std::uint64_t steps, int iterations) {
+SampleSeries run_read(std::uint8_t* data, std::size_t bytes, const Options& options, const Timer& timer) {
+    return collect_adaptive_samples(options, timer, [&](std::uint64_t inner_iterations) {
+        const auto total_bytes = checked_multiply_u64(static_cast<std::uint64_t>(bytes), inner_iterations, "read bytes");
+        for (std::uint64_t round = 0; round < inner_iterations; ++round) {
+            (void)run_read_once(data, bytes);
+        }
+
+        return static_cast<double>(total_bytes) / static_cast<double>(kMiB);
+    }, [](double mib, double seconds) {
+        return mib / seconds;
+    });
+}
+
+SampleSeries run_write(std::uint8_t* data, std::size_t bytes, const Options& options, const Timer& timer) {
+    return collect_adaptive_samples(options, timer, [&](std::uint64_t inner_iterations) {
+        const auto total_bytes = checked_multiply_u64(static_cast<std::uint64_t>(bytes), inner_iterations, "write bytes");
+        for (std::uint64_t round = 0; round < inner_iterations; ++round) {
+            (void)run_write_once(data, bytes, round);
+        }
+
+        return static_cast<double>(total_bytes) / static_cast<double>(kMiB);
+    }, [](double mib, double seconds) {
+        return mib / seconds;
+    });
+}
+
+SampleSeries run_copy(std::uint8_t* dst, const std::uint8_t* src, std::size_t bytes, const Options& options, const Timer& timer) {
+    return collect_adaptive_samples(options, timer, [&](std::uint64_t inner_iterations) {
+        const auto total_bytes = checked_multiply_u64(static_cast<std::uint64_t>(bytes), inner_iterations, "copy bytes");
+        for (std::uint64_t round = 0; round < inner_iterations; ++round) {
+            (void)run_copy_once(dst, src, bytes, round);
+        }
+
+        return static_cast<double>(total_bytes) / static_cast<double>(kMiB);
+    }, [](double mib, double seconds) {
+        return mib / seconds;
+    });
+}
+
+SampleSeries run_latency(std::size_t bytes, std::uint64_t steps, const Options& options, const Timer& timer) {
     const std::size_t node_count = bytes / sizeof(std::uint32_t);
     if (node_count < 2) {
         throw std::invalid_argument("Latency buffer is too small");
@@ -328,32 +528,35 @@ std::vector<double> run_latency(std::size_t bytes, std::uint64_t steps, int iter
 
     volatile const std::uint32_t* chain = next.data();
     std::uint32_t index = order[0];
-    const std::uint64_t sample_steps = std::max<std::uint64_t>(1, steps / static_cast<std::uint64_t>(iterations));
+    const std::uint64_t base_steps = std::max<std::uint64_t>(1, steps / static_cast<std::uint64_t>(options.min_samples));
 
     for (std::uint64_t i = 0; i < std::min<std::uint64_t>(steps / 10, 1'000'000); ++i) {
         index = chain[index];
     }
 
-    std::vector<double> samples;
-    samples.reserve(static_cast<std::size_t>(iterations));
-    for (int round = 0; round < iterations; ++round) {
-        const double seconds = elapsed_seconds([&] {
-            for (std::uint64_t i = 0; i < sample_steps; ++i) {
-                index = chain[index];
-            }
-        });
+    auto series = collect_adaptive_samples(options, timer, [&](std::uint64_t inner_iterations) {
+        const auto total_steps = checked_multiply_u64(base_steps, inner_iterations, "latency steps");
+        for (std::uint64_t i = 0; i < total_steps; ++i) {
+            index = chain[index];
+        }
 
-        samples.push_back(seconds * 1'000'000'000.0 / static_cast<double>(sample_steps));
-    }
-
+        return static_cast<double>(total_steps);
+    }, [](double operations, double seconds) {
+        return seconds * 1'000'000'000.0 / operations;
+    });
     g_sink ^= index;
-    return samples;
+    return series;
 }
 
 void emit_progress_started(const Options& options) {
     std::cout << "{\"type\":\"started\",\"size_mib\":" << options.size_mib
               << ",\"iterations\":" << options.iterations
-              << ",\"latency_steps\":" << options.latency_steps << "}\n"
+              << ",\"latency_steps\":" << options.latency_steps
+              << ",\"warmup_runs\":" << options.warmup_runs
+              << ",\"min_samples\":" << options.min_samples
+              << ",\"max_samples\":" << options.max_samples
+              << ",\"target_sample_ms\":" << options.target_sample_ms
+              << ",\"max_cv\":" << options.max_cv << "}\n"
               << std::flush;
 }
 
@@ -406,6 +609,17 @@ void print_number_array(std::ostream& os, const std::vector<double>& values) {
     os << ']';
 }
 
+void print_u64_array(std::ostream& os, const std::vector<std::uint64_t>& values) {
+    os << '[';
+    for (std::size_t i = 0; i < values.size(); ++i) {
+        if (i > 0) {
+            os << ',';
+        }
+        os << values[i];
+    }
+    os << ']';
+}
+
 void print_aggregate(std::ostream& os, const Aggregate& value) {
     os << "{\"median\":" << std::fixed << std::setprecision(2) << value.median
        << ",\"min\":" << value.min
@@ -416,11 +630,19 @@ void print_aggregate(std::ostream& os, const Aggregate& value) {
        << '}';
 }
 
-void print_metric_result(std::ostream& os, std::string_view unit, const std::vector<double>& samples) {
+void print_metric_result(
+    std::ostream& os,
+    std::string_view unit,
+    const std::vector<double>& samples,
+    const std::vector<std::uint64_t>& inner_iterations,
+    bool converged) {
     os << "{\"unit\":";
     print_json_string(os, unit);
     os << ",\"samples\":";
     print_number_array(os, samples);
+    os << ",\"inner_iterations\":";
+    print_u64_array(os, inner_iterations);
+    os << ",\"converged\":" << (converged ? "true" : "false");
     os << ",\"aggregate\":";
     print_aggregate(os, aggregate(samples));
     os << '}';
@@ -433,25 +655,38 @@ void print_json_result(std::ostream& os, const Options& options, const BenchResu
     print_json_string(os, kWorkerVersion);
     os << ",\"protocol_version\":" << kProtocolVersion
        << ",\"elapsed_ms\":" << result.elapsed_ms
+       << ",\"timer\":{\"name\":\"";
+#if defined(_WIN32)
+    os << "QueryPerformanceCounter";
+#else
+    os << "steady_clock";
+#endif
+    os << "\",\"frequency_hz\":" << result.timer_frequency_hz << "}"
        << ",\"options\":{\"size_mib\":" << options.size_mib
        << ",\"iterations\":" << options.iterations
        << ",\"latency_steps\":" << options.latency_steps
+       << ",\"warmup_runs\":" << options.warmup_runs
+       << ",\"min_samples\":" << options.min_samples
+       << ",\"max_samples\":" << options.max_samples
+       << ",\"target_sample_ms\":" << options.target_sample_ms
+       << ",\"max_cv\":" << std::setprecision(6) << options.max_cv << std::setprecision(2)
        << ",\"threads\":1"
        << ",\"working_set_kind\":\"memory\"}"
        << ",\"kernel\":{\"read\":\"scalar_u64_unrolled\",\"write\":\"crt_memset\",\"copy\":\"crt_memcpy\",\"latency\":\"pointer_chase\"}"
        << ",\"metrics\":{\"read\":";
-    print_metric_result(os, "mib_s", result.read_samples);
+    print_metric_result(os, "mib_s", result.read_samples, result.read_inner_iterations, result.read_converged);
     os << ",\"write\":";
-    print_metric_result(os, "mib_s", result.write_samples);
+    print_metric_result(os, "mib_s", result.write_samples, result.write_inner_iterations, result.write_converged);
     os << ",\"copy\":";
-    print_metric_result(os, "mib_s", result.copy_samples);
+    print_metric_result(os, "mib_s", result.copy_samples, result.copy_inner_iterations, result.copy_converged);
     os << ",\"latency\":";
-    print_metric_result(os, "ns", result.latency_samples);
+    print_metric_result(os, "ns", result.latency_samples, result.latency_inner_iterations, result.latency_converged);
     os << "}}\n";
 }
 
 BenchResult run_bench(const Options& options) {
-    const auto benchmark_start = std::chrono::steady_clock::now();
+    const Timer timer;
+    const auto benchmark_start = timer.now_ticks();
     const std::size_t bytes = static_cast<std::size_t>(options.size_mib) * kMiB;
     auto src = make_aligned_buffer(bytes);
     auto dst = make_aligned_buffer(bytes);
@@ -463,24 +698,31 @@ BenchResult run_bench(const Options& options) {
         src.get()[i] = static_cast<std::uint8_t>(i * 131u + 17u);
     }
 
-    (void)run_read(src.get(), bytes, 1);
-    (void)run_write(dst.get(), bytes, 1);
-    (void)run_copy(dst.get(), src.get(), bytes, 1);
-
     BenchResult result;
-    result.read_samples = run_read(src.get(), bytes, options.iterations);
+    result.timer_frequency_hz = timer.frequency_hz();
+
+    const auto read_series = run_read(src.get(), bytes, options, timer);
+    result.read_samples = read_series.values;
+    result.read_inner_iterations = read_series.inner_iterations;
+    result.read_converged = read_series.converged;
     result.read_mib_s = aggregate(result.read_samples).median;
     if (options.progress_json) {
         emit_progress_metric("read", result.read_mib_s, "mib_s");
     }
 
-    result.write_samples = run_write(dst.get(), bytes, options.iterations);
+    const auto write_series = run_write(dst.get(), bytes, options, timer);
+    result.write_samples = write_series.values;
+    result.write_inner_iterations = write_series.inner_iterations;
+    result.write_converged = write_series.converged;
     result.write_mib_s = aggregate(result.write_samples).median;
     if (options.progress_json) {
         emit_progress_metric("write", result.write_mib_s, "mib_s");
     }
 
-    result.copy_samples = run_copy(dst.get(), src.get(), bytes, options.iterations);
+    const auto copy_series = run_copy(dst.get(), src.get(), bytes, options, timer);
+    result.copy_samples = copy_series.values;
+    result.copy_inner_iterations = copy_series.inner_iterations;
+    result.copy_converged = copy_series.converged;
     result.copy_mib_s = aggregate(result.copy_samples).median;
     if (options.progress_json) {
         emit_progress_metric("copy", result.copy_mib_s, "mib_s");
@@ -489,14 +731,18 @@ BenchResult run_bench(const Options& options) {
     src.reset();
     dst.reset();
 
-    result.latency_samples = run_latency(bytes, options.latency_steps, options.iterations);
+    result.latency_samples = {};
+    const auto latency_series = run_latency(bytes, options.latency_steps, options, timer);
+    result.latency_samples = latency_series.values;
+    result.latency_inner_iterations = latency_series.inner_iterations;
+    result.latency_converged = latency_series.converged;
     result.latency_ns = aggregate(result.latency_samples).median;
     if (options.progress_json) {
         emit_progress_metric("latency", result.latency_ns, "ns");
     }
 
-    const auto benchmark_finish = std::chrono::steady_clock::now();
-    result.elapsed_ms = std::chrono::duration<double, std::milli>(benchmark_finish - benchmark_start).count();
+    const auto benchmark_finish = timer.now_ticks();
+    result.elapsed_ms = timer.elapsed_seconds(benchmark_start, benchmark_finish) * 1000.0;
     return result;
 }
 
@@ -520,7 +766,16 @@ void print_result(const Options& options, const BenchResult& result) {
     std::cout << "Memory Benchmark\n"
               << "----------------\n"
               << "Buffer size : " << options.size_mib << " MiB\n"
-              << "Iterations  : " << options.iterations << " median samples\n"
+              << "Samples     : min " << options.min_samples << ", max " << options.max_samples << "\n"
+              << "Warmup runs : " << options.warmup_runs << "\n"
+              << "Target time : " << options.target_sample_ms << " ms/sample\n"
+              << "Timer       : "
+#if defined(_WIN32)
+              << "QueryPerformanceCounter"
+#else
+              << "steady_clock"
+#endif
+              << " (" << result.timer_frequency_hz << " Hz)\n"
               << "Latency ops : " << options.latency_steps << "\n\n"
               << std::fixed << std::setprecision(2)
               << "Read        : " << std::setw(12) << result.read_mib_s << " MiB/s\n"

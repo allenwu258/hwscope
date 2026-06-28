@@ -12,6 +12,7 @@ public sealed record MemoryBenchmarkResult(
     int? ProtocolVersion = null,
     string? ExecutablePath = null,
     double? ElapsedMs = null,
+    MemoryBenchmarkTimer? Timer = null,
     MemoryBenchmarkMetricSet? Metrics = null,
     MemoryBenchmarkQuality? Quality = null,
     MemoryBenchmarkEnvironment? Environment = null)
@@ -27,6 +28,11 @@ public sealed record MemoryBenchmarkOptionsSnapshot(
     int SizeMiB,
     int Iterations,
     long LatencySteps,
+    int WarmupRuns,
+    int MinSamples,
+    int MaxSamples,
+    double TargetSampleMs,
+    double MaxCv,
     int Threads,
     string WorkingSetKind);
 
@@ -39,7 +45,13 @@ public sealed record MemoryBenchmarkMetricSet(
 public sealed record MemoryBenchmarkMetricResult(
     string Unit,
     IReadOnlyList<double> Samples,
+    IReadOnlyList<long> InnerIterations,
+    bool Converged,
     MemoryBenchmarkAggregate Aggregate);
+
+public sealed record MemoryBenchmarkTimer(
+    string Name,
+    long FrequencyHz);
 
 public sealed record MemoryBenchmarkAggregate(
     double Median,
