@@ -12,6 +12,7 @@
                  Width="1280"
                  Background="{DynamicResource HwScopePanelBrush}"
                  ExtendsContentIntoTitleBar="True"
+                 Icon="Assets/HwScope.ico"
                  WindowBackdropType="Mica"
                  WindowStartupLocation="CenterScreen">
     <Grid>
@@ -26,14 +27,11 @@
                      Height="44"
                      Title="">
             <ui:TitleBar.Header>
-                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                    <ui:SymbolIcon Symbol="Desktop20"
-                                   Width="20"
-                                   Height="20"
-                                   Margin="0,0,10,0" />
+                <StackPanel Orientation="Horizontal"
+                            VerticalAlignment="Center">
                     <TextBlock Text="HwScope"
                                VerticalAlignment="Center"
-                               Margin="0,0,18,0"
+                               Margin="0,0,16,0"
                                FontSize="14" />
                     <Menu Background="Transparent"
                           BorderThickness="0"
@@ -81,37 +79,96 @@
                 Background="{DynamicResource HwScopePanelBrush}"
                 BorderBrush="{DynamicResource HwScopeLineBrush}"
                 BorderThickness="0,0,0,1"
-                Padding="12,8">
+                Padding="12,6">
             <DockPanel LastChildFill="True">
                 <StackPanel Orientation="Horizontal" DockPanel.Dock="Left">
-                    <ui:Button Style="{StaticResource ToolbarButtonStyle}"
-                               Icon="{ui:SymbolIcon Home24}"
-                               Content="概要"
-                               Click="ShowHardwareSummary_Click" />
-                    <ui:Button Style="{StaticResource ToolbarButtonStyle}"
-                               Icon="{ui:SymbolIcon DocumentData24}"
-                               Content="报告"
-                               IsEnabled="False" />
-                    <ui:Button Style="{StaticResource ToolbarButtonStyle}"
-                               Icon="{ui:SymbolIcon Pulse24}"
-                               Content="传感器"
-                               IsEnabled="False" />
-                    <ui:Button Style="{StaticResource ToolbarButtonStyle}"
-                               Icon="{ui:SymbolIcon DesktopToolbox24}"
-                               Content="内存"
-                               Click="ShowHardwareSummary_Click" />
-                    <ui:Button Style="{StaticResource ToolbarButtonStyle}"
-                               Icon="{ui:SymbolIcon TopSpeed20}"
-                               Content="跑分"
-                               Click="ShowMemoryBenchmark_Click" />
+                    <Button Style="{StaticResource QuickLaunchButtonStyle}"
+                            ToolTip="硬件概览"
+                            Click="ShowHardwareSummary_Click">
+                        <StackPanel HorizontalAlignment="Center">
+                            <ui:SymbolIcon Symbol="Desktop20"
+                                           Width="30"
+                                           Height="30"
+                                           HorizontalAlignment="Center"
+                                           FontSize="28"
+                                           Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" />
+                            <TextBlock Text="概要"
+                                       Margin="0,3,0,0"
+                                       HorizontalAlignment="Center"
+                                       FontSize="13"
+                                       Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" />
+                        </StackPanel>
+                    </Button>
+                    <Button Style="{StaticResource QuickLaunchButtonStyle}"
+                            ToolTip="报告"
+                            IsEnabled="False">
+                        <StackPanel HorizontalAlignment="Center">
+                            <ui:SymbolIcon Symbol="DocumentData24"
+                                           Width="30"
+                                           Height="30"
+                                           HorizontalAlignment="Center"
+                                           FontSize="28"
+                                           Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" />
+                            <TextBlock Text="报告"
+                                       Margin="0,3,0,0"
+                                       HorizontalAlignment="Center"
+                                       FontSize="13"
+                                       Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" />
+                        </StackPanel>
+                    </Button>
+                    <Button Style="{StaticResource QuickLaunchButtonStyle}"
+                            ToolTip="传感器"
+                            IsEnabled="False">
+                        <StackPanel HorizontalAlignment="Center">
+                            <ui:SymbolIcon Symbol="Temperature24"
+                                           Width="30"
+                                           Height="30"
+                                           HorizontalAlignment="Center"
+                                           FontSize="28"
+                                           Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" />
+                            <TextBlock Text="传感器"
+                                       Margin="0,3,0,0"
+                                       HorizontalAlignment="Center"
+                                       FontSize="13"
+                                       Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" />
+                        </StackPanel>
+                    </Button>
+                    <Button Style="{StaticResource QuickLaunchButtonStyle}"
+                            ToolTip="内存"
+                            Click="ShowHardwareSummary_Click">
+                        <StackPanel HorizontalAlignment="Center">
+                            <ui:SymbolIcon Symbol="Memory16"
+                                           Width="30"
+                                           Height="30"
+                                           HorizontalAlignment="Center"
+                                           FontSize="28"
+                                           Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" />
+                            <TextBlock Text="内存"
+                                       Margin="0,3,0,0"
+                                       HorizontalAlignment="Center"
+                                       FontSize="13"
+                                       Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" />
+                        </StackPanel>
+                    </Button>
+                    <Button Style="{StaticResource QuickLaunchButtonStyle}"
+                            ToolTip="内存跑分"
+                            Click="ShowMemoryBenchmark_Click">
+                        <StackPanel HorizontalAlignment="Center">
+                            <ui:SymbolIcon Symbol="Gauge32"
+                                           Width="30"
+                                           Height="30"
+                                           HorizontalAlignment="Center"
+                                           FontSize="28"
+                                           Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" />
+                            <TextBlock Text="跑分"
+                                       Margin="0,3,0,0"
+                                       HorizontalAlignment="Center"
+                                       FontSize="13"
+                                       Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" />
+                        </StackPanel>
+                    </Button>
                 </StackPanel>
 
-                <TextBox Width="236"
-                         Height="34"
-                         HorizontalAlignment="Right"
-                         VerticalAlignment="Center"
-                         Text="查找"
-                         Foreground="{DynamicResource HwScopeMutedTextBrush}" />
             </DockPanel>
         </Border>
 
