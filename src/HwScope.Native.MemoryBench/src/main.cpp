@@ -375,6 +375,14 @@ struct ActualProcessor {
     int processor = -1;
 };
 
+bool apply_affinity(std::uint16_t group, int processor) {
+    GROUP_AFFINITY affinity{};
+    affinity.Group = group;
+    affinity.Mask = KAFFINITY{1} << processor;
+    GROUP_AFFINITY previous{};
+    return SetThreadGroupAffinity(GetCurrentThread(), &affinity, &previous) != 0;
+}
+
 ActualProcessor get_current_processor() {
     PROCESSOR_NUMBER number{};
     GetCurrentProcessorNumberEx(&number);
@@ -383,14 +391,14 @@ ActualProcessor get_current_processor() {
 
 bool apply_preferred_affinity(const Options& options) {
     if (!options.has_preferred_processor) {
-        return false;
+        const auto current = get_current_processor();
+        if (current.processor < 0 || current.processor >= 64) {
+            return false;
+        }
+        return apply_affinity(current.group, current.processor);
     }
 
-    GROUP_AFFINITY affinity{};
-    affinity.Group = options.preferred_group;
-    affinity.Mask = KAFFINITY{1} << options.preferred_processor;
-    GROUP_AFFINITY previous{};
-    return SetThreadGroupAffinity(GetCurrentThread(), &affinity, &previous) != 0;
+    return apply_affinity(options.preferred_group, options.preferred_processor);
 }
 #else
 struct ActualProcessor {
@@ -740,7 +748,9 @@ void print_placement(std::ostream& os, const Options& options, const BenchResult
        << "\",\"confidence\":\""
        << (result.affinity_applied ? "api" : "fallback")
        << "\",\"reason\":\""
-       << (result.affinity_applied ? "Pinned with SetThreadGroupAffinity." : "No preferred processor was applied.")
+       << (result.affinity_applied
+            ? (result.requested_affinity ? "Pinned requested processor with SetThreadGroupAffinity." : "Pinned current processor fallback with SetThreadGroupAffinity.")
+            : "Affinity was not applied.")
        << "\",\"affinity_applied\":" << (result.affinity_applied ? "true" : "false")
        << ",\"requested\":";
     if (result.requested_affinity) {
