@@ -129,7 +129,13 @@ static string FormatPlacement(MemoryBenchmarkResult result)
 
     var requested = FormatProcessor(placement.Requested);
     var actual = FormatProcessor(placement.Actual);
-    return $"{placement.Mode}, requested {requested}, actual {actual}, {placement.Confidence}";
+    var affinity = placement.AffinityApplied switch
+    {
+        true => "affinity applied",
+        false => "affinity failed",
+        _ => "affinity unknown"
+    };
+    return $"{placement.Mode}, requested {requested}, actual {actual}, {placement.Confidence}, {affinity}";
 }
 
 static string FormatProcessor(MemoryBenchmarkProcessorPlacement? processor)

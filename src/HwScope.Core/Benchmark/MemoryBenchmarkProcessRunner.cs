@@ -668,12 +668,27 @@ public sealed class MemoryBenchmarkProcessRunner : IMemoryBenchmarkRunner
 
         return nativePlacement with
         {
-            Source = plan.Requested is null && !string.IsNullOrWhiteSpace(nativePlacement.Source) ? nativePlacement.Source : planned.Source,
-            Confidence = plan.Requested is null && !string.IsNullOrWhiteSpace(nativePlacement.Confidence) ? nativePlacement.Confidence : planned.Confidence,
-            Reason = plan.Requested is null && !string.IsNullOrWhiteSpace(nativePlacement.Reason) ? nativePlacement.Reason : planned.Reason,
+            Source = plan.Requested is null || nativePlacement.AffinityApplied == false
+                ? Coalesce(nativePlacement.Source, planned.Source)
+                : planned.Source,
+            Confidence = nativePlacement.AffinityApplied == false
+                ? "fallback"
+                : plan.Requested is null
+                    ? Coalesce(nativePlacement.Confidence, planned.Confidence)
+                    : planned.Confidence,
+            Reason = nativePlacement.AffinityApplied == false
+                ? $"{planned.Reason} Native affinity application failed; actual placement may not match requested placement."
+                : plan.Requested is null
+                    ? Coalesce(nativePlacement.Reason, planned.Reason)
+                    : planned.Reason,
             Requested = nativePlacement.Requested ?? planned.Requested,
             Candidates = nativePlacement.Candidates.Count > 0 ? nativePlacement.Candidates : planned.Candidates
         };
+    }
+
+    private static string Coalesce(string value, string fallback)
+    {
+        return string.IsNullOrWhiteSpace(value) ? fallback : value;
     }
 
     private static MemoryBenchmarkProcessorPlacement ToProcessorPlacement(MemoryBenchmarkLogicalProcessor processor)
