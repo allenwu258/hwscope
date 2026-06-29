@@ -13,6 +13,11 @@ internal static class MemoryBenchmarkPlacementPlanner
         }
 
         var processors = BuildProcessors(topology);
+        if (processors.Count == 0)
+        {
+            return MemoryBenchmarkPlacementPlan.Fallback("Windows topology API returned no active logical processors.");
+        }
+
         var bestEfficiencyClass = processors.Max(processor => processor.EfficiencyClass);
         var bestClassProcessors = processors
             .Where(processor => processor.EfficiencyClass == bestEfficiencyClass)
@@ -120,7 +125,7 @@ internal static class MemoryBenchmarkPlacementPlanner
     }
 }
 
-public sealed record MemoryBenchmarkPlacementPlan(
+internal sealed record MemoryBenchmarkPlacementPlan(
     string Mode,
     string Source,
     string Confidence,
@@ -140,7 +145,7 @@ public sealed record MemoryBenchmarkPlacementPlan(
     }
 }
 
-public sealed record MemoryBenchmarkLogicalProcessor(
+internal sealed record MemoryBenchmarkLogicalProcessor(
     ushort Group,
     int ProcessorNumber,
     int CoreIndex,
