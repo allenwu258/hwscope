@@ -37,7 +37,10 @@ public sealed class MemoryBenchmarkProcessRunner : IMemoryBenchmarkRunner
             throw new FileNotFoundException("未找到 membench.exe。请先构建 src/HwScope.Native.MemoryBench，或确认构建产物已复制到应用输出目录的 native 子目录。");
         }
 
-        var arguments = BuildArguments(options, useProgressJson: progress is not null);
+        var placementPlan = options.UsePreferredCore
+            ? MemoryBenchmarkPlacementPlanner.CreatePreferredSingleThreadPlan()
+            : MemoryBenchmarkPlacementPlan.Fallback("Preferred core placement is disabled by options.");
+        var arguments = BuildArguments(options, placementPlan, useProgressJson: progress is not null);
         var startInfo = new ProcessStartInfo
         {
             FileName = executable,
@@ -93,7 +96,7 @@ public sealed class MemoryBenchmarkProcessRunner : IMemoryBenchmarkRunner
         try
         {
             var result = progress is null ? ParseJsonResult(output) : ParseProgressJson(output);
-            return EnrichResult(result, executable, options);
+            return EnrichResult(result, executable, options, placementPlan);
         }
         catch (Exception ex) when (ex is FormatException or OverflowException or JsonException or InvalidOperationException or KeyNotFoundException)
         {
@@ -119,10 +122,10 @@ public sealed class MemoryBenchmarkProcessRunner : IMemoryBenchmarkRunner
         return candidates.FirstOrDefault(File.Exists);
     }
 
-    private static string[] BuildArguments(MemoryBenchmarkOptions options, bool useProgressJson)
+    private static string[] BuildArguments(MemoryBenchmarkOptions options, MemoryBenchmarkPlacementPlan placementPlan, bool useProgressJson)
     {
-        return
-        [
+        var arguments = new List<string>
+        {
             "--size-mib",
             options.SizeMiB.ToString(CultureInfo.InvariantCulture),
             "--iterations",
@@ -138,9 +141,39 @@ public sealed class MemoryBenchmarkProcessRunner : IMemoryBenchmarkRunner
             "--target-sample-ms",
             options.TargetSampleMs.ToString(CultureInfo.InvariantCulture),
             "--max-cv",
-            options.MaxCv.ToString(CultureInfo.InvariantCulture),
-            useProgressJson ? "--progress-json" : "--json"
-        ];
+            options.MaxCv.ToString(CultureInfo.InvariantCulture)
+        };
+
+        if (placementPlan.Requested is { } requested)
+        {
+            arguments.Add("--preferred-group");
+            arguments.Add(requested.Group.ToString(CultureInfo.InvariantCulture));
+            arguments.Add("--preferred-processor");
+            arguments.Add(requested.ProcessorNumber.ToString(CultureInfo.InvariantCulture));
+            arguments.Add("--preferred-core");
+            arguments.Add(requested.CoreIndex.ToString(CultureInfo.InvariantCulture));
+            if (requested.PackageIndex is { } packageIndex)
+            {
+                arguments.Add("--preferred-package");
+                arguments.Add(packageIndex.ToString(CultureInfo.InvariantCulture));
+            }
+
+            if (requested.NumaNodeNumber is { } numaNode)
+            {
+                arguments.Add("--preferred-numa-node");
+                arguments.Add(numaNode.ToString(CultureInfo.InvariantCulture));
+            }
+
+            arguments.Add("--preferred-smt-index");
+            arguments.Add(requested.SmtIndex.ToString(CultureInfo.InvariantCulture));
+            arguments.Add("--preferred-efficiency-class");
+            arguments.Add(requested.EfficiencyClass.ToString(CultureInfo.InvariantCulture));
+            arguments.Add("--preferred-has-smt");
+            arguments.Add(requested.HasSmt ? "1" : "0");
+        }
+
+        arguments.Add(useProgressJson ? "--progress-json" : "--json");
+        return [.. arguments];
     }
 
     private static void ValidateOptions(MemoryBenchmarkOptions options)
@@ -495,7 +528,11 @@ public sealed class MemoryBenchmarkProcessRunner : IMemoryBenchmarkRunner
             TargetSampleMs: optionsElement.TryGetProperty("target_sample_ms", out var targetSampleMs) ? targetSampleMs.GetDouble() : 0.0,
             MaxCv: optionsElement.TryGetProperty("max_cv", out var maxCv) ? maxCv.GetDouble() : 0.0,
             Threads: optionsElement.GetProperty("threads").GetInt32(),
+            UsePreferredCore: optionsElement.TryGetProperty("use_preferred_core", out var usePreferredCore) && usePreferredCore.GetBoolean(),
             WorkingSetKind: optionsElement.GetProperty("working_set_kind").GetString() ?? "memory");
+        var placement = root.TryGetProperty("placement", out var placementElement)
+            ? ParsePlacement(placementElement)
+            : null;
 
         return new MemoryBenchmarkResult(
             SizeMiB: options.SizeMiB,
@@ -509,7 +546,36 @@ public sealed class MemoryBenchmarkProcessRunner : IMemoryBenchmarkRunner
             ProtocolVersion: root.TryGetProperty("protocol_version", out var protocolVersion) ? protocolVersion.GetInt32() : null,
             ElapsedMs: root.TryGetProperty("elapsed_ms", out var elapsedMs) ? elapsedMs.GetDouble() : null,
             Timer: timer,
+            Placement: placement,
             Metrics: new MemoryBenchmarkMetricSet(read, write, copy, latency));
+    }
+
+    private static MemoryBenchmarkPlacement ParsePlacement(JsonElement element)
+    {
+        return new MemoryBenchmarkPlacement(
+            Mode: element.TryGetProperty("mode", out var mode) ? mode.GetString() ?? string.Empty : string.Empty,
+            Source: element.TryGetProperty("source", out var source) ? source.GetString() ?? string.Empty : string.Empty,
+            Confidence: element.TryGetProperty("confidence", out var confidence) ? confidence.GetString() ?? string.Empty : string.Empty,
+            Reason: element.TryGetProperty("reason", out var reason) ? reason.GetString() ?? string.Empty : string.Empty,
+            AffinityApplied: element.TryGetProperty("affinity_applied", out var affinityApplied) ? affinityApplied.GetBoolean() : null,
+            Requested: element.TryGetProperty("requested", out var requested) && requested.ValueKind == JsonValueKind.Object ? ParseProcessorPlacement(requested) : null,
+            Actual: element.TryGetProperty("actual", out var actual) && actual.ValueKind == JsonValueKind.Object ? ParseProcessorPlacement(actual) : null,
+            Candidates: element.TryGetProperty("candidates", out var candidates) && candidates.ValueKind == JsonValueKind.Array
+                ? candidates.EnumerateArray().Select(ParseProcessorPlacement).ToList()
+                : []);
+    }
+
+    private static MemoryBenchmarkProcessorPlacement ParseProcessorPlacement(JsonElement element)
+    {
+        return new MemoryBenchmarkProcessorPlacement(
+            Group: element.TryGetProperty("group", out var group) ? group.GetUInt16() : (ushort)0,
+            ProcessorNumber: element.TryGetProperty("processor", out var processor) ? processor.GetInt32() : 0,
+            CoreIndex: element.TryGetProperty("core", out var core) ? core.GetInt32() : null,
+            PackageIndex: element.TryGetProperty("package", out var package) ? package.GetInt32() : null,
+            NumaNodeNumber: element.TryGetProperty("numa_node", out var numaNode) ? numaNode.GetUInt32() : null,
+            SmtIndex: element.TryGetProperty("smt_index", out var smtIndex) ? smtIndex.GetInt32() : null,
+            EfficiencyClass: element.TryGetProperty("efficiency_class", out var efficiencyClass) ? efficiencyClass.GetInt32() : null,
+            HasSmt: element.TryGetProperty("has_smt", out var hasSmt) ? hasSmt.GetBoolean() : null);
     }
 
     private static MemoryBenchmarkMetricResult ParseMetricResult(JsonElement element)
@@ -536,7 +602,11 @@ public sealed class MemoryBenchmarkProcessRunner : IMemoryBenchmarkRunner
                 Cv: aggregate.GetProperty("cv").GetDouble()));
     }
 
-    private static MemoryBenchmarkResult EnrichResult(MemoryBenchmarkResult result, string executable, MemoryBenchmarkOptions options)
+    private static MemoryBenchmarkResult EnrichResult(
+        MemoryBenchmarkResult result,
+        string executable,
+        MemoryBenchmarkOptions options,
+        MemoryBenchmarkPlacementPlan placementPlan)
     {
         var environmentCollectionFailed = false;
         var environment = CollectEnvironment();
@@ -557,15 +627,66 @@ public sealed class MemoryBenchmarkProcessRunner : IMemoryBenchmarkRunner
             options.TargetSampleMs,
             options.MaxCv,
             options.Threads,
+            options.UsePreferredCore,
             options.WorkingSetKind);
+        var placement = MergePlacement(result.Placement, placementPlan);
 
         return result with
         {
             Options = snapshot,
             ExecutablePath = executable,
             Environment = environment,
+            Placement = placement,
             Quality = quality
         };
+    }
+
+    private static MemoryBenchmarkPlacement ToPlacement(
+        MemoryBenchmarkPlacementPlan plan,
+        MemoryBenchmarkProcessorPlacement? actual)
+    {
+        return new MemoryBenchmarkPlacement(
+            Mode: plan.Mode,
+            Source: plan.Source,
+            Confidence: plan.Confidence,
+            Reason: plan.Reason,
+            AffinityApplied: null,
+            Requested: plan.Requested is null ? null : ToProcessorPlacement(plan.Requested),
+            Actual: actual,
+            Candidates: plan.Candidates.Select(ToProcessorPlacement).ToList());
+    }
+
+    private static MemoryBenchmarkPlacement MergePlacement(
+        MemoryBenchmarkPlacement? nativePlacement,
+        MemoryBenchmarkPlacementPlan plan)
+    {
+        var planned = ToPlacement(plan, nativePlacement?.Actual);
+        if (nativePlacement is null)
+        {
+            return planned;
+        }
+
+        return nativePlacement with
+        {
+            Source = plan.Requested is null && !string.IsNullOrWhiteSpace(nativePlacement.Source) ? nativePlacement.Source : planned.Source,
+            Confidence = plan.Requested is null && !string.IsNullOrWhiteSpace(nativePlacement.Confidence) ? nativePlacement.Confidence : planned.Confidence,
+            Reason = plan.Requested is null && !string.IsNullOrWhiteSpace(nativePlacement.Reason) ? nativePlacement.Reason : planned.Reason,
+            Requested = nativePlacement.Requested ?? planned.Requested,
+            Candidates = nativePlacement.Candidates.Count > 0 ? nativePlacement.Candidates : planned.Candidates
+        };
+    }
+
+    private static MemoryBenchmarkProcessorPlacement ToProcessorPlacement(MemoryBenchmarkLogicalProcessor processor)
+    {
+        return new MemoryBenchmarkProcessorPlacement(
+            Group: processor.Group,
+            ProcessorNumber: processor.ProcessorNumber,
+            CoreIndex: processor.CoreIndex,
+            PackageIndex: processor.PackageIndex,
+            NumaNodeNumber: processor.NumaNodeNumber,
+            SmtIndex: processor.SmtIndex,
+            EfficiencyClass: processor.EfficiencyClass,
+            HasSmt: processor.HasSmt);
     }
 
     private static MemoryBenchmarkEnvironment? CollectEnvironment()

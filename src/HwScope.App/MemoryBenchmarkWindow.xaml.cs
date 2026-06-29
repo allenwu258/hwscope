@@ -204,7 +204,22 @@ public partial class MemoryBenchmarkWindow : FluentWindow
             lines.Add($"MaxCv             : {options.MaxCv.ToString("P2", CultureInfo.InvariantCulture)}");
             lines.Add($"LatencySteps      : {options.LatencySteps}");
             lines.Add($"Threads           : {options.Threads}");
+            lines.Add($"UsePreferredCore  : {options.UsePreferredCore}");
             lines.Add($"WorkingSetKind    : {options.WorkingSetKind}");
+        }
+
+        lines.Add(string.Empty);
+        lines.Add("Placement");
+        if (result.Placement is { } placement)
+        {
+            lines.Add($"Mode              : {placement.Mode}");
+            lines.Add($"Source            : {placement.Source}");
+            lines.Add($"Confidence        : {placement.Confidence}");
+            lines.Add($"Reason            : {placement.Reason}");
+            lines.Add($"AffinityApplied   : {FormatNullable(placement.AffinityApplied)}");
+            AppendProcessorPlacement(lines, "Requested", placement.Requested);
+            AppendProcessorPlacement(lines, "Actual", placement.Actual);
+            lines.Add($"Candidates        : {placement.Candidates.Count}");
         }
 
         lines.Add(string.Empty);
@@ -261,6 +276,28 @@ public partial class MemoryBenchmarkWindow : FluentWindow
             lines.Add($"InnerLoop : {string.Join(", ", metric.InnerIterations.Select(sample => sample.ToString(CultureInfo.InvariantCulture)))}");
         }
         lines.Add($"Samples   : {string.Join(", ", metric.Samples.Select(sample => sample.ToString("F2", CultureInfo.InvariantCulture)))}");
+    }
+
+    private static void AppendProcessorPlacement(List<string> lines, string label, MemoryBenchmarkProcessorPlacement? placement)
+    {
+        if (placement is null)
+        {
+            lines.Add($"{label,-17} : ");
+            return;
+        }
+
+        var metadata = new[]
+        {
+            placement.CoreIndex is { } core ? $"core {core}" : null,
+            placement.PackageIndex is { } package ? $"package {package}" : null,
+            placement.NumaNodeNumber is { } numa ? $"numa {numa}" : null,
+            placement.SmtIndex is { } smt ? $"smt {smt}" : null,
+            placement.EfficiencyClass is { } efficiency ? $"eff {efficiency}" : null,
+            placement.HasSmt is { } hasSmt ? $"hasSmt {hasSmt}" : null
+        }.Where(value => value is not null);
+
+        lines.Add($"{label,-17} : group {placement.Group}, processor {placement.ProcessorNumber}"
+            + (metadata.Any() ? $" ({string.Join(", ", metadata)})" : string.Empty));
     }
 
     private static string FormatNullable(double? value, string suffix)

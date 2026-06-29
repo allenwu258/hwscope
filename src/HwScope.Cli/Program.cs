@@ -43,6 +43,7 @@ try
         Console.WriteLine();
         Console.WriteLine($"Worker  : {result.WorkerVersion ?? "unknown"} (protocol {result.ProtocolVersion?.ToString() ?? "unknown"})");
         Console.WriteLine($"Timer   : {FormatTimer(result)}");
+        Console.WriteLine($"Core    : {FormatPlacement(result)}");
         Console.WriteLine($"Options : {FormatOptions(result)}");
         Console.WriteLine($"Elapsed : {(result.ElapsedMs is { } elapsedMs ? $"{elapsedMs:F0} ms" : "unknown")}");
         Console.WriteLine($"Quality : {FormatQuality(result)}");
@@ -117,6 +118,31 @@ static string FormatOptions(MemoryBenchmarkResult result)
         $"latency steps {options.LatencySteps}",
         $"threads {options.Threads}",
         options.WorkingSetKind);
+}
+
+static string FormatPlacement(MemoryBenchmarkResult result)
+{
+    if (result.Placement is not { } placement)
+    {
+        return "unknown";
+    }
+
+    var requested = FormatProcessor(placement.Requested);
+    var actual = FormatProcessor(placement.Actual);
+    return $"{placement.Mode}, requested {requested}, actual {actual}, {placement.Confidence}";
+}
+
+static string FormatProcessor(MemoryBenchmarkProcessorPlacement? processor)
+{
+    if (processor is null)
+    {
+        return "none";
+    }
+
+    var core = processor.CoreIndex is { } coreIndex ? $", core {coreIndex}" : string.Empty;
+    var numa = processor.NumaNodeNumber is { } numaNode ? $", numa {numaNode}" : string.Empty;
+    var efficiency = processor.EfficiencyClass is { } efficiencyClass ? $", eff {efficiencyClass}" : string.Empty;
+    return $"group {processor.Group}/cpu {processor.ProcessorNumber}{core}{numa}{efficiency}";
 }
 
 internal sealed record CliOptions(bool Json, bool Copy, bool MemoryBenchmark, bool ShowHelp)

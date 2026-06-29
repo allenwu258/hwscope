@@ -9,6 +9,7 @@ public sealed record MemoryBenchmarkOptions(
     double TargetSampleMs = 120.0,
     double MaxCv = 0.03,
     int Threads = 1,
+    bool UsePreferredCore = true,
     string WorkingSetKind = "memory",
     TimeSpan? Timeout = null);
 

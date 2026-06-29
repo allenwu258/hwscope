@@ -13,6 +13,7 @@ public sealed record MemoryBenchmarkResult(
     string? ExecutablePath = null,
     double? ElapsedMs = null,
     MemoryBenchmarkTimer? Timer = null,
+    MemoryBenchmarkPlacement? Placement = null,
     MemoryBenchmarkMetricSet? Metrics = null,
     MemoryBenchmarkQuality? Quality = null,
     MemoryBenchmarkEnvironment? Environment = null)
@@ -34,6 +35,7 @@ public sealed record MemoryBenchmarkOptionsSnapshot(
     double TargetSampleMs,
     double MaxCv,
     int Threads,
+    bool UsePreferredCore,
     string WorkingSetKind);
 
 public sealed record MemoryBenchmarkMetricSet(
@@ -52,6 +54,26 @@ public sealed record MemoryBenchmarkMetricResult(
 public sealed record MemoryBenchmarkTimer(
     string Name,
     long FrequencyHz);
+
+public sealed record MemoryBenchmarkPlacement(
+    string Mode,
+    string Source,
+    string Confidence,
+    string Reason,
+    bool? AffinityApplied,
+    MemoryBenchmarkProcessorPlacement? Requested,
+    MemoryBenchmarkProcessorPlacement? Actual,
+    IReadOnlyList<MemoryBenchmarkProcessorPlacement> Candidates);
+
+public sealed record MemoryBenchmarkProcessorPlacement(
+    ushort Group,
+    int ProcessorNumber,
+    int? CoreIndex,
+    int? PackageIndex,
+    uint? NumaNodeNumber,
+    int? SmtIndex,
+    int? EfficiencyClass,
+    bool? HasSmt);
 
 public sealed record MemoryBenchmarkAggregate(
     double Median,

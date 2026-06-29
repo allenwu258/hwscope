@@ -78,13 +78,13 @@ size_mib,read_mib_s,write_mib_s,copy_mib_s,latency_ns
 The preferred final-result protocol is structured JSON:
 
 ```text
-{"type":"result","worker_version":"0.3.0","protocol_version":3,"elapsed_ms":1234.56,"timer":{"name":"QueryPerformanceCounter","frequency_hz":10000000},"options":{"size_mib":512,"iterations":7,"latency_steps":20000000,"warmup_runs":1,"min_samples":7,"max_samples":11,"target_sample_ms":120.00,"max_cv":0.030000,"threads":1,"working_set_kind":"memory"},"metrics":{"read":{"unit":"mib_s","samples":[36000.00],"inner_iterations":[8],"converged":true,"aggregate":{"median":36000.00,"min":36000.00,"max":36000.00,"mean":36000.00,"stddev":0.00,"cv":0.000000}}}}
+{"type":"result","worker_version":"0.4.0","protocol_version":4,"elapsed_ms":1234.56,"timer":{"name":"QueryPerformanceCounter","frequency_hz":10000000},"options":{"size_mib":512,"iterations":7,"latency_steps":20000000,"warmup_runs":1,"min_samples":7,"max_samples":11,"target_sample_ms":120.00,"max_cv":0.030000,"threads":1,"use_preferred_core":true,"working_set_kind":"memory"},"placement":{"mode":"singlePreferredPhysicalCore","source":"windowsTopology","confidence":"api","requested":{"group":0,"processor":0,"core":0,"numa_node":0,"smt_index":0,"efficiency_class":0,"has_smt":true},"actual":{"group":0,"processor":0}},"metrics":{"read":{"unit":"mib_s","samples":[36000.00],"inner_iterations":[8],"converged":true,"aggregate":{"median":36000.00,"min":36000.00,"max":36000.00,"mean":36000.00,"stddev":0.00,"cv":0.000000}}}}
 ```
 
 The GUI uses newline-delimited progress JSON so each result can appear as soon as that metric finishes:
 
 ```text
-{"type":"started","size_mib":512,"iterations":7,"latency_steps":20000000,"warmup_runs":1,"min_samples":7,"max_samples":11,"target_sample_ms":120.00,"max_cv":0.03}
+{"type":"started","size_mib":512,"iterations":7,"latency_steps":20000000,"warmup_runs":1,"min_samples":7,"max_samples":11,"target_sample_ms":120.00,"max_cv":0.03,"use_preferred_core":true}
 {"type":"metric","metric":"read","value":36000.00,"unit":"mib_s"}
 {"type":"metric","metric":"write","value":51000.00,"unit":"mib_s"}
 {"type":"metric","metric":"copy","value":22000.00,"unit":"mib_s"}
@@ -162,11 +162,11 @@ latency_ns = elapsed_seconds * 1_000_000_000 / measured_steps
 
 `latency_steps` remains the requested total baseline for the run policy. The worker derives per-sample base steps from `latency_steps / min_samples`, then increases the inner loop if a sample is shorter than `target_sample_ms`.
 
-### Thread Pinning
+### Thread Placement
 
-The worker calls `GetCurrentProcessorNumber()` and then pins the current thread to that CPU with `SetThreadAffinityMask`.
+Core chooses a preferred physical core from Windows topology and passes its CPU group plus local processor number to the native worker. The native worker pins the benchmark thread with `SetThreadGroupAffinity` and records actual placement using `GetCurrentProcessorNumberEx`.
 
-This prevents scheduler migration during a single-thread run, but it is still a minimal policy. It does not yet choose a preferred physical core, avoid E-cores/P-cores, avoid SMT siblings, or handle CPU groups.
+If Core cannot read topology, or if the worker is run directly without preferred placement arguments, the worker keeps a current-thread fallback and marks placement as `nativeFallback`.
 
 ## Why Results Differ From AIDA64
 
@@ -333,17 +333,44 @@ Future work:
 - Calibrate invariant TSC before relying on cycle-based timing.
 - Record warmup sample measurements separately if they become useful for diagnostics.
 
-### Stage 4: Topology And Environment Awareness
+### Stage 4: Topology And Affinity
 
-Benchmark scores are strongly affected by topology.
+Benchmark scores are strongly affected by topology. Stage 4 should make thread placement deterministic before enabling multi-thread memory bandwidth by default.
 
-- Detect CPU groups on high-core-count Windows systems.
-- Detect NUMA nodes and memory locality.
-- Choose test thread placement explicitly.
-- Prefer physical cores before SMT siblings for multi-thread runs.
-- Record selected logical processors and topology confidence in the result.
-- Identify hypervisor presence and show it in the benchmark window.
-- Record power plan, process priority, and whether the system is on AC power.
+HwScope already has a Windows topology reader in `HwScope.Core.Windows.LogicalProcessorInformation`, backed by `GetLogicalProcessorInformationEx(RelationAll)`. The benchmark should reuse that data instead of adding a separate C# topology parser. The worker may still need a native fallback for CLI-only direct invocation, but fallback results must be marked clearly.
+
+Required topology model:
+
+- Logical processor to physical core mapping.
+- Core to package mapping.
+- Core to NUMA node mapping.
+- SMT sibling relationship.
+- Efficiency class, used only as a P-core/E-core hint.
+- Windows CPU group and local processor number.
+- Topology confidence and source.
+
+Placement policy:
+
+- Single-thread default: choose one preferred physical core, select one logical processor on that core, pin with CPU-group-aware affinity, and record requested plus actual placement.
+- Preferred core heuristic: prefer the highest Windows efficiency class, avoid SMT siblings, prefer the first local NUMA node, then choose a middle physical core to reduce the chance of landing on a busy boot/interrupt core.
+- Multi-thread `physical` mode: use at most one logical processor per physical core before using SMT siblings.
+- Multi-thread `logical` mode: fill physical-core primary logical processors first, then add SMT siblings.
+- NUMA `local` mode: allocate and first-touch buffers after pinning on the selected node.
+- NUMA `all` mode: run all-node bandwidth as an explicit mode and report per-node plus total throughput.
+
+Native requirements:
+
+- Replace `SetThreadAffinityMask` with `SetThreadGroupAffinity` on Windows.
+- Use `GetCurrentProcessorNumberEx` to record actual group/local processor.
+- Record requested group/local processor, actual group/local processor, core index, package, NUMA node, SMT index, and efficiency class.
+- Keep single-thread latency as the default semantic baseline.
+- Allocate independent buffers per worker thread for multi-thread read/write/copy.
+- Align multi-thread measurement windows with a barrier after pinning, allocation, first-touch, and warmup.
+
+Stage 4 is implemented in two slices:
+
+1. Implemented: single-thread deterministic placement and metadata. This replaces "pin to whichever CPU the worker started on" and prepares the protocol.
+2. Pending: multi-thread placement execution. This adds worker threads, independent buffers, barrier start, physical-core-first placement, and NUMA modes.
 
 ### Stage 5: Multi-Threaded Memory Bandwidth
 

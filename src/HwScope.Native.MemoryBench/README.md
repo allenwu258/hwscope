@@ -44,7 +44,15 @@ membench --size-mib 512 --min-samples 7 --max-samples 11 --warmup-runs 1 --targe
 
 On Windows, the worker times samples with `QueryPerformanceCounter` and records the timer frequency. Each metric warms up, increases its inner loop until the sample reaches the target duration, then stops after variance converges or `max-samples` is reached.
 
-JSON output includes worker/protocol metadata, options, timer metadata, elapsed time, raw samples, inner-loop counts, convergence state, and aggregate statistics.
+When invoked by HwScope Core, the worker also receives a preferred logical processor selected from Windows topology:
+
+```text
+membench --preferred-group 0 --preferred-processor 0 --preferred-core 0 --preferred-smt-index 0 --json
+```
+
+The worker applies this with `SetThreadGroupAffinity` and records both requested and actual placement. Direct CLI runs without preferred placement are still allowed, but their JSON is marked as native fallback placement.
+
+JSON output includes worker/protocol metadata, options, timer metadata, placement metadata, elapsed time, raw samples, inner-loop counts, convergence state, and aggregate statistics.
 
 CSV remains available for manual compatibility:
 

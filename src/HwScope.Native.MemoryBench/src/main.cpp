@@ -33,8 +33,8 @@ constexpr int kDefaultWarmupRuns = 1;
 constexpr int kDefaultMaxSamples = 11;
 constexpr double kDefaultTargetSampleMs = 120.0;
 constexpr double kDefaultMaxCv = 0.03;
-constexpr std::string_view kWorkerVersion = "0.3.0";
-constexpr int kProtocolVersion = 3;
+constexpr std::string_view kWorkerVersion = "0.4.0";
+constexpr int kProtocolVersion = 4;
 
 volatile std::uint64_t g_sink = 0;
 
@@ -47,6 +47,15 @@ struct Options {
     int max_samples = kDefaultMaxSamples;
     double target_sample_ms = kDefaultTargetSampleMs;
     double max_cv = kDefaultMaxCv;
+    bool has_preferred_processor = false;
+    std::uint16_t preferred_group = 0;
+    int preferred_processor = 0;
+    int preferred_core = -1;
+    int preferred_package = -1;
+    int preferred_numa_node = -1;
+    int preferred_smt_index = -1;
+    int preferred_efficiency_class = -1;
+    bool preferred_has_smt = false;
     bool csv = false;
     bool json = false;
     bool progress_json = false;
@@ -79,6 +88,18 @@ struct BenchResult {
     std::vector<std::uint64_t> latency_inner_iterations;
     double elapsed_ms = 0.0;
     std::uint64_t timer_frequency_hz = 0;
+    bool requested_affinity = false;
+    bool affinity_applied = false;
+    std::uint16_t requested_group = 0;
+    int requested_processor = 0;
+    int requested_core = -1;
+    int requested_package = -1;
+    int requested_numa_node = -1;
+    int requested_smt_index = -1;
+    int requested_efficiency_class = -1;
+    bool requested_has_smt = false;
+    std::uint16_t actual_group = 0;
+    int actual_processor = -1;
     bool read_converged = false;
     bool write_converged = false;
     bool copy_converged = false;
@@ -110,6 +131,7 @@ void print_usage() {
         << "Usage: membench [--size-mib N] [--iterations N] [--latency-steps N]\n"
         << "                [--warmup-runs N] [--min-samples N] [--max-samples N]\n"
         << "                [--target-sample-ms N] [--max-cv N]\n"
+        << "                [--preferred-group N --preferred-processor N]\n"
         << "                [--csv] [--json] [--progress-json]\n"
         << "\n"
         << "Defaults:\n"
@@ -230,6 +252,36 @@ Options parse_args(int argc, char** argv) {
             options.target_sample_ms = parse_double(require_value(arg), arg);
         } else if (arg == "--max-cv") {
             options.max_cv = parse_double(require_value(arg), arg);
+        } else if (arg == "--preferred-group") {
+            const auto value = parse_u64(require_value(arg), arg);
+            if (value > std::numeric_limits<std::uint16_t>::max()) {
+                throw std::invalid_argument("--preferred-group must fit in uint16");
+            }
+            options.preferred_group = static_cast<std::uint16_t>(value);
+            options.has_preferred_processor = true;
+        } else if (arg == "--preferred-processor") {
+            const auto value = parse_u64(require_value(arg), arg);
+            if (value >= 64) {
+                throw std::invalid_argument("--preferred-processor must be in [0, 63]");
+            }
+            options.preferred_processor = static_cast<int>(value);
+            options.has_preferred_processor = true;
+        } else if (arg == "--preferred-core") {
+            options.preferred_core = static_cast<int>(parse_u64(require_value(arg), arg));
+        } else if (arg == "--preferred-package") {
+            options.preferred_package = static_cast<int>(parse_u64(require_value(arg), arg));
+        } else if (arg == "--preferred-numa-node") {
+            options.preferred_numa_node = static_cast<int>(parse_u64(require_value(arg), arg));
+        } else if (arg == "--preferred-smt-index") {
+            options.preferred_smt_index = static_cast<int>(parse_u64(require_value(arg), arg));
+        } else if (arg == "--preferred-efficiency-class") {
+            options.preferred_efficiency_class = static_cast<int>(parse_u64(require_value(arg), arg));
+        } else if (arg == "--preferred-has-smt") {
+            const auto value = parse_u64(require_value(arg), arg);
+            if (value > 1) {
+                throw std::invalid_argument("--preferred-has-smt must be 0 or 1");
+            }
+            options.preferred_has_smt = value == 1;
         } else {
             throw std::invalid_argument("Unknown argument: " + std::string(arg));
         }
@@ -318,14 +370,41 @@ AlignedBuffer make_aligned_buffer(std::size_t bytes) {
 }
 
 #if defined(_WIN32)
-void pin_to_current_cpu() {
-    const DWORD cpu = GetCurrentProcessorNumber();
-    if (cpu < sizeof(DWORD_PTR) * 8) {
-        SetThreadAffinityMask(GetCurrentThread(), DWORD_PTR{1} << cpu);
+struct ActualProcessor {
+    std::uint16_t group = 0;
+    int processor = -1;
+};
+
+ActualProcessor get_current_processor() {
+    PROCESSOR_NUMBER number{};
+    GetCurrentProcessorNumberEx(&number);
+    return ActualProcessor{number.Group, static_cast<int>(number.Number)};
+}
+
+bool apply_preferred_affinity(const Options& options) {
+    if (!options.has_preferred_processor) {
+        return false;
     }
+
+    GROUP_AFFINITY affinity{};
+    affinity.Group = options.preferred_group;
+    affinity.Mask = KAFFINITY{1} << options.preferred_processor;
+    GROUP_AFFINITY previous{};
+    return SetThreadGroupAffinity(GetCurrentThread(), &affinity, &previous) != 0;
 }
 #else
-void pin_to_current_cpu() {}
+struct ActualProcessor {
+    std::uint16_t group = 0;
+    int processor = -1;
+};
+
+ActualProcessor get_current_processor() {
+    return {};
+}
+
+bool apply_preferred_affinity(const Options&) {
+    return false;
+}
 #endif
 
 double median(std::vector<double> values) {
@@ -556,7 +635,8 @@ void emit_progress_started(const Options& options) {
               << ",\"min_samples\":" << options.min_samples
               << ",\"max_samples\":" << options.max_samples
               << ",\"target_sample_ms\":" << options.target_sample_ms
-              << ",\"max_cv\":" << options.max_cv << "}\n"
+              << ",\"max_cv\":" << options.max_cv
+              << ",\"use_preferred_core\":" << (options.has_preferred_processor ? "true" : "false") << "}\n"
               << std::flush;
 }
 
@@ -630,6 +710,56 @@ void print_aggregate(std::ostream& os, const Aggregate& value) {
        << '}';
 }
 
+void print_optional_int_property(std::ostream& os, std::string_view name, int value) {
+    if (value >= 0) {
+        os << ',';
+        print_json_string(os, name);
+        os << ':' << value;
+    }
+}
+
+void print_processor_placement(std::ostream& os, std::uint16_t group, int processor, const BenchResult& result, bool include_metadata) {
+    os << "{\"group\":" << group
+       << ",\"processor\":" << processor;
+    if (include_metadata) {
+        print_optional_int_property(os, "core", result.requested_core);
+        print_optional_int_property(os, "package", result.requested_package);
+        print_optional_int_property(os, "numa_node", result.requested_numa_node);
+        print_optional_int_property(os, "smt_index", result.requested_smt_index);
+        print_optional_int_property(os, "efficiency_class", result.requested_efficiency_class);
+        os << ",\"has_smt\":" << (result.requested_has_smt ? "true" : "false");
+    }
+    os << '}';
+}
+
+void print_placement(std::ostream& os, const Options& options, const BenchResult& result) {
+    os << "\"placement\":{\"mode\":\""
+       << (result.requested_affinity ? "singlePreferredPhysicalCore" : "currentThreadFallback")
+       << "\",\"source\":\""
+       << (result.requested_affinity ? "windowsTopology" : "nativeFallback")
+       << "\",\"confidence\":\""
+       << (result.affinity_applied ? "api" : "fallback")
+       << "\",\"reason\":\""
+       << (result.affinity_applied ? "Pinned with SetThreadGroupAffinity." : "No preferred processor was applied.")
+       << "\",\"affinity_applied\":" << (result.affinity_applied ? "true" : "false")
+       << ",\"requested\":";
+    if (result.requested_affinity) {
+        print_processor_placement(os, result.requested_group, result.requested_processor, result, true);
+    } else {
+        os << "null";
+    }
+
+    os << ",\"actual\":";
+    if (result.actual_processor >= 0) {
+        print_processor_placement(os, result.actual_group, result.actual_processor, result, false);
+    } else {
+        os << "null";
+    }
+
+    os << ",\"candidates\":[]}";
+    (void)options;
+}
+
 void print_metric_result(
     std::ostream& os,
     std::string_view unit,
@@ -671,7 +801,11 @@ void print_json_result(std::ostream& os, const Options& options, const BenchResu
        << ",\"target_sample_ms\":" << options.target_sample_ms
        << ",\"max_cv\":" << std::setprecision(6) << options.max_cv << std::setprecision(2)
        << ",\"threads\":1"
+       << ",\"use_preferred_core\":" << (options.has_preferred_processor ? "true" : "false")
        << ",\"working_set_kind\":\"memory\"}"
+       << ",";
+    print_placement(os, options, result);
+    os
        << ",\"kernel\":{\"read\":\"scalar_u64_unrolled\",\"write\":\"crt_memset\",\"copy\":\"crt_memcpy\",\"latency\":\"pointer_chase\"}"
        << ",\"metrics\":{\"read\":";
     print_metric_result(os, "mib_s", result.read_samples, result.read_inner_iterations, result.read_converged);
@@ -685,6 +819,8 @@ void print_json_result(std::ostream& os, const Options& options, const BenchResu
 }
 
 BenchResult run_bench(const Options& options) {
+    const bool affinity_applied = apply_preferred_affinity(options);
+    const auto actual_processor = get_current_processor();
     const Timer timer;
     const auto benchmark_start = timer.now_ticks();
     const std::size_t bytes = static_cast<std::size_t>(options.size_mib) * kMiB;
@@ -700,6 +836,18 @@ BenchResult run_bench(const Options& options) {
 
     BenchResult result;
     result.timer_frequency_hz = timer.frequency_hz();
+    result.requested_affinity = options.has_preferred_processor;
+    result.affinity_applied = affinity_applied;
+    result.requested_group = options.preferred_group;
+    result.requested_processor = options.preferred_processor;
+    result.requested_core = options.preferred_core;
+    result.requested_package = options.preferred_package;
+    result.requested_numa_node = options.preferred_numa_node;
+    result.requested_smt_index = options.preferred_smt_index;
+    result.requested_efficiency_class = options.preferred_efficiency_class;
+    result.requested_has_smt = options.preferred_has_smt;
+    result.actual_group = actual_processor.group;
+    result.actual_processor = actual_processor.processor;
 
     const auto read_series = run_read(src.get(), bytes, options, timer);
     result.read_samples = read_series.values;
@@ -789,7 +937,6 @@ void print_result(const Options& options, const BenchResult& result) {
 int main(int argc, char** argv) {
     try {
         const Options options = parse_args(argc, argv);
-        pin_to_current_cpu();
         if (options.progress_json) {
             emit_progress_started(options);
         }
