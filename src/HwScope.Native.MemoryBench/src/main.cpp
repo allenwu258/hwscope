@@ -8,6 +8,7 @@
 #include <iomanip>
 #include <iostream>
 #include <limits>
+#include <mutex>
 #include <memory>
 #include <numeric>
 #include <random>
@@ -74,6 +75,7 @@ struct Options {
     std::string numa_mode = "Local";
     std::string kernel = "Auto";
     std::string store_policy = "Cached";
+    int expected_protocol_version = 0;
     std::vector<WorkerPlacement> worker_processors;
     bool csv = false;
     bool json = false;
@@ -369,6 +371,12 @@ Options parse_args(int argc, char** argv) {
             options.kernel = std::string(require_value(arg));
         } else if (arg == "--store-policy") {
             options.store_policy = std::string(require_value(arg));
+        } else if (arg == "--expected-protocol-version") {
+            const auto value = parse_u64(require_value(arg), arg);
+            if (value > static_cast<std::uint64_t>(std::numeric_limits<int>::max())) {
+                throw std::invalid_argument("--expected-protocol-version is too large");
+            }
+            options.expected_protocol_version = static_cast<int>(value);
         } else if (arg == "--worker-processor") {
             options.worker_processors.push_back(parse_worker_placement(require_value(arg)));
             options.has_preferred_processor = true;
@@ -436,6 +444,13 @@ Options parse_args(int argc, char** argv) {
     }
     if ((options.csv ? 1 : 0) + (options.json ? 1 : 0) + (options.progress_json ? 1 : 0) > 1) {
         throw std::invalid_argument("--csv, --json, and --progress-json are mutually exclusive");
+    }
+    if (options.expected_protocol_version != 0 && options.expected_protocol_version != kProtocolVersion) {
+        throw std::runtime_error(
+            "Protocol version mismatch: Core expects "
+            + std::to_string(options.expected_protocol_version)
+            + " but native worker is "
+            + std::to_string(kProtocolVersion));
     }
 
     return options;
@@ -740,69 +755,121 @@ SampleSeries collect_parallel_samples(
     std::vector<std::uint8_t> affinity(static_cast<std::size_t>(options.threads), 0);
     std::vector<std::thread> threads;
     threads.reserve(static_cast<std::size_t>(options.threads));
+    std::mutex worker_error_mutex;
+    std::exception_ptr worker_error;
 
-    for (int worker = 0; worker < options.threads; ++worker) {
-        threads.emplace_back([&, worker]() {
-            if (static_cast<std::size_t>(worker) < options.worker_processors.size()) {
-                const auto& placement = options.worker_processors[static_cast<std::size_t>(worker)];
-                affinity[static_cast<std::size_t>(worker)] = apply_affinity(placement.group, placement.processor) ? 1 : 0;
-            } else if (options.worker_processors.empty()) {
-                affinity[static_cast<std::size_t>(worker)] = apply_current_affinity() ? 1 : 0;
+    auto capture_worker_error = [&](std::exception_ptr error) {
+        {
+            std::lock_guard<std::mutex> lock(worker_error_mutex);
+            if (!worker_error) {
+                worker_error = error;
             }
+        }
 
-            actual[static_cast<std::size_t>(worker)] = get_current_processor();
-            auto observed_epoch = 0;
-            for (;;) {
-                while (command_epoch.load(std::memory_order_acquire) == observed_epoch
-                    && !stop.load(std::memory_order_acquire)) {
-                    std::this_thread::yield();
-                }
-                if (stop.load(std::memory_order_acquire)) {
-                    break;
-                }
+        stop.store(true, std::memory_order_release);
+        command_epoch.fetch_add(1, std::memory_order_release);
+        start_epoch.fetch_add(1, std::memory_order_release);
+        completed_epoch.fetch_add(1, std::memory_order_release);
+    };
 
-                observed_epoch = command_epoch.load(std::memory_order_acquire);
-                ready.fetch_add(1, std::memory_order_release);
-                while (start_epoch.load(std::memory_order_acquire) < observed_epoch
-                    && !stop.load(std::memory_order_acquire)) {
-                    std::this_thread::yield();
-                }
-                if (stop.load(std::memory_order_acquire)) {
-                    break;
-                }
+    auto rethrow_worker_error = [&]() {
+        std::exception_ptr error;
+        {
+            std::lock_guard<std::mutex> lock(worker_error_mutex);
+            error = worker_error;
+        }
 
-                const auto inner_iterations_for_sample = requested_inner_iterations.load(std::memory_order_acquire);
-                std::uint64_t bytes = 0;
-                std::uint64_t local_sink = 0;
-                auto& worker_buffers = buffers[static_cast<std::size_t>(worker)];
-                for (std::uint64_t round = 0; round < inner_iterations_for_sample; ++round) {
-                    const auto result = operation(worker_buffers, bytes_per_thread, round + static_cast<std::uint64_t>(worker) * 131u);
-                    bytes += result.bytes;
-                    local_sink ^= result.sink;
-                }
+        if (error) {
+            std::rethrow_exception(error);
+        }
+    };
 
-                worker_bytes[static_cast<std::size_t>(worker)] = bytes;
-                worker_sinks[static_cast<std::size_t>(worker)] = local_sink;
-                if (done.fetch_add(1, std::memory_order_acq_rel) + 1 == options.threads) {
-                    completed_epoch.store(observed_epoch, std::memory_order_release);
-                }
+    auto stop_and_join_workers = [&]() {
+        stop.store(true, std::memory_order_release);
+        command_epoch.fetch_add(1, std::memory_order_release);
+        start_epoch.fetch_add(1, std::memory_order_release);
+        for (auto& thread : threads) {
+            if (thread.joinable()) {
+                thread.join();
             }
-        });
+        }
+    };
+
+    try {
+        for (int worker = 0; worker < options.threads; ++worker) {
+            threads.emplace_back([&, worker]() {
+                try {
+                    if (static_cast<std::size_t>(worker) < options.worker_processors.size()) {
+                        const auto& placement = options.worker_processors[static_cast<std::size_t>(worker)];
+                        affinity[static_cast<std::size_t>(worker)] = apply_affinity(placement.group, placement.processor) ? 1 : 0;
+                    } else if (options.worker_processors.empty()) {
+                        affinity[static_cast<std::size_t>(worker)] = apply_current_affinity() ? 1 : 0;
+                    }
+
+                    actual[static_cast<std::size_t>(worker)] = get_current_processor();
+                    auto observed_epoch = 0;
+                    for (;;) {
+                        while (command_epoch.load(std::memory_order_acquire) == observed_epoch
+                            && !stop.load(std::memory_order_acquire)) {
+                            std::this_thread::yield();
+                        }
+                        if (stop.load(std::memory_order_acquire)) {
+                            break;
+                        }
+
+                        observed_epoch = command_epoch.load(std::memory_order_acquire);
+                        ready.fetch_add(1, std::memory_order_release);
+                        while (start_epoch.load(std::memory_order_acquire) < observed_epoch
+                            && !stop.load(std::memory_order_acquire)) {
+                            std::this_thread::yield();
+                        }
+                        if (stop.load(std::memory_order_acquire)) {
+                            break;
+                        }
+
+                        const auto inner_iterations_for_sample = requested_inner_iterations.load(std::memory_order_acquire);
+                        std::uint64_t bytes = 0;
+                        std::uint64_t local_sink = 0;
+                        auto& worker_buffers = buffers[static_cast<std::size_t>(worker)];
+                        for (std::uint64_t round = 0; round < inner_iterations_for_sample; ++round) {
+                            const auto result = operation(worker_buffers, bytes_per_thread, round + static_cast<std::uint64_t>(worker) * 131u);
+                            bytes += result.bytes;
+                            local_sink ^= result.sink;
+                        }
+
+                        worker_bytes[static_cast<std::size_t>(worker)] = bytes;
+                        worker_sinks[static_cast<std::size_t>(worker)] = local_sink;
+                        if (done.fetch_add(1, std::memory_order_acq_rel) + 1 == options.threads) {
+                            completed_epoch.store(observed_epoch, std::memory_order_release);
+                        }
+                    }
+                } catch (...) {
+                    capture_worker_error(std::current_exception());
+                }
+            });
+        }
+    } catch (...) {
+        capture_worker_error(std::current_exception());
+        stop_and_join_workers();
+        rethrow_worker_error();
     }
 
     auto run_sample = [&](std::uint64_t sample_inner_iterations) {
+        rethrow_worker_error();
         ready.store(0, std::memory_order_release);
         done.store(0, std::memory_order_release);
         requested_inner_iterations.store(sample_inner_iterations, std::memory_order_release);
         const auto next_epoch = command_epoch.load(std::memory_order_acquire) + 1;
         command_epoch.store(next_epoch, std::memory_order_release);
         while (ready.load(std::memory_order_acquire) < options.threads) {
+            rethrow_worker_error();
             std::this_thread::yield();
         }
 
         const auto start_ticks = timer.now_ticks();
         start_epoch.store(next_epoch, std::memory_order_release);
         while (completed_epoch.load(std::memory_order_acquire) != next_epoch) {
+            rethrow_worker_error();
             std::this_thread::yield();
         }
         const auto finish_ticks = timer.now_ticks();
@@ -864,8 +931,11 @@ SampleSeries collect_parallel_samples(
     command_epoch.fetch_add(1, std::memory_order_release);
     start_epoch.fetch_add(1, std::memory_order_release);
     for (auto& thread : threads) {
-        thread.join();
+        if (thread.joinable()) {
+            thread.join();
+        }
     }
+    rethrow_worker_error();
 
     return series;
 }

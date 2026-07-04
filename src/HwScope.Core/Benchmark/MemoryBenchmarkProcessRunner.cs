@@ -8,6 +8,7 @@ namespace HwScope.Core.Benchmark;
 
 public sealed class MemoryBenchmarkProcessRunner : IMemoryBenchmarkRunner
 {
+    private const int ExpectedProtocolVersion = 5;
     private static readonly TimeSpan DefaultTimeout = TimeSpan.FromMinutes(5);
 
     private readonly string? _executablePath;
@@ -150,7 +151,9 @@ public sealed class MemoryBenchmarkProcessRunner : IMemoryBenchmarkRunner
             "--kernel",
             options.Kernel,
             "--store-policy",
-            options.StorePolicy
+            options.StorePolicy,
+            "--expected-protocol-version",
+            ExpectedProtocolVersion.ToString(CultureInfo.InvariantCulture)
         };
 
         if (placementPlan.Workers.Count > 0)
@@ -936,6 +939,22 @@ public sealed class MemoryBenchmarkProcessRunner : IMemoryBenchmarkRunner
         if (environmentCollectionFailed)
         {
             flags.Add("environmentCollectionFailed");
+        }
+
+        if (result.Placement is { } placement)
+        {
+            var requestedAffinity = placement.Requested is not null || placement.RequestedWorkers.Count > 0;
+            if (requestedAffinity && placement.AffinityApplied == false)
+            {
+                flags.Add(placement.RequestedWorkers.Count > 1 ? "partialAffinityFailure" : "affinityFailure");
+            }
+
+            if (placement.RequestedWorkers.Count > 0
+                && placement.ActualWorkers.Count > 0
+                && placement.ActualWorkers.Count < placement.RequestedWorkers.Count)
+            {
+                flags.Add("partialAffinityDiagnostics");
+            }
         }
 
         return new MemoryBenchmarkQuality(
