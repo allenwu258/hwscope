@@ -378,7 +378,7 @@ This is the biggest expected improvement toward AIDA64-like memory bandwidth.
 
 Implemented baseline:
 
-- `MemoryBenchmarkOptions` now carries `Threads`, `ThreadMode`, `NumaMode`, `Kernel`, and `StorePolicy`.
+- `MemoryBenchmarkOptions` now carries `Threads`, `ThreadMode`, `NumaMode`, `Kernel`, and `StorePolicy`. The Core runner currently accepts only implemented execution modes: `NumaMode=Local`, `Kernel=Auto/Scalar`, and `StorePolicy=Cached`.
 - Default GUI/CLI behavior uses `ThreadMode=PhysicalCores` with automatic thread count from Windows topology. If topology is unavailable, Core falls back to a single native fallback worker so results are not worse than the previous single-thread path.
 - `SingleCore` keeps the old single-thread diagnostic baseline.
 - `PhysicalCores` selects one logical processor per physical core before using SMT.

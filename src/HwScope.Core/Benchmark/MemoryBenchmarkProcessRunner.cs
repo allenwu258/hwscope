@@ -301,14 +301,29 @@ public sealed class MemoryBenchmarkProcessRunner : IMemoryBenchmarkRunner
             throw new ArgumentOutOfRangeException(nameof(options), "NUMA 模式必须是 Local、Interleaved 或 PerNode。");
         }
 
+        if (!options.NumaMode.Equals("Local", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new NotSupportedException("当前内存跑分阶段仅实现 Local NUMA 模式，Interleaved/PerNode 将在后续阶段接入。");
+        }
+
         if (!IsOneOf(options.Kernel, "Scalar", "Auto", "Avx2", "Avx512"))
         {
             throw new ArgumentOutOfRangeException(nameof(options), "Kernel 必须是 Scalar、Auto、Avx2 或 Avx512。");
         }
 
+        if (!IsOneOf(options.Kernel, "Scalar", "Auto"))
+        {
+            throw new NotSupportedException("当前内存跑分阶段仅实现 Scalar/Auto kernel，AVX2/AVX512 将在 SIMD 阶段接入。");
+        }
+
         if (!IsOneOf(options.StorePolicy, "Cached", "NonTemporal"))
         {
             throw new ArgumentOutOfRangeException(nameof(options), "StorePolicy 必须是 Cached 或 NonTemporal。");
+        }
+
+        if (!options.StorePolicy.Equals("Cached", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new NotSupportedException("当前内存跑分阶段仅实现 Cached store policy，NonTemporal 将在 SIMD 阶段接入。");
         }
 
         if (!string.Equals(options.WorkingSetKind, "memory", StringComparison.OrdinalIgnoreCase))
