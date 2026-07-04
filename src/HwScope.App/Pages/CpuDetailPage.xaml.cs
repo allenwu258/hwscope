@@ -13,7 +13,7 @@ namespace HwScope.App.Pages;
 
 public partial class CpuDetailPage : UserControl
 {
-    private readonly CpuDetailCollector _collector = new();
+    private readonly CpuDetailCollector _reportBuilder = new();
     private CpuDetailReport? _currentReport;
     private int _refreshVersion;
     private bool _loadedOnce;
@@ -32,11 +32,21 @@ public partial class CpuDetailPage : UserControl
             }
 
             _loadedOnce = true;
-            await RefreshAsync();
+            await LoadFromPreloadAsync();
         };
     }
 
     public async Task RefreshAsync()
+    {
+        await RefreshAsync(forceRefresh: true);
+    }
+
+    public async Task LoadFromPreloadAsync()
+    {
+        await RefreshAsync(forceRefresh: false);
+    }
+
+    private async Task RefreshAsync(bool forceRefresh)
     {
         var version = Interlocked.Increment(ref _refreshVersion);
         SetBusy(true);
@@ -44,7 +54,10 @@ public partial class CpuDetailPage : UserControl
 
         try
         {
-            var report = await Task.Run(_collector.Collect).ConfigureAwait(true);
+            var snapshot = forceRefresh
+                ? await App.HardwarePreload.RefreshAsync().ConfigureAwait(true)
+                : await App.HardwarePreload.EnsureLoadedAsync().ConfigureAwait(true);
+            var report = _reportBuilder.CreateReport(snapshot);
             if (version != _refreshVersion)
             {
                 return;

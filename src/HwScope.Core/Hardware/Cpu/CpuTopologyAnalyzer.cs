@@ -2,7 +2,7 @@ using HwScope.Core.Windows;
 
 namespace HwScope.Core.Hardware.Cpu;
 
-internal sealed record CpuTopologyAnalysis(
+public sealed record CpuTopologyAnalysis(
     CpuTopology Topology,
     IReadOnlyList<CpuCacheInfo> Caches,
     IReadOnlyList<CpuCoreMappingInfo> CoreMappings,

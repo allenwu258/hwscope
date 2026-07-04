@@ -9,9 +9,10 @@ namespace HwScope.App.Pages;
 
 public partial class HardwareSummaryPage : UserControl
 {
-    private readonly HardwareCollector _collector = new();
+    private readonly HardwareCollector _reportBuilder = new();
     private SummaryViewMode _viewMode = SummaryViewMode.Card;
     private HardwareReport? _currentReport;
+    private int _refreshVersion;
 
     public event EventHandler<HardwareReport?>? CurrentReportChanged;
     public event EventHandler<string>? StatusChanged;
@@ -20,24 +21,38 @@ public partial class HardwareSummaryPage : UserControl
     {
         InitializeComponent();
         ApplyViewMode();
-        Loaded += (_, _) =>
+        Loaded += async (_, _) =>
         {
             if (_currentReport is null)
             {
-                RefreshHardwareSummary();
+                await RefreshHardwareSummaryAsync(forceRefresh: false);
             }
         };
     }
 
     public HardwareReport? CurrentReport => _currentReport;
 
-    public void RefreshHardwareSummary()
+    public Task RefreshHardwareSummaryAsync(bool forceRefresh = true)
     {
+        return RefreshHardwareSummaryCoreAsync(forceRefresh);
+    }
+
+    private async Task RefreshHardwareSummaryCoreAsync(bool forceRefresh)
+    {
+        var version = Interlocked.Increment(ref _refreshVersion);
         SetSummaryBusyState(true);
 
         try
         {
-            _currentReport = _collector.CollectSummary();
+            var snapshot = forceRefresh
+                ? await App.HardwarePreload.RefreshAsync().ConfigureAwait(true)
+                : await App.HardwarePreload.EnsureLoadedAsync().ConfigureAwait(true);
+            if (version != _refreshVersion)
+            {
+                return;
+            }
+
+            _currentReport = _reportBuilder.CreateSummary(snapshot);
             var summaryItems = HardwareSummaryItem.FromReport(_currentReport);
             CardHardwareSummaryList.ItemsSource = summaryItems;
             ListHardwareSummaryList.ItemsSource = summaryItems;
@@ -52,13 +67,16 @@ public partial class HardwareSummaryPage : UserControl
         }
         finally
         {
-            SetSummaryBusyState(false);
+            if (version == _refreshVersion)
+            {
+                SetSummaryBusyState(false);
+            }
         }
     }
 
-    private void RefreshButton_Click(object sender, RoutedEventArgs e)
+    private async void RefreshButton_Click(object sender, RoutedEventArgs e)
     {
-        RefreshHardwareSummary();
+        await RefreshHardwareSummaryAsync();
     }
 
     private void CopyButton_Click(object sender, RoutedEventArgs e)
