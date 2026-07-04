@@ -36,8 +36,8 @@ constexpr int kDefaultWarmupRuns = 1;
 constexpr int kDefaultMaxSamples = 11;
 constexpr double kDefaultTargetSampleMs = 120.0;
 constexpr double kDefaultMaxCv = 0.03;
-constexpr std::string_view kWorkerVersion = "0.5.0";
-constexpr int kProtocolVersion = 5;
+constexpr std::string_view kWorkerVersion = "0.6.0";
+constexpr int kProtocolVersion = 6;
 
 volatile std::uint64_t g_sink = 0;
 
@@ -50,6 +50,15 @@ struct WorkerPlacement {
     int smt_index = -1;
     int efficiency_class = -1;
     bool has_smt = false;
+};
+
+struct CacheRowPlan {
+    std::string row;
+    std::uint64_t working_set_bytes = 0;
+    int cache_level = -1;
+    std::uint64_t cache_size_bytes = 0;
+    int line_size_bytes = -1;
+    std::string source;
 };
 
 struct Options {
@@ -77,6 +86,7 @@ struct Options {
     std::string store_policy = "Cached";
     int expected_protocol_version = 0;
     std::vector<WorkerPlacement> worker_processors;
+    std::vector<CacheRowPlan> cache_rows;
     bool csv = false;
     bool json = false;
     bool progress_json = false;
@@ -97,6 +107,27 @@ using AlignedBuffer = std::unique_ptr<std::uint8_t, AlignedFree>;
 struct ActualProcessor {
     std::uint16_t group = 0;
     int processor = -1;
+};
+
+struct CacheRowResult {
+    CacheRowPlan plan;
+    double read_mib_s = 0.0;
+    double write_mib_s = 0.0;
+    double copy_mib_s = 0.0;
+    double latency_ns = 0.0;
+    std::vector<double> read_samples;
+    std::vector<double> write_samples;
+    std::vector<double> copy_samples;
+    std::vector<double> copy_traffic_samples;
+    std::vector<double> latency_samples;
+    std::vector<std::uint64_t> read_inner_iterations;
+    std::vector<std::uint64_t> write_inner_iterations;
+    std::vector<std::uint64_t> copy_inner_iterations;
+    std::vector<std::uint64_t> latency_inner_iterations;
+    bool read_converged = false;
+    bool write_converged = false;
+    bool copy_converged = false;
+    bool latency_converged = false;
 };
 
 struct BenchResult {
@@ -129,6 +160,7 @@ struct BenchResult {
     int actual_processor = -1;
     std::vector<ActualProcessor> actual_workers;
     std::vector<std::uint8_t> worker_affinity_applied;
+    std::vector<CacheRowResult> cache_rows;
     bool read_converged = false;
     bool write_converged = false;
     bool copy_converged = false;
@@ -283,6 +315,45 @@ WorkerPlacement parse_worker_placement(std::string_view value) {
     };
 }
 
+CacheRowPlan parse_cache_row(std::string_view value) {
+    const auto parts = split_view(value, ':');
+    if (parts.size() != 6) {
+        throw std::invalid_argument("--cache-row must be row:workingSetBytes:cacheLevel:cacheSizeBytes:lineSizeBytes:source");
+    }
+
+    auto row = std::string(parts[0]);
+    if (row != "l1" && row != "l2" && row != "l3") {
+        throw std::invalid_argument("--cache-row row must be l1, l2, or l3");
+    }
+
+    const auto working_set_bytes = parse_u64(parts[1], "--cache-row workingSetBytes");
+    if (working_set_bytes < 128) {
+        throw std::invalid_argument("--cache-row workingSetBytes must be at least 128");
+    }
+
+    const auto cache_level = parse_i32(parts[2], "--cache-row cacheLevel");
+    const auto cache_size_bytes = parse_u64(parts[3], "--cache-row cacheSizeBytes");
+    const auto line_size_bytes = parse_i32(parts[4], "--cache-row lineSizeBytes");
+    if (cache_level < 1 || cache_level > 4) {
+        throw std::invalid_argument("--cache-row cacheLevel must be in [1, 4]");
+    }
+    if (cache_size_bytes < working_set_bytes) {
+        throw std::invalid_argument("--cache-row cacheSizeBytes must be greater than or equal to workingSetBytes");
+    }
+    if (line_size_bytes <= 0) {
+        throw std::invalid_argument("--cache-row lineSizeBytes must be greater than 0");
+    }
+
+    return CacheRowPlan{
+        std::move(row),
+        working_set_bytes,
+        cache_level,
+        cache_size_bytes,
+        line_size_bytes,
+        std::string(parts[5])
+    };
+}
+
 std::uint64_t checked_multiply_u64(std::uint64_t left, std::uint64_t right, std::string_view name) {
     if (right != 0 && left > std::numeric_limits<std::uint64_t>::max() / right) {
         throw std::overflow_error(std::string(name) + " overflow");
@@ -380,6 +451,8 @@ Options parse_args(int argc, char** argv) {
         } else if (arg == "--worker-processor") {
             options.worker_processors.push_back(parse_worker_placement(require_value(arg)));
             options.has_preferred_processor = true;
+        } else if (arg == "--cache-row") {
+            options.cache_rows.push_back(parse_cache_row(require_value(arg)));
         } else if (arg == "--preferred-group") {
             const auto value = parse_u64(require_value(arg), arg);
             if (value > std::numeric_limits<std::uint16_t>::max()) {
@@ -1026,6 +1099,65 @@ SampleSeries run_latency(std::size_t bytes, std::uint64_t steps, const Options& 
     return series;
 }
 
+void emit_progress_metric(std::string_view row, std::string_view metric, double value, std::string_view unit);
+
+CacheRowResult run_cache_row(const CacheRowPlan& plan, const Options& options, const Timer& timer) {
+    const auto bytes = static_cast<std::size_t>(plan.working_set_bytes);
+    auto src = make_aligned_buffer(bytes);
+    auto dst = make_aligned_buffer(bytes);
+
+    touch_pages(src.get(), bytes);
+    touch_pages(dst.get(), bytes);
+    for (std::size_t i = 0; i < bytes; ++i) {
+        src.get()[i] = static_cast<std::uint8_t>((i * 131u + static_cast<std::size_t>(plan.cache_level) * 17u) & 0xffu);
+    }
+
+    CacheRowResult result;
+    result.plan = plan;
+
+    const auto read_series = run_read(src.get(), bytes, options, timer);
+    result.read_samples = read_series.values;
+    result.read_inner_iterations = read_series.inner_iterations;
+    result.read_converged = read_series.converged;
+    result.read_mib_s = aggregate(result.read_samples).median;
+    if (options.progress_json) {
+        emit_progress_metric(plan.row, "read", result.read_mib_s, "mib_s");
+    }
+
+    const auto write_series = run_write(dst.get(), bytes, options, timer);
+    result.write_samples = write_series.values;
+    result.write_inner_iterations = write_series.inner_iterations;
+    result.write_converged = write_series.converged;
+    result.write_mib_s = aggregate(result.write_samples).median;
+    if (options.progress_json) {
+        emit_progress_metric(plan.row, "write", result.write_mib_s, "mib_s");
+    }
+
+    const auto copy_series = run_copy(dst.get(), src.get(), bytes, options, timer);
+    result.copy_samples = copy_series.values;
+    result.copy_traffic_samples.reserve(result.copy_samples.size());
+    for (const auto sample : result.copy_samples) {
+        result.copy_traffic_samples.push_back(sample * 2.0);
+    }
+    result.copy_inner_iterations = copy_series.inner_iterations;
+    result.copy_converged = copy_series.converged;
+    result.copy_mib_s = aggregate(result.copy_samples).median;
+    if (options.progress_json) {
+        emit_progress_metric(plan.row, "copy", result.copy_mib_s, "mib_s");
+    }
+
+    const auto latency_series = run_latency(bytes, options.latency_steps, options, timer);
+    result.latency_samples = latency_series.values;
+    result.latency_inner_iterations = latency_series.inner_iterations;
+    result.latency_converged = latency_series.converged;
+    result.latency_ns = aggregate(result.latency_samples).median;
+    if (options.progress_json) {
+        emit_progress_metric(plan.row, "latency", result.latency_ns, "ns");
+    }
+
+    return result;
+}
+
 void emit_progress_started(const Options& options) {
     std::cout << "{\"type\":\"started\",\"size_mib\":" << options.size_mib
               << ",\"iterations\":" << options.iterations
@@ -1042,8 +1174,9 @@ void emit_progress_started(const Options& options) {
               << std::flush;
 }
 
-void emit_progress_metric(std::string_view metric, double value, std::string_view unit) {
-    std::cout << "{\"type\":\"metric\",\"metric\":\"" << metric
+void emit_progress_metric(std::string_view row, std::string_view metric, double value, std::string_view unit) {
+    std::cout << "{\"type\":\"metric\",\"row\":\"" << row
+              << "\",\"metric\":\"" << metric
               << "\",\"value\":" << std::fixed << std::setprecision(2) << value
               << ",\"unit\":\"" << unit << "\"}\n"
               << std::flush;
@@ -1239,6 +1372,66 @@ void print_copy_metric_result(
     os << '}';
 }
 
+std::string row_display_name(std::string_view row) {
+    if (row == "l1") {
+        return "L1 Cache";
+    }
+    if (row == "l2") {
+        return "L2 Cache";
+    }
+    if (row == "l3") {
+        return "L3 Cache";
+    }
+    return "Memory";
+}
+
+void print_memory_row(std::ostream& os, const Options& options, const BenchResult& result) {
+    os << "\"memory\":{\"display_name\":\"Memory\",\"available\":true"
+       << ",\"working_set_bytes\":" << (options.size_mib * static_cast<std::uint64_t>(kMiB))
+       << ",\"source\":\"options\""
+       << ",\"read\":";
+    print_metric_result(os, "mib_s", result.read_samples, result.read_inner_iterations, result.read_converged);
+    os << ",\"write\":";
+    print_metric_result(os, "mib_s", result.write_samples, result.write_inner_iterations, result.write_converged);
+    os << ",\"copy\":";
+    print_copy_metric_result(os, result.copy_samples, result.copy_traffic_samples, result.copy_inner_iterations, result.copy_converged);
+    os << ",\"latency\":";
+    print_metric_result(os, "ns", result.latency_samples, result.latency_inner_iterations, result.latency_converged);
+    os << '}';
+}
+
+void print_cache_row(std::ostream& os, const CacheRowResult& row) {
+    print_json_string(os, row.plan.row);
+    os << ":{\"display_name\":";
+    print_json_string(os, row_display_name(row.plan.row));
+    os << ",\"available\":true"
+       << ",\"working_set_bytes\":" << row.plan.working_set_bytes
+       << ",\"cache_level\":" << row.plan.cache_level
+       << ",\"cache_size_bytes\":" << row.plan.cache_size_bytes
+       << ",\"line_size_bytes\":" << row.plan.line_size_bytes
+       << ",\"source\":";
+    print_json_string(os, row.plan.source);
+    os << ",\"read\":";
+    print_metric_result(os, "mib_s", row.read_samples, row.read_inner_iterations, row.read_converged);
+    os << ",\"write\":";
+    print_metric_result(os, "mib_s", row.write_samples, row.write_inner_iterations, row.write_converged);
+    os << ",\"copy\":";
+    print_copy_metric_result(os, row.copy_samples, row.copy_traffic_samples, row.copy_inner_iterations, row.copy_converged);
+    os << ",\"latency\":";
+    print_metric_result(os, "ns", row.latency_samples, row.latency_inner_iterations, row.latency_converged);
+    os << '}';
+}
+
+void print_rows(std::ostream& os, const Options& options, const BenchResult& result) {
+    os << "\"rows\":{";
+    print_memory_row(os, options, result);
+    for (const auto& row : result.cache_rows) {
+        os << ',';
+        print_cache_row(os, row);
+    }
+    os << '}';
+}
+
 void print_json_result(std::ostream& os, const Options& options, const BenchResult& result) {
     os << std::fixed << std::setprecision(2)
        << "{\"type\":\"result\""
@@ -1285,7 +1478,9 @@ void print_json_result(std::ostream& os, const Options& options, const BenchResu
     print_copy_metric_result(os, result.copy_samples, result.copy_traffic_samples, result.copy_inner_iterations, result.copy_converged);
     os << ",\"latency\":";
     print_metric_result(os, "ns", result.latency_samples, result.latency_inner_iterations, result.latency_converged);
-    os << "}}\n";
+    os << "},";
+    print_rows(os, options, result);
+    os << "}\n";
 }
 
 BenchResult run_bench(const Options& options) {
@@ -1328,7 +1523,7 @@ BenchResult run_bench(const Options& options) {
         result.read_converged = read_series.converged;
         result.read_mib_s = aggregate(result.read_samples).median;
         if (options.progress_json) {
-            emit_progress_metric("read", result.read_mib_s, "mib_s");
+            emit_progress_metric("memory", "read", result.read_mib_s, "mib_s");
         }
 
         const auto write_series = run_write(dst.get(), bytes, options, timer);
@@ -1337,7 +1532,7 @@ BenchResult run_bench(const Options& options) {
         result.write_converged = write_series.converged;
         result.write_mib_s = aggregate(result.write_samples).median;
         if (options.progress_json) {
-            emit_progress_metric("write", result.write_mib_s, "mib_s");
+            emit_progress_metric("memory", "write", result.write_mib_s, "mib_s");
         }
 
         const auto copy_series = run_copy(dst.get(), src.get(), bytes, options, timer);
@@ -1350,7 +1545,7 @@ BenchResult run_bench(const Options& options) {
         result.copy_converged = copy_series.converged;
         result.copy_mib_s = aggregate(result.copy_samples).median;
         if (options.progress_json) {
-            emit_progress_metric("copy", result.copy_mib_s, "mib_s");
+            emit_progress_metric("memory", "copy", result.copy_mib_s, "mib_s");
         }
     } else {
         const std::size_t bytes_per_thread = bytes / static_cast<std::size_t>(options.threads);
@@ -1373,7 +1568,7 @@ BenchResult run_bench(const Options& options) {
         result.read_converged = read_series.converged;
         result.read_mib_s = aggregate(result.read_samples).median;
         if (options.progress_json) {
-            emit_progress_metric("read", result.read_mib_s, "mib_s");
+            emit_progress_metric("memory", "read", result.read_mib_s, "mib_s");
         }
 
         const auto write_series = collect_parallel_samples(
@@ -1393,7 +1588,7 @@ BenchResult run_bench(const Options& options) {
         result.write_converged = write_series.converged;
         result.write_mib_s = aggregate(result.write_samples).median;
         if (options.progress_json) {
-            emit_progress_metric("write", result.write_mib_s, "mib_s");
+            emit_progress_metric("memory", "write", result.write_mib_s, "mib_s");
         }
 
         const auto copy_series = collect_parallel_samples(
@@ -1413,7 +1608,7 @@ BenchResult run_bench(const Options& options) {
         result.copy_converged = copy_series.converged;
         result.copy_mib_s = aggregate(result.copy_samples).median;
         if (options.progress_json) {
-            emit_progress_metric("copy", result.copy_mib_s, "mib_s");
+            emit_progress_metric("memory", "copy", result.copy_mib_s, "mib_s");
         }
     }
 
@@ -1427,12 +1622,15 @@ BenchResult run_bench(const Options& options) {
     }
 
     if (!single_thread) {
-        if (!options.worker_processors.empty()) {
-            const auto& first_worker = options.worker_processors.front();
-            (void)apply_affinity(first_worker.group, first_worker.processor);
+        if (options.has_preferred_processor) {
+            (void)apply_affinity(options.preferred_group, options.preferred_processor);
         } else {
             (void)apply_current_affinity();
         }
+
+        const auto current = get_current_processor();
+        result.actual_group = current.group;
+        result.actual_processor = current.processor;
     }
 
     result.latency_samples = {};
@@ -1442,7 +1640,11 @@ BenchResult run_bench(const Options& options) {
     result.latency_converged = latency_series.converged;
     result.latency_ns = aggregate(result.latency_samples).median;
     if (options.progress_json) {
-        emit_progress_metric("latency", result.latency_ns, "ns");
+        emit_progress_metric("memory", "latency", result.latency_ns, "ns");
+    }
+
+    for (const auto& cache_row : options.cache_rows) {
+        result.cache_rows.push_back(run_cache_row(cache_row, options, timer));
     }
 
     const auto benchmark_finish = timer.now_ticks();

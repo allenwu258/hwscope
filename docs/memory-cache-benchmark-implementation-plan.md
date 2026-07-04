@@ -1,6 +1,8 @@
 # L1/L2/L3 Cache Benchmark Implementation Plan
 
-本文档记录在 `feat/memory-benchmark` 分支上实现 L1/L2/L3 Cache 跑分行的开发方案。它基于当前 `docs/memory-benchmark-design.md`、现有 C# runner、WPF 窗口、native C++ worker 和 Windows topology 采集实现。
+本文档记录在 `feat/memory-benchmark` 分支上实现 L1/L2/L3 Cache 跑分行的开发方案及第一版落地状态。它基于当前 `docs/memory-benchmark-design.md`、现有 C# runner、WPF 窗口、native C++ worker 和 Windows topology 采集实现。
+
+Status: baseline implemented. Protocol 6, row-level results, Core topology row planning, native cache row execution, CLI table output, and WPF row rendering are in place.
 
 ## Goal
 
@@ -14,7 +16,7 @@ L2 Cache
 L3 Cache
 ```
 
-但只有 Memory 行有真实结果，L1/L2/L3 仍是占位。此阶段目标是让 L1/L2/L3 行输出真实、可解释、可诊断的 cache-local benchmark 结果。
+Memory、L1/L2/L3 行现在都有真实结果。此阶段目标是让 L1/L2/L3 行输出真实、可解释、可诊断的 cache-local benchmark 结果。
 
 第一版优先级：
 
@@ -46,12 +48,12 @@ L3 Cache
 
 当前行为：
 
-- native worker protocol version 为 `5`。
+- native worker protocol version 为 `6`。
 - Memory Read/Write/Copy 默认使用 Core 规划的 physical-core worker 集合。
 - Memory Latency 保持单线程 pointer chasing。
 - `MemoryBenchmarkResult` 顶层字段 `ReadMiBS`、`WriteMiBS`、`CopyMiBS`、`LatencyNs` 表示 Memory 行。
-- Progress JSON 只包含 metric，不包含 row。
-- GUI L1/L2/L3 行只有 row label，没有值单元格。
+- Progress JSON 包含 row 和 metric。
+- GUI L1/L2/L3 行已经有值单元格。
 
 ## Proposed Result Model
 
@@ -569,4 +571,3 @@ Mitigation: keep kernel metadata explicit and avoid claiming score equivalence.
 Changing protocol can break old native binaries.
 
 Mitigation: Core passes `--expected-protocol-version 6`; mismatch fails clearly. Parser keeps protocol 5 fallback for diagnostics and staged development.
-

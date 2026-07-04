@@ -4,14 +4,14 @@ This document summarizes the design discussion from Codex session `019ef287-5c2f
 
 ## Scope
 
-The current HwScope memory benchmark is a first native prototype. It measures main-memory throughput and random-access latency only:
+The current HwScope memory benchmark is a native prototype. It measures main-memory throughput, cache working-set throughput, and random-access latency:
 
 - `Read`: sequential read throughput.
 - `Write`: sequential write throughput.
 - `Copy`: sequential copy throughput.
 - `Latency`: randomized pointer-chasing latency.
 
-It does not yet measure L1, L2, or L3 cache rows. The UI keeps those rows as placeholders because the intended end state is an AIDA64-style `Cache & Memory Benchmark` table.
+The benchmark table now contains real Memory, L1 Cache, L2 Cache, and L3 Cache rows. Memory read/write/copy uses the topology-aware multi-thread path by default. L1/L2/L3 cache rows use topology-derived working sets and run as single-thread preferred-core tests in this stage.
 
 Relevant files:
 
@@ -88,10 +88,11 @@ The GUI uses newline-delimited progress JSON so each result can appear as soon a
 
 ```text
 {"type":"started","size_mib":512,"iterations":7,"latency_steps":20000000,"warmup_runs":1,"min_samples":7,"max_samples":11,"target_sample_ms":120.00,"max_cv":0.03,"use_preferred_core":true}
-{"type":"metric","metric":"read","value":36000.00,"unit":"mib_s"}
-{"type":"metric","metric":"write","value":51000.00,"unit":"mib_s"}
-{"type":"metric","metric":"copy","value":22000.00,"unit":"mib_s"}
-{"type":"metric","metric":"latency","value":138.50,"unit":"ns"}
+{"type":"metric","row":"memory","metric":"read","value":36000.00,"unit":"mib_s"}
+{"type":"metric","row":"memory","metric":"write","value":51000.00,"unit":"mib_s"}
+{"type":"metric","row":"memory","metric":"copy","value":22000.00,"unit":"mib_s"}
+{"type":"metric","row":"memory","metric":"latency","value":138.50,"unit":"ns"}
+{"type":"metric","row":"l1","metric":"read","value":900000.00,"unit":"mib_s"}
 {"type":"result",...}
 {"type":"completed"}
 ```
@@ -420,7 +421,7 @@ Non-temporal stores should be optional because they can improve large streaming 
 
 ### Stage 7: Cache Rows
 
-Add cache-aware working set selection.
+Implemented baseline cache-aware working set selection.
 
 - Detect L1/L2/L3 sizes and sharing topology.
 - Run benchmark rows for L1, L2, L3, and Memory.

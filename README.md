@@ -11,7 +11,7 @@ HwScope 是一个 Windows 本地硬件工具箱项目，目标是在一个程序
 - CPU topology Inspect 窗口，包含 raw report 和绘制版 Visual Map。
 - CLI 硬件摘要输出，支持文本、JSON 和复制到剪贴板。
 - 独立内存跑分窗口，界面参考 AIDA64 Cache & Memory Benchmark。
-- C++ native 内存跑分 worker，当前测量 Memory Read / Write / Copy / Latency，并支持 topology-aware 多线程 Memory Read / Write / Copy。
+- C++ native 内存跑分 worker，当前测量 Memory/L1/L2/L3 Read / Write / Copy / Latency，并支持 topology-aware 多线程 Memory Read / Write / Copy。
 - JSON 驱动的主题配置，支持跟随系统、浅色、深色和 Mica 开关。
 - 应用图标资源已接入 `HwScope.App`，用于窗口、任务栏和可执行文件图标。
 
@@ -126,15 +126,16 @@ GUI 中可以通过顶部工具栏 `跑分` 或左侧导航 `性能测试 -> 内
 
 当前跑分仍在持续演进，但已经具备可解释的多线程 Memory 行：
 
-- 已实现 Memory Read / Write / Copy / Latency。
+- 已实现 Memory、L1 Cache、L2 Cache、L3 Cache 的 Read / Write / Copy / Latency。
 - Read / Write / Copy 默认使用 Windows topology 选择每个物理核心一个 worker，并通过 `SetThreadGroupAffinity` 固定 worker。
+- Memory Read / Write / Copy 默认使用 Windows topology 选择每个物理核心一个 worker，并通过 `SetThreadGroupAffinity` 固定 worker。
+- L1 / L2 / L3 Cache 行使用 topology-derived working set，并在 preferred physical core 上单线程执行。
 - Latency 仍保持单线程语义基线。
-- 结果包含 worker/protocol 版本、timer、options、raw samples、aggregate、placement、environment 和 quality flags。
+- 结果包含 worker/protocol 版本、timer、options、row-level raw samples、aggregate、placement、environment 和 quality flags。
 - Copy 主结果按 payload throughput 展示，诊断信息同时记录 estimated traffic throughput。
-- L1 / L2 / L3 Cache 行暂时是 UI 占位。
 - native worker 仍需要先通过 CMake 构建；随后 `HwScope.App` / `HwScope.Cli` 构建会把已有的 `membench.exe` 复制到输出目录的 `native\` 子目录。
 - runner 带默认超时、取消时会终止 worker 进程树，并把失败诊断写入 `%TEMP%\HwScope-memory-benchmark.log`。
-- 后续会继续补 SIMD / non-temporal kernel、真实 L1/L2/L3 cache row、NUMA interleaved/per-node 模式、结果历史和导出。
+- 后续会继续补 SIMD / non-temporal kernel、NUMA interleaved/per-node 模式、结果历史和导出。
 
 详细设计见 [docs/memory-benchmark-design.md](docs/memory-benchmark-design.md)。L1 / L2 / L3 Cache 行开发方案见 [docs/memory-cache-benchmark-implementation-plan.md](docs/memory-cache-benchmark-implementation-plan.md)。
 

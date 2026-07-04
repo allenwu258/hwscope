@@ -9,6 +9,7 @@ public enum MemoryBenchmarkMetric
 }
 
 public sealed record MemoryBenchmarkProgress(
+    string Row,
     MemoryBenchmarkMetric Metric,
     double Value,
     string Unit,

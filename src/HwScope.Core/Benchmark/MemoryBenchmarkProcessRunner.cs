@@ -8,7 +8,7 @@ namespace HwScope.Core.Benchmark;
 
 public sealed class MemoryBenchmarkProcessRunner : IMemoryBenchmarkRunner
 {
-    private const int ExpectedProtocolVersion = 5;
+    private const int ExpectedProtocolVersion = 6;
     private static readonly TimeSpan DefaultTimeout = TimeSpan.FromMinutes(5);
 
     private readonly string? _executablePath;
@@ -175,8 +175,28 @@ public sealed class MemoryBenchmarkProcessRunner : IMemoryBenchmarkRunner
             AddPreferredProcessorMetadata(arguments, requested);
         }
 
+        foreach (var cacheRow in placementPlan.CacheRows.Where(row => row.Available))
+        {
+            arguments.Add("--cache-row");
+            arguments.Add(FormatCacheRow(cacheRow));
+        }
+
         arguments.Add(useProgressJson ? "--progress-json" : "--json");
         return [.. arguments];
+    }
+
+    private static string FormatCacheRow(MemoryBenchmarkCacheRowPlan row)
+    {
+        var values = new[]
+        {
+            row.Row,
+            row.WorkingSetBytes.ToString(CultureInfo.InvariantCulture),
+            (row.CacheLevel ?? -1).ToString(CultureInfo.InvariantCulture),
+            (row.CacheSizeBytes ?? -1).ToString(CultureInfo.InvariantCulture),
+            (row.LineSizeBytes ?? -1).ToString(CultureInfo.InvariantCulture),
+            row.Source
+        };
+        return string.Join(':', values);
     }
 
     private static string FormatWorkerProcessor(MemoryBenchmarkLogicalProcessor processor)
@@ -474,6 +494,7 @@ public sealed class MemoryBenchmarkProcessRunner : IMemoryBenchmarkRunner
             };
 
             progress = new MemoryBenchmarkProgress(
+                root.TryGetProperty("row", out var rowElement) ? NormalizeRow(rowElement.GetString()) : MemoryBenchmarkRows.Memory,
                 metric,
                 root.GetProperty("value").GetDouble(),
                 root.GetProperty("unit").GetString() ?? string.Empty,
@@ -610,11 +631,26 @@ public sealed class MemoryBenchmarkProcessRunner : IMemoryBenchmarkRunner
         }
 
         var optionsElement = root.GetProperty("options");
-        var metricsElement = root.GetProperty("metrics");
-        var read = ParseMetricResult(metricsElement.GetProperty("read"));
-        var write = ParseMetricResult(metricsElement.GetProperty("write"));
-        var copy = ParseMetricResult(metricsElement.GetProperty("copy"));
-        var latency = ParseMetricResult(metricsElement.GetProperty("latency"));
+        var rows = root.TryGetProperty("rows", out var rowsElement) && rowsElement.ValueKind == JsonValueKind.Object
+            ? ParseRows(rowsElement)
+            : null;
+        MemoryBenchmarkMetricSet metrics;
+        if (rows is not null
+            && rows.TryGetValue(MemoryBenchmarkRows.Memory, out var memoryRow)
+            && memoryRow.Metrics is { } rowMetrics)
+        {
+            metrics = rowMetrics;
+        }
+        else
+        {
+            var metricsElement = root.GetProperty("metrics");
+            var read = ParseMetricResult(metricsElement.GetProperty("read"));
+            var write = ParseMetricResult(metricsElement.GetProperty("write"));
+            var copy = ParseMetricResult(metricsElement.GetProperty("copy"));
+            var latency = ParseMetricResult(metricsElement.GetProperty("latency"));
+            metrics = new MemoryBenchmarkMetricSet(read, write, copy, latency);
+            rows ??= CreateLegacyRows(optionsElement, metrics);
+        }
         var timer = root.TryGetProperty("timer", out var timerElement)
             ? new MemoryBenchmarkTimer(
                 Name: timerElement.TryGetProperty("name", out var timerName) ? timerName.GetString() ?? string.Empty : string.Empty,
@@ -642,10 +678,10 @@ public sealed class MemoryBenchmarkProcessRunner : IMemoryBenchmarkRunner
 
         return new MemoryBenchmarkResult(
             SizeMiB: options.SizeMiB,
-            ReadMiBS: read.Aggregate.Median,
-            WriteMiBS: write.Aggregate.Median,
-            CopyMiBS: copy.Aggregate.Median,
-            LatencyNs: latency.Aggregate.Median,
+            ReadMiBS: metrics.Read.Aggregate.Median,
+            WriteMiBS: metrics.Write.Aggregate.Median,
+            CopyMiBS: metrics.Copy.Aggregate.Median,
+            LatencyNs: metrics.Latency.Aggregate.Median,
             CompletedAt: DateTimeOffset.Now,
             Options: options,
             WorkerVersion: root.TryGetProperty("worker_version", out var workerVersion) ? workerVersion.GetString() : null,
@@ -653,7 +689,87 @@ public sealed class MemoryBenchmarkProcessRunner : IMemoryBenchmarkRunner
             ElapsedMs: root.TryGetProperty("elapsed_ms", out var elapsedMs) ? elapsedMs.GetDouble() : null,
             Timer: timer,
             Placement: placement,
-            Metrics: new MemoryBenchmarkMetricSet(read, write, copy, latency));
+            Metrics: metrics,
+            Rows: rows);
+    }
+
+    private static IReadOnlyDictionary<string, MemoryBenchmarkRowResult> CreateLegacyRows(
+        JsonElement optionsElement,
+        MemoryBenchmarkMetricSet metrics)
+    {
+        var sizeMiB = optionsElement.GetProperty("size_mib").GetInt32();
+        var workingSetBytes = (long)sizeMiB * 1024L * 1024L;
+        return new Dictionary<string, MemoryBenchmarkRowResult>(StringComparer.OrdinalIgnoreCase)
+        {
+            [MemoryBenchmarkRows.Memory] = new MemoryBenchmarkRowResult(
+                Row: MemoryBenchmarkRows.Memory,
+                DisplayName: "Memory",
+                Available: true,
+                UnavailableReason: null,
+                WorkingSetBytes: workingSetBytes,
+                CacheLevel: null,
+                CacheSizeBytes: null,
+                LineSizeBytes: null,
+                Source: "options",
+                Read: metrics.Read,
+                Write: metrics.Write,
+                Copy: metrics.Copy,
+                Latency: metrics.Latency)
+        };
+    }
+
+    private static IReadOnlyDictionary<string, MemoryBenchmarkRowResult> ParseRows(JsonElement rowsElement)
+    {
+        var rows = new Dictionary<string, MemoryBenchmarkRowResult>(StringComparer.OrdinalIgnoreCase);
+        foreach (var property in rowsElement.EnumerateObject())
+        {
+            var row = NormalizeRow(property.Name);
+            rows[row] = ParseRow(row, property.Value);
+        }
+
+        return rows;
+    }
+
+    private static MemoryBenchmarkRowResult ParseRow(string row, JsonElement element)
+    {
+        var available = !element.TryGetProperty("available", out var availableElement) || availableElement.GetBoolean();
+        return new MemoryBenchmarkRowResult(
+            Row: row,
+            DisplayName: element.TryGetProperty("display_name", out var displayName) ? displayName.GetString() ?? GetDefaultRowDisplayName(row) : GetDefaultRowDisplayName(row),
+            Available: available,
+            UnavailableReason: element.TryGetProperty("unavailable_reason", out var unavailableReason) ? unavailableReason.GetString() : null,
+            WorkingSetBytes: element.TryGetProperty("working_set_bytes", out var workingSetBytes) ? workingSetBytes.GetInt64() : null,
+            CacheLevel: element.TryGetProperty("cache_level", out var cacheLevel) ? cacheLevel.GetInt32() : null,
+            CacheSizeBytes: element.TryGetProperty("cache_size_bytes", out var cacheSizeBytes) ? cacheSizeBytes.GetInt64() : null,
+            LineSizeBytes: element.TryGetProperty("line_size_bytes", out var lineSizeBytes) ? lineSizeBytes.GetInt32() : null,
+            Source: element.TryGetProperty("source", out var source) ? source.GetString() : null,
+            Read: TryParseMetricResult(element, "read"),
+            Write: TryParseMetricResult(element, "write"),
+            Copy: TryParseMetricResult(element, "copy"),
+            Latency: TryParseMetricResult(element, "latency"));
+    }
+
+    private static MemoryBenchmarkMetricResult? TryParseMetricResult(JsonElement element, string name)
+    {
+        return element.TryGetProperty(name, out var metricElement) && metricElement.ValueKind == JsonValueKind.Object
+            ? ParseMetricResult(metricElement)
+            : null;
+    }
+
+    private static string NormalizeRow(string? row)
+    {
+        return string.IsNullOrWhiteSpace(row) ? MemoryBenchmarkRows.Memory : row.Trim().ToLowerInvariant();
+    }
+
+    private static string GetDefaultRowDisplayName(string row)
+    {
+        return row switch
+        {
+            MemoryBenchmarkRows.L1 => "L1 Cache",
+            MemoryBenchmarkRows.L2 => "L2 Cache",
+            MemoryBenchmarkRows.L3 => "L3 Cache",
+            _ => "Memory"
+        };
     }
 
     private static MemoryBenchmarkPlacement ParsePlacement(JsonElement element)
@@ -774,6 +890,7 @@ public sealed class MemoryBenchmarkProcessRunner : IMemoryBenchmarkRunner
             options.UsePreferredCore,
             options.WorkingSetKind);
         var placement = MergePlacement(result.Placement, placementPlan);
+        var rows = MergeRows(result, placementPlan);
 
         return result with
         {
@@ -781,7 +898,68 @@ public sealed class MemoryBenchmarkProcessRunner : IMemoryBenchmarkRunner
             ExecutablePath = executable,
             Environment = environment,
             Placement = placement,
+            Rows = rows,
             Quality = quality
+        };
+    }
+
+    private static IReadOnlyDictionary<string, MemoryBenchmarkRowResult> MergeRows(
+        MemoryBenchmarkResult result,
+        MemoryBenchmarkPlacementPlan placementPlan)
+    {
+        var rows = new Dictionary<string, MemoryBenchmarkRowResult>(
+            result.Rows ?? CreateRowsFromMetrics(result),
+            StringComparer.OrdinalIgnoreCase);
+
+        foreach (var cacheRow in placementPlan.CacheRows)
+        {
+            if (rows.ContainsKey(cacheRow.Row))
+            {
+                continue;
+            }
+
+            rows[cacheRow.Row] = new MemoryBenchmarkRowResult(
+                Row: cacheRow.Row,
+                DisplayName: GetDefaultRowDisplayName(cacheRow.Row),
+                Available: false,
+                UnavailableReason: cacheRow.UnavailableReason ?? "Cache row was not returned by the native worker.",
+                WorkingSetBytes: cacheRow.Available ? cacheRow.WorkingSetBytes : null,
+                CacheLevel: cacheRow.CacheLevel,
+                CacheSizeBytes: cacheRow.CacheSizeBytes,
+                LineSizeBytes: cacheRow.LineSizeBytes,
+                Source: cacheRow.Source,
+                Read: null,
+                Write: null,
+                Copy: null,
+                Latency: null);
+        }
+
+        return rows;
+    }
+
+    private static IReadOnlyDictionary<string, MemoryBenchmarkRowResult> CreateRowsFromMetrics(MemoryBenchmarkResult result)
+    {
+        if (result.Metrics is null)
+        {
+            return new Dictionary<string, MemoryBenchmarkRowResult>(StringComparer.OrdinalIgnoreCase);
+        }
+
+        return new Dictionary<string, MemoryBenchmarkRowResult>(StringComparer.OrdinalIgnoreCase)
+        {
+            [MemoryBenchmarkRows.Memory] = new MemoryBenchmarkRowResult(
+                Row: MemoryBenchmarkRows.Memory,
+                DisplayName: "Memory",
+                Available: true,
+                UnavailableReason: null,
+                WorkingSetBytes: (long)result.SizeMiB * 1024L * 1024L,
+                CacheLevel: null,
+                CacheSizeBytes: null,
+                LineSizeBytes: null,
+                Source: "options",
+                Read: result.Metrics.Read,
+                Write: result.Metrics.Write,
+                Copy: result.Metrics.Copy,
+                Latency: result.Metrics.Latency)
         };
     }
 
@@ -827,7 +1005,7 @@ public sealed class MemoryBenchmarkProcessRunner : IMemoryBenchmarkRunner
                 : plan.Requested is null
                     ? Coalesce(nativePlacement.Reason, planned.Reason)
                     : planned.Reason,
-            Requested = nativePlacement.Requested ?? planned.Requested,
+            Requested = planned.Requested ?? nativePlacement.Requested,
             RequestedWorkers = nativePlacement.RequestedWorkers.Count > 0 ? nativePlacement.RequestedWorkers : planned.RequestedWorkers,
             ActualWorkers = nativePlacement.ActualWorkers.Count > 0 ? nativePlacement.ActualWorkers : planned.ActualWorkers,
             Candidates = nativePlacement.Candidates.Count > 0 ? nativePlacement.Candidates : planned.Candidates

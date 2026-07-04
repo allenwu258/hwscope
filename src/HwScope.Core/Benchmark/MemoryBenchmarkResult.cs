@@ -15,6 +15,7 @@ public sealed record MemoryBenchmarkResult(
     MemoryBenchmarkTimer? Timer = null,
     MemoryBenchmarkPlacement? Placement = null,
     MemoryBenchmarkMetricSet? Metrics = null,
+    IReadOnlyDictionary<string, MemoryBenchmarkRowResult>? Rows = null,
     MemoryBenchmarkQuality? Quality = null,
     MemoryBenchmarkEnvironment? Environment = null)
 {
@@ -23,6 +24,16 @@ public sealed record MemoryBenchmarkResult(
     public double WriteMBS => WriteMiBS * 1024.0 * 1024.0 / 1_000_000.0;
 
     public double CopyMBS => CopyMiBS * 1024.0 * 1024.0 / 1_000_000.0;
+}
+
+public static class MemoryBenchmarkRows
+{
+    public const string Memory = "memory";
+    public const string L1 = "l1";
+    public const string L2 = "l2";
+    public const string L3 = "l3";
+
+    public static readonly IReadOnlyList<string> DisplayOrder = [Memory, L1, L2, L3];
 }
 
 public sealed record MemoryBenchmarkOptionsSnapshot(
@@ -47,6 +58,27 @@ public sealed record MemoryBenchmarkMetricSet(
     MemoryBenchmarkMetricResult Write,
     MemoryBenchmarkMetricResult Copy,
     MemoryBenchmarkMetricResult Latency);
+
+public sealed record MemoryBenchmarkRowResult(
+    string Row,
+    string DisplayName,
+    bool Available,
+    string? UnavailableReason,
+    long? WorkingSetBytes,
+    int? CacheLevel,
+    long? CacheSizeBytes,
+    int? LineSizeBytes,
+    string? Source,
+    MemoryBenchmarkMetricResult? Read,
+    MemoryBenchmarkMetricResult? Write,
+    MemoryBenchmarkMetricResult? Copy,
+    MemoryBenchmarkMetricResult? Latency)
+{
+    public MemoryBenchmarkMetricSet? Metrics =>
+        Read is not null && Write is not null && Copy is not null && Latency is not null
+            ? new MemoryBenchmarkMetricSet(Read, Write, Copy, Latency)
+            : null;
+}
 
 public record MemoryBenchmarkMetricResult(
     string Unit,

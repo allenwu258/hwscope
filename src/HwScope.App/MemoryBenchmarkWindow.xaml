@@ -159,8 +159,44 @@
                             </Border>
 
                             <TextBlock Grid.Row="2" Text="L1 Cache" Style="{StaticResource LabelTextStyle}" />
+                            <Border Grid.Row="2" Grid.Column="1" Style="{StaticResource CellBorderStyle}">
+                                <TextBlock x:Name="L1ReadText" Text="" Style="{StaticResource ValueTextStyle}" />
+                            </Border>
+                            <Border Grid.Row="2" Grid.Column="2" Style="{StaticResource CellBorderStyle}">
+                                <TextBlock x:Name="L1WriteText" Text="" Style="{StaticResource ValueTextStyle}" />
+                            </Border>
+                            <Border Grid.Row="2" Grid.Column="3" Style="{StaticResource CellBorderStyle}">
+                                <TextBlock x:Name="L1CopyText" Text="" Style="{StaticResource ValueTextStyle}" />
+                            </Border>
+                            <Border Grid.Row="2" Grid.Column="4" Style="{StaticResource CellBorderStyle}">
+                                <TextBlock x:Name="L1LatencyText" Text="" Style="{StaticResource ValueTextStyle}" />
+                            </Border>
                             <TextBlock Grid.Row="3" Text="L2 Cache" Style="{StaticResource LabelTextStyle}" />
+                            <Border Grid.Row="3" Grid.Column="1" Style="{StaticResource CellBorderStyle}">
+                                <TextBlock x:Name="L2ReadText" Text="" Style="{StaticResource ValueTextStyle}" />
+                            </Border>
+                            <Border Grid.Row="3" Grid.Column="2" Style="{StaticResource CellBorderStyle}">
+                                <TextBlock x:Name="L2WriteText" Text="" Style="{StaticResource ValueTextStyle}" />
+                            </Border>
+                            <Border Grid.Row="3" Grid.Column="3" Style="{StaticResource CellBorderStyle}">
+                                <TextBlock x:Name="L2CopyText" Text="" Style="{StaticResource ValueTextStyle}" />
+                            </Border>
+                            <Border Grid.Row="3" Grid.Column="4" Style="{StaticResource CellBorderStyle}">
+                                <TextBlock x:Name="L2LatencyText" Text="" Style="{StaticResource ValueTextStyle}" />
+                            </Border>
                             <TextBlock Grid.Row="4" Text="L3 Cache" Style="{StaticResource LabelTextStyle}" />
+                            <Border Grid.Row="4" Grid.Column="1" Style="{StaticResource CellBorderStyle}">
+                                <TextBlock x:Name="L3ReadText" Text="" Style="{StaticResource ValueTextStyle}" />
+                            </Border>
+                            <Border Grid.Row="4" Grid.Column="2" Style="{StaticResource CellBorderStyle}">
+                                <TextBlock x:Name="L3WriteText" Text="" Style="{StaticResource ValueTextStyle}" />
+                            </Border>
+                            <Border Grid.Row="4" Grid.Column="3" Style="{StaticResource CellBorderStyle}">
+                                <TextBlock x:Name="L3CopyText" Text="" Style="{StaticResource ValueTextStyle}" />
+                            </Border>
+                            <Border Grid.Row="4" Grid.Column="4" Style="{StaticResource CellBorderStyle}">
+                                <TextBlock x:Name="L3LatencyText" Text="" Style="{StaticResource ValueTextStyle}" />
+                            </Border>
                         </Grid>
                     </Border>
 

@@ -8,7 +8,7 @@ internal static class MemoryBenchmarkPlacementPlanner
     {
         if (!options.UsePreferredCore)
         {
-            return MemoryBenchmarkPlacementPlan.Fallback("Preferred core placement is disabled by options.", Math.Max(1, options.Threads));
+            return MemoryBenchmarkPlacementPlan.Fallback("Preferred core placement is disabled by options.", Math.Max(1, options.Threads), CreateUnavailableCacheRows("Preferred core placement is disabled by options."));
         }
 
         if (IsSingleThread(options))
@@ -19,21 +19,22 @@ internal static class MemoryBenchmarkPlacementPlanner
         var topology = LogicalProcessorInformation.TryCollect();
         if (topology is null || topology.Cores.Count == 0)
         {
-            return MemoryBenchmarkPlacementPlan.Fallback("Windows topology API did not return core mapping.", Math.Max(1, options.Threads));
+            return MemoryBenchmarkPlacementPlan.Fallback("Windows topology API did not return core mapping.", Math.Max(1, options.Threads), CreateUnavailableCacheRows("Windows topology API did not return cache mapping."));
         }
 
         var processors = BuildProcessors(topology);
         if (processors.Count == 0)
         {
-            return MemoryBenchmarkPlacementPlan.Fallback("Windows topology API returned no active logical processors.", Math.Max(1, options.Threads));
+            return MemoryBenchmarkPlacementPlan.Fallback("Windows topology API returned no active logical processors.", Math.Max(1, options.Threads), CreateUnavailableCacheRows("Windows topology API returned no active logical processors."));
         }
 
         var preferred = SelectPreferredProcessors(processors, options);
         if (preferred.Count == 0)
         {
-            return MemoryBenchmarkPlacementPlan.Fallback("Windows topology API returned no processors matching the requested thread placement.", Math.Max(1, options.Threads));
+            return MemoryBenchmarkPlacementPlan.Fallback("Windows topology API returned no processors matching the requested thread placement.", Math.Max(1, options.Threads), CreateUnavailableCacheRows("Windows topology API returned no processors matching the requested thread placement."));
         }
 
+        var cacheProcessor = SelectPreferredSingleProcessor(processors);
         var mode = options.ThreadMode.Equals("LogicalProcessors", StringComparison.OrdinalIgnoreCase)
             ? "logicalProcessors"
             : options.ThreadMode.Equals("Custom", StringComparison.OrdinalIgnoreCase)
@@ -51,11 +52,14 @@ internal static class MemoryBenchmarkPlacementPlanner
             Mode: mode,
             Source: "windowsTopology",
             Confidence: confidence,
-            Requested: preferred[0],
+            Requested: cacheProcessor ?? preferred[0],
             Workers: preferred,
             Candidates: processors,
             RequestedThreads: preferred.Count,
-            Reason: reason);
+            Reason: reason,
+            CacheRows: cacheProcessor is null
+                ? CreateUnavailableCacheRows("Windows topology API returned no preferred processor for cache row placement.")
+                : CreateCacheRows(topology, cacheProcessor));
     }
 
     public static MemoryBenchmarkPlacementPlan CreatePreferredSingleThreadPlan()
@@ -63,49 +67,20 @@ internal static class MemoryBenchmarkPlacementPlanner
         var topology = LogicalProcessorInformation.TryCollect();
         if (topology is null || topology.Cores.Count == 0)
         {
-            return MemoryBenchmarkPlacementPlan.Fallback("Windows topology API did not return core mapping.", 1);
+            return MemoryBenchmarkPlacementPlan.Fallback("Windows topology API did not return core mapping.", 1, CreateUnavailableCacheRows("Windows topology API did not return cache mapping."));
         }
 
         var processors = BuildProcessors(topology);
         if (processors.Count == 0)
         {
-            return MemoryBenchmarkPlacementPlan.Fallback("Windows topology API returned no active logical processors.", 1);
+            return MemoryBenchmarkPlacementPlan.Fallback("Windows topology API returned no active logical processors.", 1, CreateUnavailableCacheRows("Windows topology API returned no active logical processors."));
         }
 
-        var bestEfficiencyClass = processors.Max(processor => processor.EfficiencyClass);
-        var bestClassProcessors = processors
-            .Where(processor => processor.EfficiencyClass == bestEfficiencyClass)
-            .ToList();
-        var preferredNumaNode = bestClassProcessors
-            .Select(processor => processor.NumaNodeNumber)
-            .Where(node => node.HasValue)
-            .Select(node => node!.Value)
-            .DefaultIfEmpty(0u)
-            .Min();
-        var preferredProcessors = bestClassProcessors
-            .Where(processor => (processor.NumaNodeNumber ?? preferredNumaNode) == preferredNumaNode)
-            .Where(processor => processor.SmtIndex == 0)
-            .OrderBy(processor => processor.CoreIndex)
-            .ThenBy(processor => processor.Group)
-            .ThenBy(processor => processor.ProcessorNumber)
-            .ToList();
-        if (preferredProcessors.Count == 0)
-        {
-            preferredProcessors = bestClassProcessors
-                .OrderBy(processor => processor.CoreIndex)
-                .ThenBy(processor => processor.SmtIndex)
-                .ThenBy(processor => processor.Group)
-                .ThenBy(processor => processor.ProcessorNumber)
-                .ToList();
-        }
-
-        var preferred = preferredProcessors.Count == 0
-            ? null
-            : preferredProcessors[preferredProcessors.Count / 2];
+        var preferred = SelectPreferredSingleProcessor(processors);
 
         if (preferred is null)
         {
-            return MemoryBenchmarkPlacementPlan.Fallback("Windows topology API returned no active logical processors.", 1);
+            return MemoryBenchmarkPlacementPlan.Fallback("Windows topology API returned no active logical processors.", 1, CreateUnavailableCacheRows("Windows topology API returned no active logical processors."));
         }
 
         var efficiencyClasses = topology.Cores.Select(core => core.EfficiencyClass).Distinct().Count();
@@ -122,7 +97,8 @@ internal static class MemoryBenchmarkPlacementPlanner
             Workers: [preferred],
             Candidates: processors,
             RequestedThreads: 1,
-            Reason: reason);
+            Reason: reason,
+            CacheRows: CreateCacheRows(topology, preferred));
     }
 
     private static bool IsSingleThread(MemoryBenchmarkOptions options)
@@ -193,6 +169,44 @@ internal static class MemoryBenchmarkPlacementPlanner
         return ordered.Take(requestedThreads).ToList();
     }
 
+    private static MemoryBenchmarkLogicalProcessor? SelectPreferredSingleProcessor(
+        IReadOnlyList<MemoryBenchmarkLogicalProcessor> processors)
+    {
+        if (processors.Count == 0)
+        {
+            return null;
+        }
+
+        var bestEfficiencyClass = processors.Max(processor => processor.EfficiencyClass);
+        var bestClassProcessors = processors
+            .Where(processor => processor.EfficiencyClass == bestEfficiencyClass)
+            .ToList();
+        var preferredNumaNode = bestClassProcessors
+            .Select(processor => processor.NumaNodeNumber)
+            .Where(node => node.HasValue)
+            .Select(node => node!.Value)
+            .DefaultIfEmpty(0u)
+            .Min();
+        var preferredProcessors = bestClassProcessors
+            .Where(processor => (processor.NumaNodeNumber ?? preferredNumaNode) == preferredNumaNode)
+            .Where(processor => processor.SmtIndex == 0)
+            .OrderBy(processor => processor.CoreIndex)
+            .ThenBy(processor => processor.Group)
+            .ThenBy(processor => processor.ProcessorNumber)
+            .ToList();
+        if (preferredProcessors.Count == 0)
+        {
+            preferredProcessors = bestClassProcessors
+                .OrderBy(processor => processor.CoreIndex)
+                .ThenBy(processor => processor.SmtIndex)
+                .ThenBy(processor => processor.Group)
+                .ThenBy(processor => processor.ProcessorNumber)
+                .ToList();
+        }
+
+        return preferredProcessors.Count == 0 ? null : preferredProcessors[preferredProcessors.Count / 2];
+    }
+
     internal static IReadOnlyList<MemoryBenchmarkLogicalProcessor> BuildProcessors(LogicalProcessorTopology topology)
     {
         var result = new List<MemoryBenchmarkLogicalProcessor>();
@@ -247,6 +261,79 @@ internal static class MemoryBenchmarkPlacementPlanner
 
         return null;
     }
+
+    private static IReadOnlyList<MemoryBenchmarkCacheRowPlan> CreateCacheRows(
+        LogicalProcessorTopology topology,
+        MemoryBenchmarkLogicalProcessor processor)
+    {
+        return
+        [
+            CreateCacheRow(topology, processor, MemoryBenchmarkRows.L1, 1, "Data"),
+            CreateCacheRow(topology, processor, MemoryBenchmarkRows.L2, 2, "Unified"),
+            CreateCacheRow(topology, processor, MemoryBenchmarkRows.L3, 3, "Unified")
+        ];
+    }
+
+    private static IReadOnlyList<MemoryBenchmarkCacheRowPlan> CreateUnavailableCacheRows(string reason)
+    {
+        return
+        [
+            MemoryBenchmarkCacheRowPlan.Unavailable(MemoryBenchmarkRows.L1, reason),
+            MemoryBenchmarkCacheRowPlan.Unavailable(MemoryBenchmarkRows.L2, reason),
+            MemoryBenchmarkCacheRowPlan.Unavailable(MemoryBenchmarkRows.L3, reason)
+        ];
+    }
+
+    private static MemoryBenchmarkCacheRowPlan CreateCacheRow(
+        LogicalProcessorTopology topology,
+        MemoryBenchmarkLogicalProcessor processor,
+        string row,
+        int level,
+        string preferredType)
+    {
+        var candidates = topology.Caches
+            .Where(cache => cache.Level == level)
+            .Where(cache => ContainsProcessor(cache.Mask, processor.Group, processor.ProcessorNumber))
+            .Where(cache => preferredType.Equals(cache.Type.ToString(), StringComparison.OrdinalIgnoreCase))
+            .ToList();
+        if (candidates.Count == 0)
+        {
+            return MemoryBenchmarkCacheRowPlan.Unavailable(row, $"Windows topology did not return a matching L{level} {preferredType} cache for the selected processor.");
+        }
+
+        var selected = row == MemoryBenchmarkRows.L3
+            ? candidates.OrderByDescending(cache => cache.SizeBytes).ThenBy(cache => cache.Mask.Group).ThenBy(cache => cache.Mask.FirstProcessor).First()
+            : candidates.OrderBy(cache => cache.SizeBytes).ThenBy(cache => cache.Mask.Group).ThenBy(cache => cache.Mask.FirstProcessor).First();
+        var workingSetBytes = CalculateWorkingSetBytes(row, selected.SizeBytes, selected.LineSizeBytes);
+        return new MemoryBenchmarkCacheRowPlan(
+            Row: row,
+            Available: true,
+            UnavailableReason: null,
+            WorkingSetBytes: workingSetBytes,
+            CacheLevel: level,
+            CacheSizeBytes: selected.SizeBytes,
+            LineSizeBytes: selected.LineSizeBytes,
+            Source: "windowsTopology");
+    }
+
+    private static bool ContainsProcessor(LogicalProcessorMask mask, ushort group, int processorNumber)
+    {
+        return mask.Group == group && mask.LocalProcessorIndexes.Contains(processorNumber);
+    }
+
+    private static long CalculateWorkingSetBytes(string row, long cacheSizeBytes, int lineSizeBytes)
+    {
+        var line = Math.Max(64L, lineSizeBytes);
+        var raw = row switch
+        {
+            MemoryBenchmarkRows.L1 => Math.Max(8L * 1024L, Math.Min(cacheSizeBytes * 3L / 4L, cacheSizeBytes - line)),
+            MemoryBenchmarkRows.L2 => Math.Max(64L * 1024L, cacheSizeBytes * 3L / 4L),
+            MemoryBenchmarkRows.L3 => Math.Max(2L * 1024L * 1024L, cacheSizeBytes / 2L),
+            _ => cacheSizeBytes
+        };
+        raw = Math.Max(line * 2L, Math.Min(raw, Math.Max(line * 2L, cacheSizeBytes - line)));
+        return raw / line * line;
+    }
 }
 
 internal sealed record MemoryBenchmarkPlacementPlan(
@@ -257,9 +344,13 @@ internal sealed record MemoryBenchmarkPlacementPlan(
     IReadOnlyList<MemoryBenchmarkLogicalProcessor> Candidates,
     IReadOnlyList<MemoryBenchmarkLogicalProcessor> Workers,
     int RequestedThreads,
-    string Reason)
+    string Reason,
+    IReadOnlyList<MemoryBenchmarkCacheRowPlan> CacheRows)
 {
-    public static MemoryBenchmarkPlacementPlan Fallback(string reason, int requestedThreads)
+    public static MemoryBenchmarkPlacementPlan Fallback(
+        string reason,
+        int requestedThreads,
+        IReadOnlyList<MemoryBenchmarkCacheRowPlan>? cacheRows = null)
     {
         return new MemoryBenchmarkPlacementPlan(
             Mode: "currentThreadFallback",
@@ -269,10 +360,35 @@ internal sealed record MemoryBenchmarkPlacementPlan(
             Candidates: [],
             Workers: [],
             RequestedThreads: Math.Max(1, requestedThreads),
-            Reason: reason);
+            Reason: reason,
+            CacheRows: cacheRows ?? []);
     }
 
     public int EffectiveThreads => Workers.Count > 0 ? Workers.Count : RequestedThreads;
+}
+
+internal sealed record MemoryBenchmarkCacheRowPlan(
+    string Row,
+    bool Available,
+    string? UnavailableReason,
+    long WorkingSetBytes,
+    int? CacheLevel,
+    long? CacheSizeBytes,
+    int? LineSizeBytes,
+    string Source)
+{
+    public static MemoryBenchmarkCacheRowPlan Unavailable(string row, string reason)
+    {
+        return new MemoryBenchmarkCacheRowPlan(
+            Row: row,
+            Available: false,
+            UnavailableReason: reason,
+            WorkingSetBytes: 0,
+            CacheLevel: null,
+            CacheSizeBytes: null,
+            LineSizeBytes: null,
+            Source: "windowsTopology");
+    }
 }
 
 internal sealed record MemoryBenchmarkLogicalProcessor(

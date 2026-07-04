@@ -70,10 +70,7 @@ public partial class MemoryBenchmarkWindow : FluentWindow
         {
             var progress = new Progress<MemoryBenchmarkProgress>(UpdateBenchmarkProgress);
             var result = await _runner.RunAsync(new MemoryBenchmarkOptions(), progress).ConfigureAwait(true);
-            MemoryReadText.Text = FormatThroughput(result.ReadMBS);
-            MemoryWriteText.Text = FormatThroughput(result.WriteMBS);
-            MemoryCopyText.Text = FormatThroughput(result.CopyMBS);
-            MemoryLatencyText.Text = $"{result.LatencyNs:F1} ns";
+            RenderRows(result);
             StatusText.Text = $"完成：{result.CompletedAt:yyyy-MM-dd HH:mm:ss}，测试缓冲区 {result.SizeMiB} MiB，{FormatQualitySummary(result)}";
             _lastResult = result;
             DiagnosticsButton.IsEnabled = true;
@@ -112,33 +109,92 @@ public partial class MemoryBenchmarkWindow : FluentWindow
 
     private void UpdateBenchmarkProgress(MemoryBenchmarkProgress progress)
     {
+        var value = progress.Metric == MemoryBenchmarkMetric.Latency
+            ? $"{progress.Value:F1} ns"
+            : FormatThroughputMiB(progress.Value);
+        SetCell(progress.Row, progress.Metric, value);
+
+        var rowName = FormatRowName(progress.Row);
         switch (progress.Metric)
         {
             case MemoryBenchmarkMetric.Read:
-                MemoryReadText.Text = FormatThroughputMiB(progress.Value);
-                StatusText.Text = "Memory Read 完成，正在继续测试...";
+                StatusText.Text = $"{rowName} Read 完成，正在继续测试...";
                 break;
             case MemoryBenchmarkMetric.Write:
-                MemoryWriteText.Text = FormatThroughputMiB(progress.Value);
-                StatusText.Text = "Memory Write 完成，正在继续测试...";
+                StatusText.Text = $"{rowName} Write 完成，正在继续测试...";
                 break;
             case MemoryBenchmarkMetric.Copy:
-                MemoryCopyText.Text = FormatThroughputMiB(progress.Value);
-                StatusText.Text = "Memory Copy 完成，正在继续测试...";
+                StatusText.Text = $"{rowName} Copy 完成，正在继续测试...";
                 break;
             case MemoryBenchmarkMetric.Latency:
-                MemoryLatencyText.Text = $"{progress.Value:F1} ns";
-                StatusText.Text = "Memory Latency 完成，正在整理结果...";
+                StatusText.Text = $"{rowName} Latency 完成，正在整理结果...";
                 break;
         }
     }
 
     private void ClearBenchmarkResults()
     {
-        MemoryReadText.Text = string.Empty;
-        MemoryWriteText.Text = string.Empty;
-        MemoryCopyText.Text = string.Empty;
-        MemoryLatencyText.Text = string.Empty;
+        foreach (var row in MemoryBenchmarkRows.DisplayOrder)
+        {
+            foreach (MemoryBenchmarkMetric metric in Enum.GetValues<MemoryBenchmarkMetric>())
+            {
+                SetCell(row, metric, string.Empty);
+            }
+        }
+    }
+
+    private void RenderRows(MemoryBenchmarkResult result)
+    {
+        var rows = result.Rows ?? new Dictionary<string, MemoryBenchmarkRowResult>(StringComparer.OrdinalIgnoreCase);
+        foreach (var rowKey in MemoryBenchmarkRows.DisplayOrder)
+        {
+            if (!rows.TryGetValue(rowKey, out var row) || !row.Available || row.Metrics is not { } metrics)
+            {
+                SetRowUnavailable(rowKey);
+                continue;
+            }
+
+            SetCell(rowKey, MemoryBenchmarkMetric.Read, FormatThroughputMiB(metrics.Read.Aggregate.Median));
+            SetCell(rowKey, MemoryBenchmarkMetric.Write, FormatThroughputMiB(metrics.Write.Aggregate.Median));
+            SetCell(rowKey, MemoryBenchmarkMetric.Copy, FormatThroughputMiB(metrics.Copy.Aggregate.Median));
+            SetCell(rowKey, MemoryBenchmarkMetric.Latency, $"{metrics.Latency.Aggregate.Median:F1} ns");
+        }
+    }
+
+    private void SetRowUnavailable(string row)
+    {
+        foreach (MemoryBenchmarkMetric metric in Enum.GetValues<MemoryBenchmarkMetric>())
+        {
+            SetCell(row, metric, "N/A");
+        }
+    }
+
+    private void SetCell(string row, MemoryBenchmarkMetric metric, string value)
+    {
+        var target = (NormalizeRow(row), metric) switch
+        {
+            (MemoryBenchmarkRows.Memory, MemoryBenchmarkMetric.Read) => MemoryReadText,
+            (MemoryBenchmarkRows.Memory, MemoryBenchmarkMetric.Write) => MemoryWriteText,
+            (MemoryBenchmarkRows.Memory, MemoryBenchmarkMetric.Copy) => MemoryCopyText,
+            (MemoryBenchmarkRows.Memory, MemoryBenchmarkMetric.Latency) => MemoryLatencyText,
+            (MemoryBenchmarkRows.L1, MemoryBenchmarkMetric.Read) => L1ReadText,
+            (MemoryBenchmarkRows.L1, MemoryBenchmarkMetric.Write) => L1WriteText,
+            (MemoryBenchmarkRows.L1, MemoryBenchmarkMetric.Copy) => L1CopyText,
+            (MemoryBenchmarkRows.L1, MemoryBenchmarkMetric.Latency) => L1LatencyText,
+            (MemoryBenchmarkRows.L2, MemoryBenchmarkMetric.Read) => L2ReadText,
+            (MemoryBenchmarkRows.L2, MemoryBenchmarkMetric.Write) => L2WriteText,
+            (MemoryBenchmarkRows.L2, MemoryBenchmarkMetric.Copy) => L2CopyText,
+            (MemoryBenchmarkRows.L2, MemoryBenchmarkMetric.Latency) => L2LatencyText,
+            (MemoryBenchmarkRows.L3, MemoryBenchmarkMetric.Read) => L3ReadText,
+            (MemoryBenchmarkRows.L3, MemoryBenchmarkMetric.Write) => L3WriteText,
+            (MemoryBenchmarkRows.L3, MemoryBenchmarkMetric.Copy) => L3CopyText,
+            (MemoryBenchmarkRows.L3, MemoryBenchmarkMetric.Latency) => L3LatencyText,
+            _ => null
+        };
+        if (target is not null)
+        {
+            target.Text = value;
+        }
     }
 
     private static string FormatThroughput(double value)
@@ -149,6 +205,22 @@ public partial class MemoryBenchmarkWindow : FluentWindow
     private static string FormatThroughputMiB(double value)
     {
         return FormatThroughput(value * 1024.0 * 1024.0 / 1_000_000.0);
+    }
+
+    private static string NormalizeRow(string row)
+    {
+        return string.IsNullOrWhiteSpace(row) ? MemoryBenchmarkRows.Memory : row.Trim().ToLowerInvariant();
+    }
+
+    private static string FormatRowName(string row)
+    {
+        return NormalizeRow(row) switch
+        {
+            MemoryBenchmarkRows.L1 => "L1 Cache",
+            MemoryBenchmarkRows.L2 => "L2 Cache",
+            MemoryBenchmarkRows.L3 => "L3 Cache",
+            _ => "Memory"
+        };
     }
 
     private static string FormatQualitySummary(MemoryBenchmarkResult result)
@@ -253,6 +325,19 @@ public partial class MemoryBenchmarkWindow : FluentWindow
         }
 
         lines.Add(string.Empty);
+        lines.Add("Rows");
+        if (result.Rows is { } rows)
+        {
+            foreach (var rowKey in MemoryBenchmarkRows.DisplayOrder)
+            {
+                if (rows.TryGetValue(rowKey, out var row))
+                {
+                    AppendRow(lines, row);
+                }
+            }
+        }
+
+        lines.Add(string.Empty);
         lines.Add("Metrics");
         if (result.Metrics is { } metrics)
         {
@@ -263,6 +348,29 @@ public partial class MemoryBenchmarkWindow : FluentWindow
         }
 
         return string.Join(Environment.NewLine, lines);
+    }
+
+    private static void AppendRow(List<string> lines, MemoryBenchmarkRowResult row)
+    {
+        lines.Add(string.Empty);
+        lines.Add(row.DisplayName);
+        lines.Add($"Available       : {row.Available}");
+        if (!string.IsNullOrWhiteSpace(row.UnavailableReason))
+        {
+            lines.Add($"Unavailable     : {row.UnavailableReason}");
+        }
+        lines.Add($"WorkingSetBytes : {FormatNullable(row.WorkingSetBytes)}");
+        lines.Add($"CacheLevel      : {row.CacheLevel?.ToString(CultureInfo.InvariantCulture) ?? string.Empty}");
+        lines.Add($"CacheSizeBytes  : {FormatNullable(row.CacheSizeBytes)}");
+        lines.Add($"LineSizeBytes   : {row.LineSizeBytes?.ToString(CultureInfo.InvariantCulture) ?? string.Empty}");
+        lines.Add($"Source          : {row.Source ?? string.Empty}");
+        if (row.Metrics is { } metrics)
+        {
+            AppendMetric(lines, $"{row.DisplayName} Read", metrics.Read);
+            AppendMetric(lines, $"{row.DisplayName} Write", metrics.Write);
+            AppendMetric(lines, $"{row.DisplayName} Copy", metrics.Copy);
+            AppendMetric(lines, $"{row.DisplayName} Latency", metrics.Latency);
+        }
     }
 
     private static void AppendMetric(List<string> lines, string name, MemoryBenchmarkMetricResult metric)
@@ -331,6 +439,11 @@ public partial class MemoryBenchmarkWindow : FluentWindow
     private static string FormatNullable(double? value, string suffix)
     {
         return value is { } actual ? $"{actual.ToString("F2", CultureInfo.InvariantCulture)}{suffix}" : string.Empty;
+    }
+
+    private static string FormatNullable(long? value)
+    {
+        return value?.ToString(CultureInfo.InvariantCulture) ?? string.Empty;
     }
 
     private static string FormatNullable(bool? value)

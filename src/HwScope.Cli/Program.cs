@@ -36,10 +36,11 @@ try
         var result = await new MemoryBenchmarkProcessRunner().RunAsync(new MemoryBenchmarkOptions());
         Console.WriteLine("Memory Benchmark");
         Console.WriteLine("----------------");
-        Console.WriteLine($"Read    : {result.ReadMBS:F0} MB/s");
-        Console.WriteLine($"Write   : {result.WriteMBS:F0} MB/s");
-        Console.WriteLine($"Copy    : {result.CopyMBS:F0} MB/s");
-        Console.WriteLine($"Latency : {result.LatencyNs:F1} ns");
+        Console.WriteLine($"{"",-10} {"Read",10} {"Write",10} {"Copy",10} {"Latency",12}");
+        foreach (var rowKey in MemoryBenchmarkRows.DisplayOrder)
+        {
+            Console.WriteLine(FormatRow(result, rowKey));
+        }
         Console.WriteLine();
         Console.WriteLine($"Worker  : {result.WorkerVersion ?? "unknown"} (protocol {result.ProtocolVersion?.ToString() ?? "unknown"})");
         Console.WriteLine($"Timer   : {FormatTimer(result)}");
@@ -75,6 +76,38 @@ catch (Exception ex)
 {
     Console.Error.WriteLine($"采集硬件信息失败：{ex.Message}");
     return 1;
+}
+
+static string FormatRow(MemoryBenchmarkResult result, string rowKey)
+{
+    var rows = result.Rows ?? new Dictionary<string, MemoryBenchmarkRowResult>(StringComparer.OrdinalIgnoreCase);
+    if (!rows.TryGetValue(rowKey, out var row) || !row.Available || row.Metrics is not { } metrics)
+    {
+        return $"{FormatRowName(rowKey),-10} {"N/A",10} {"N/A",10} {"N/A",10} {"N/A",12}";
+    }
+
+    return string.Join(' ',
+        $"{FormatRowName(rowKey),-10}",
+        $"{FormatThroughput(metrics.Read),10}",
+        $"{FormatThroughput(metrics.Write),10}",
+        $"{FormatThroughput(metrics.Copy),10}",
+        $"{metrics.Latency.Aggregate.Median.ToString("F1", CultureInfo.InvariantCulture) + " ns",12}");
+}
+
+static string FormatRowName(string rowKey)
+{
+    return rowKey switch
+    {
+        MemoryBenchmarkRows.L1 => "L1 Cache",
+        MemoryBenchmarkRows.L2 => "L2 Cache",
+        MemoryBenchmarkRows.L3 => "L3 Cache",
+        _ => "Memory"
+    };
+}
+
+static string FormatThroughput(MemoryBenchmarkMetricResult metric)
+{
+    return $"{metric.Aggregate.Median * 1024.0 * 1024.0 / 1_000_000.0:F0}";
 }
 
 static string FormatQuality(MemoryBenchmarkResult result)

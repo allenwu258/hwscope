@@ -2,9 +2,9 @@
 
 Native C++ worker for HwScope memory benchmarking.
 
-This worker currently measures main-memory read, write, copy throughput and random-access latency. `HwScope.Core.Benchmark.MemoryBenchmarkProcessRunner` invokes it with structured JSON by default, or `--progress-json` for live GUI updates.
+This worker currently measures Memory, L1 Cache, L2 Cache, and L3 Cache read, write, copy throughput and random-access latency. `HwScope.Core.Benchmark.MemoryBenchmarkProcessRunner` invokes it with structured JSON by default, or `--progress-json` for live GUI updates.
 
-It does not yet measure L1, L2, or L3 cache rows. Those rows are currently UI placeholders in `HwScope.App`.
+Memory read/write/copy can run with topology-aware multi-thread workers. L1/L2/L3 cache rows use topology-derived working sets and run as single-thread preferred-core tests in this stage.
 
 ## Build
 
@@ -36,6 +36,12 @@ HwScope invokes the worker with structured final JSON by default and passes the 
 membench --size-mib 512 --iterations 7 --latency-steps 20000000 --expected-protocol-version 5 --json
 ```
 
+Current Core builds pass protocol version 6:
+
+```text
+membench --size-mib 512 --iterations 7 --latency-steps 20000000 --expected-protocol-version 6 --json
+```
+
 `--iterations` is a legacy alias for the minimum measured sample count. The adaptive run policy can also be controlled explicitly:
 
 ```text
@@ -62,12 +68,12 @@ Each worker has independent source/destination buffers and the timed window star
 
 If Core topology collection fails while the thread count is automatic, Core intentionally falls back to one native worker rather than guessing from logical processor count. This preserves the previous single-thread baseline and avoids uncontrolled SMT/NUMA placement.
 
-JSON output includes worker/protocol metadata, options, timer metadata, placement metadata, elapsed time, raw samples, inner-loop counts, convergence state, aggregate statistics, and copy traffic diagnostics.
+JSON output includes worker/protocol metadata, options, timer metadata, placement metadata, elapsed time, row-level raw samples, inner-loop counts, convergence state, aggregate statistics, and copy traffic diagnostics. Protocol 6 adds a `rows` object with `memory`, `l1`, `l2`, and `l3` row metrics when those cache rows are available.
 
 CSV remains available for manual compatibility:
 
 ```text
-membench --size-mib 512 --iterations 7 --latency-steps 20000000 --expected-protocol-version 5 --csv
+membench --size-mib 512 --iterations 7 --latency-steps 20000000 --expected-protocol-version 6 --csv
 ```
 
 CSV output format:
@@ -79,13 +85,13 @@ size_mib,read_mib_s,write_mib_s,copy_mib_s,latency_ns
 The GUI uses newline-delimited progress JSON:
 
 ```text
-membench --size-mib 512 --iterations 7 --latency-steps 20000000 --expected-protocol-version 5 --progress-json
+membench --size-mib 512 --iterations 7 --latency-steps 20000000 --expected-protocol-version 6 --progress-json
 ```
 
 Each completed metric is flushed as one event:
 
 ```json
-{"type":"metric","metric":"read","value":36000.00,"unit":"mib_s"}
+{"type":"metric","row":"memory","metric":"read","value":36000.00,"unit":"mib_s"}
 ```
 
 The progress stream also emits a final `type=result` JSON event before `type=completed`. The C# runner treats live metric updates as best-effort, then strictly validates the full stream after process exit and writes stdout/stderr diagnostics for parse failures.
@@ -93,13 +99,19 @@ The progress stream also emits a final `type=result` JSON event before `type=com
 Useful quick validation command:
 
 ```powershell
-.\build\Release\membench.exe --size-mib 16 --min-samples 3 --max-samples 5 --target-sample-ms 20 --latency-steps 1000 --expected-protocol-version 5 --json
+.\build\Release\membench.exe --size-mib 16 --min-samples 3 --max-samples 5 --target-sample-ms 20 --latency-steps 1000 --expected-protocol-version 6 --json
 ```
 
 Useful multi-thread validation command:
 
 ```powershell
-.\build\Release\membench.exe --size-mib 32 --threads 2 --min-samples 2 --max-samples 3 --target-sample-ms 10 --latency-steps 1000 --expected-protocol-version 5 --json
+.\build\Release\membench.exe --size-mib 32 --threads 2 --min-samples 2 --max-samples 3 --target-sample-ms 10 --latency-steps 1000 --expected-protocol-version 6 --json
+```
+
+Useful cache-row validation command:
+
+```powershell
+.\build\Release\membench.exe --size-mib 16 --cache-row l1:24576:1:32768:64:manual --min-samples 2 --max-samples 3 --target-sample-ms 10 --latency-steps 1000 --expected-protocol-version 6 --json
 ```
 
 See [`../../docs/memory-benchmark-design.md`](../../docs/memory-benchmark-design.md) for algorithm notes and the evolution plan.
