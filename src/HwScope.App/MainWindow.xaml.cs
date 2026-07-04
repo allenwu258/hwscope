@@ -2,6 +2,7 @@ using System.IO;
 using System.Windows;
 using HwScope.App.Theming;
 using HwScope.App.Pages;
+using HwScope.App.Windows;
 using HwScope.Core.Hardware;
 using Wpf.Ui.Controls;
 
@@ -132,17 +133,19 @@ public partial class MainWindow : FluentWindow
     {
         try
         {
-            if (_currentReport is null)
-            {
-                _hardwareSummaryPage.RefreshHardwareSummary();
-                _currentReport = _hardwareSummaryPage.CurrentReport;
-            }
+            App.SingleInstanceWindows.ShowOrActivate(
+                SingleInstanceWindowKeys.MemoryBenchmark,
+                () =>
+                {
+                    if (_currentReport is null)
+                    {
+                        _hardwareSummaryPage.RefreshHardwareSummary();
+                        _currentReport = _hardwareSummaryPage.CurrentReport;
+                    }
 
-            var window = new MemoryBenchmarkWindow(_currentReport)
-            {
-                Owner = this
-            };
-            window.Show();
+                    return new MemoryBenchmarkWindow(_currentReport);
+                },
+                this);
             SetFooterStatus("已打开内存跑分窗口。");
         }
         catch (Exception ex)

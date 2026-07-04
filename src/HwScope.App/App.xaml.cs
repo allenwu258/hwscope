@@ -2,6 +2,7 @@ using System.Windows;
 using System.IO;
 using HwScope.App.Configuration;
 using HwScope.App.Theming;
+using HwScope.App.Windows;
 
 namespace HwScope.App;
 
@@ -13,6 +14,7 @@ public partial class App : Application
     private static readonly string CrashLogPath = Path.Combine(Path.GetTempPath(), "HwScope-crash.log");
 
     public static ThemeService ThemeService { get; private set; } = null!;
+    public static SingleInstanceWindowManager SingleInstanceWindows { get; private set; } = null!;
 
     protected override void OnStartup(StartupEventArgs e)
     {
@@ -24,6 +26,7 @@ public partial class App : Application
             new JsonSettingsStore(),
             new ThemeDefinitionStore(),
             new ThemeResourceBuilder());
+        SingleInstanceWindows = new SingleInstanceWindowManager();
         ThemeService.ApplyCurrentTheme();
 
         base.OnStartup(e);

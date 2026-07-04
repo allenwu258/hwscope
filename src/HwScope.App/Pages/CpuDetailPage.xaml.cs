@@ -122,17 +122,22 @@ public partial class CpuDetailPage : UserControl
             return;
         }
 
+        if (App.SingleInstanceWindows.TryActivate(SingleInstanceWindowKeys.CpuTopologyInspect))
+        {
+            SetStatus("已打开 CPU 拓扑 Inspect。");
+            return;
+        }
+
         if (_currentReport?.TopologyInspect is null)
         {
             SetStatus("当前 CPU 拓扑明细不可用。");
             return;
         }
 
-        var window = new CpuTopologyInspectWindow(_currentReport.Identity.SpecificationName.DisplayText, _currentReport.TopologyInspect)
-        {
-            Owner = Window.GetWindow(this)
-        };
-        window.Show();
+        App.SingleInstanceWindows.ShowOrActivate(
+            SingleInstanceWindowKeys.CpuTopologyInspect,
+            () => new CpuTopologyInspectWindow(_currentReport.Identity.SpecificationName.DisplayText, _currentReport.TopologyInspect),
+            Window.GetWindow(this));
         SetStatus("已打开 CPU 拓扑 Inspect。");
     }
 
