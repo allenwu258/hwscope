@@ -67,7 +67,8 @@ public sealed record HardwareInventoryStepDiagnostic(
     HardwareInventoryStepStatus Status,
     int ItemCount,
     TimeSpan Elapsed,
-    string? Message = null);
+    string? Message = null,
+    string? ExceptionText = null);
 
 public enum HardwareInventoryStepStatus
 {

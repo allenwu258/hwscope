@@ -88,7 +88,7 @@ public sealed class HardwareInventoryCollector
         catch (Exception ex) when (IsRecoverableCollectionException(ex))
         {
             elapsed.Stop();
-            steps.Add(new HardwareInventoryStepDiagnostic(name, HardwareInventoryStepStatus.Failed, 0, elapsed.Elapsed, ex.Message));
+            steps.Add(new HardwareInventoryStepDiagnostic(name, HardwareInventoryStepStatus.Failed, 0, elapsed.Elapsed, ex.Message, ex.ToString()));
             return default;
         }
     }
@@ -176,14 +176,18 @@ public sealed class HardwareInventoryCollector
                 string.Empty))
             .ToList();
 
-        if (monitors.Count > 0)
-        {
-            return monitors;
-        }
-
-        return Wmi.Query("SELECT Name FROM Win32_DesktopMonitor")
+        monitors.AddRange(Wmi.Query("SELECT Name FROM Win32_DesktopMonitor")
             .Select(m => new MonitorSnapshot(string.Empty, string.Empty, string.Empty, Wmi.GetString(m, "Name")))
-            .ToList();
+            .Where(m => !monitors.Any(existing => IsSameMonitor(existing, m))));
+
+        return monitors;
+    }
+
+    private static bool IsSameMonitor(MonitorSnapshot left, MonitorSnapshot right)
+    {
+        var leftNames = new[] { left.FriendlyName, left.FallbackName }.Where(value => !string.IsNullOrWhiteSpace(value));
+        var rightNames = new[] { right.FriendlyName, right.FallbackName }.Where(value => !string.IsNullOrWhiteSpace(value)).ToList();
+        return leftNames.Any(leftName => rightNames.Any(rightName => leftName.Equals(rightName, StringComparison.OrdinalIgnoreCase)));
     }
 
     private static object? GetRawValue(ManagementObject obj, string propertyName)
