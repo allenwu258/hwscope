@@ -450,7 +450,6 @@ Options parse_args(int argc, char** argv) {
             options.expected_protocol_version = static_cast<int>(value);
         } else if (arg == "--worker-processor") {
             options.worker_processors.push_back(parse_worker_placement(require_value(arg)));
-            options.has_preferred_processor = true;
         } else if (arg == "--cache-row") {
             options.cache_rows.push_back(parse_cache_row(require_value(arg)));
         } else if (arg == "--preferred-group") {

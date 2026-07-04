@@ -559,6 +559,12 @@ public sealed class MemoryBenchmarkProcessRunner : IMemoryBenchmarkRunner
                     }
                     break;
                 case "metric":
+                    var row = root.TryGetProperty("row", out var rowElement) ? NormalizeRow(rowElement.GetString()) : MemoryBenchmarkRows.Memory;
+                    if (!string.Equals(row, MemoryBenchmarkRows.Memory, StringComparison.OrdinalIgnoreCase))
+                    {
+                        break;
+                    }
+
                     var metric = root.GetProperty("metric").GetString()?.ToLowerInvariant();
                     var value = root.GetProperty("value").GetDouble();
                     switch (metric)
