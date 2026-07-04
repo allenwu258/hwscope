@@ -38,6 +38,7 @@ public sealed class MemoryBenchmarkProcessRunner : IMemoryBenchmarkRunner
         }
 
         var placementPlan = MemoryBenchmarkPlacementPlanner.CreatePlan(options);
+        ValidateEffectiveOptions(options, placementPlan);
         var arguments = BuildArguments(options, placementPlan, useProgressJson: progress is not null);
         var startInfo = new ProcessStartInfo
         {
@@ -334,6 +335,16 @@ public sealed class MemoryBenchmarkProcessRunner : IMemoryBenchmarkRunner
         if (options.Timeout is { } timeout && timeout <= TimeSpan.Zero)
         {
             throw new ArgumentOutOfRangeException(nameof(options), "超时时间必须大于 0。");
+        }
+    }
+
+    private static void ValidateEffectiveOptions(MemoryBenchmarkOptions options, MemoryBenchmarkPlacementPlan placementPlan)
+    {
+        if (options.SizeMiB / placementPlan.EffectiveThreads < 16)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(options),
+                $"多线程内存跑分要求每个 worker 至少 16 MiB；当前 {options.SizeMiB} MiB / {placementPlan.EffectiveThreads} threads。");
         }
     }
 

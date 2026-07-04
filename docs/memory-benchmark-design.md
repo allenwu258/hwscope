@@ -384,6 +384,7 @@ Implemented baseline:
 - `PhysicalCores` selects one logical processor per physical core before using SMT.
 - `LogicalProcessors` fills primary SMT units first, then SMT siblings.
 - Each native worker owns independent source and destination buffers.
+- `size_mib` remains the total requested working set. Multi-thread runs divide it across workers and reject configurations that would provide less than 16 MiB per worker.
 - Workers synchronize with an atomic ready/start/done barrier, and throughput uses total worker bytes over the shared measurement window.
 - Each metric reuses a persistent native worker pool across warmup and measured samples so thread creation is not part of every sample window.
 - Direct native invocation without Core topology still pins each worker to its current processor as a fallback, and marks the placement as `nativeFallback`.

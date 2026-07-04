@@ -431,6 +431,9 @@ Options parse_args(int argc, char** argv) {
     if (options.size_mib > std::numeric_limits<std::size_t>::max() / kMiB) {
         throw std::invalid_argument("--size-mib is too large for this process");
     }
+    if (options.size_mib / static_cast<std::uint64_t>(options.threads) < 16) {
+        throw std::invalid_argument("--size-mib must provide at least 16 MiB per thread");
+    }
     if ((options.csv ? 1 : 0) + (options.json ? 1 : 0) + (options.progress_json ? 1 : 0) > 1) {
         throw std::invalid_argument("--csv, --json, and --progress-json are mutually exclusive");
     }
@@ -1280,7 +1283,7 @@ BenchResult run_bench(const Options& options) {
             emit_progress_metric("copy", result.copy_mib_s, "mib_s");
         }
     } else {
-        const std::size_t bytes_per_thread = std::max<std::size_t>(16 * kMiB, bytes / static_cast<std::size_t>(options.threads));
+        const std::size_t bytes_per_thread = bytes / static_cast<std::size_t>(options.threads);
         auto worker_buffers = make_worker_buffers(options, bytes_per_thread);
 
         const auto read_series = collect_parallel_samples(
