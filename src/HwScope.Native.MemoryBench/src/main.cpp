@@ -161,6 +161,11 @@ struct MultiThreadSample {
     std::vector<std::uint8_t> affinity_applied;
 };
 
+struct OperationResult {
+    std::uint64_t bytes = 0;
+    std::uint64_t sink = 0;
+};
+
 void print_usage() {
     std::cout
         << "Usage: membench [--size-mib N] [--iterations N] [--latency-steps N]\n"
@@ -625,7 +630,7 @@ void touch_pages(std::uint8_t* data, std::size_t bytes) {
     }
 }
 
-std::uint64_t run_read_once(std::uint8_t* data, std::size_t bytes) {
+OperationResult run_read_once(std::uint8_t* data, std::size_t bytes) {
     constexpr std::size_t unroll = 8;
     constexpr std::size_t stride = sizeof(std::uint64_t) * unroll;
     const auto count = bytes / sizeof(std::uint64_t);
@@ -654,21 +659,27 @@ std::uint64_t run_read_once(std::uint8_t* data, std::size_t bytes) {
         sum0 += words[i];
     }
 
-    g_sink ^= sum0 ^ sum1 ^ sum2 ^ sum3 ^ sum4 ^ sum5 ^ sum6 ^ sum7 ^ stride;
-    return static_cast<std::uint64_t>(bytes);
+    return OperationResult{
+        static_cast<std::uint64_t>(bytes),
+        sum0 ^ sum1 ^ sum2 ^ sum3 ^ sum4 ^ sum5 ^ sum6 ^ sum7 ^ stride
+    };
 }
 
-std::uint64_t run_write_once(std::uint8_t* data, std::size_t bytes, std::uint64_t round) {
+OperationResult run_write_once(std::uint8_t* data, std::size_t bytes, std::uint64_t round) {
     const auto value = static_cast<int>((round * 37) & 0xff);
     std::memset(data, value, bytes);
-    g_sink ^= data[static_cast<std::size_t>(round) % bytes];
-    return static_cast<std::uint64_t>(bytes);
+    return OperationResult{
+        static_cast<std::uint64_t>(bytes),
+        data[static_cast<std::size_t>(round) % bytes]
+    };
 }
 
-std::uint64_t run_copy_once(std::uint8_t* dst, const std::uint8_t* src, std::size_t bytes, std::uint64_t round) {
+OperationResult run_copy_once(std::uint8_t* dst, const std::uint8_t* src, std::size_t bytes, std::uint64_t round) {
     std::memcpy(dst, src, bytes);
-    g_sink ^= dst[(static_cast<std::size_t>(round) * 4099) % bytes];
-    return static_cast<std::uint64_t>(bytes);
+    return OperationResult{
+        static_cast<std::uint64_t>(bytes),
+        dst[(static_cast<std::size_t>(round) * 4099) % bytes]
+    };
 }
 
 struct WorkerBuffers {
@@ -707,6 +718,7 @@ MultiThreadSample run_parallel_sample(
     std::atomic<int> done{0};
     std::atomic<bool> start{false};
     std::vector<std::uint64_t> worker_bytes(static_cast<std::size_t>(options.threads), 0);
+    std::vector<std::uint64_t> worker_sinks(static_cast<std::size_t>(options.threads), 0);
     std::vector<ActualProcessor> actual(static_cast<std::size_t>(options.threads));
     std::vector<std::uint8_t> affinity(static_cast<std::size_t>(options.threads), 0);
     std::vector<std::thread> threads;
@@ -728,12 +740,16 @@ MultiThreadSample run_parallel_sample(
             }
 
             std::uint64_t bytes = 0;
+            std::uint64_t local_sink = 0;
             auto& worker_buffers = buffers[static_cast<std::size_t>(worker)];
             for (std::uint64_t round = 0; round < inner_iterations; ++round) {
-                bytes += operation(worker_buffers, bytes_per_thread, round + static_cast<std::uint64_t>(worker) * 131u);
+                const auto result = operation(worker_buffers, bytes_per_thread, round + static_cast<std::uint64_t>(worker) * 131u);
+                bytes += result.bytes;
+                local_sink ^= result.sink;
             }
 
             worker_bytes[static_cast<std::size_t>(worker)] = bytes;
+            worker_sinks[static_cast<std::size_t>(worker)] = local_sink;
             done.fetch_add(1, std::memory_order_release);
         });
     }
@@ -755,6 +771,9 @@ MultiThreadSample run_parallel_sample(
 
     const auto elapsed_seconds = timer.elapsed_seconds(start_ticks, finish_ticks);
     const auto total_bytes = std::accumulate(worker_bytes.begin(), worker_bytes.end(), std::uint64_t{0});
+    for (const auto sink : worker_sinks) {
+        g_sink ^= sink;
+    }
     const auto payload_mib = static_cast<double>(total_bytes) / static_cast<double>(kMiB);
     return MultiThreadSample{
         payload_mib / elapsed_seconds,
@@ -828,9 +847,11 @@ SampleSeries collect_parallel_samples(
 SampleSeries run_read(std::uint8_t* data, std::size_t bytes, const Options& options, const Timer& timer) {
     return collect_adaptive_samples(options, timer, [&](std::uint64_t inner_iterations) {
         const auto total_bytes = checked_multiply_u64(static_cast<std::uint64_t>(bytes), inner_iterations, "read bytes");
+        std::uint64_t local_sink = 0;
         for (std::uint64_t round = 0; round < inner_iterations; ++round) {
-            (void)run_read_once(data, bytes);
+            local_sink ^= run_read_once(data, bytes).sink;
         }
+        g_sink ^= local_sink;
 
         return static_cast<double>(total_bytes) / static_cast<double>(kMiB);
     }, [](double mib, double seconds) {
@@ -841,9 +862,11 @@ SampleSeries run_read(std::uint8_t* data, std::size_t bytes, const Options& opti
 SampleSeries run_write(std::uint8_t* data, std::size_t bytes, const Options& options, const Timer& timer) {
     return collect_adaptive_samples(options, timer, [&](std::uint64_t inner_iterations) {
         const auto total_bytes = checked_multiply_u64(static_cast<std::uint64_t>(bytes), inner_iterations, "write bytes");
+        std::uint64_t local_sink = 0;
         for (std::uint64_t round = 0; round < inner_iterations; ++round) {
-            (void)run_write_once(data, bytes, round);
+            local_sink ^= run_write_once(data, bytes, round).sink;
         }
+        g_sink ^= local_sink;
 
         return static_cast<double>(total_bytes) / static_cast<double>(kMiB);
     }, [](double mib, double seconds) {
@@ -854,9 +877,11 @@ SampleSeries run_write(std::uint8_t* data, std::size_t bytes, const Options& opt
 SampleSeries run_copy(std::uint8_t* dst, const std::uint8_t* src, std::size_t bytes, const Options& options, const Timer& timer) {
     return collect_adaptive_samples(options, timer, [&](std::uint64_t inner_iterations) {
         const auto total_bytes = checked_multiply_u64(static_cast<std::uint64_t>(bytes), inner_iterations, "copy bytes");
+        std::uint64_t local_sink = 0;
         for (std::uint64_t round = 0; round < inner_iterations; ++round) {
-            (void)run_copy_once(dst, src, bytes, round);
+            local_sink ^= run_copy_once(dst, src, bytes, round).sink;
         }
+        g_sink ^= local_sink;
 
         return static_cast<double>(total_bytes) / static_cast<double>(kMiB);
     }, [](double mib, double seconds) {
