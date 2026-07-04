@@ -2,7 +2,7 @@
 
 HwScope 是一个 Windows 本地硬件工具箱项目，目标是在一个程序里逐步整合硬件摘要、CPU-Z 类详情、传感器、跑分、压力测试和稳定性查询。
 
-当前主线版本为 `v0.1.1`，已经具备：
+当前主线版本已具备：
 
 - WPF 图形界面，基于 WPF-UI / Fluent 风格，包含传统桌面应用式标题栏菜单、左侧导航和 HWiNFO 风格图标+文字快捷工具栏。
 - 首页硬件配置摘要，支持卡片视图和列表视图。
@@ -11,7 +11,7 @@ HwScope 是一个 Windows 本地硬件工具箱项目，目标是在一个程序
 - CPU topology Inspect 窗口，包含 raw report 和绘制版 Visual Map。
 - CLI 硬件摘要输出，支持文本、JSON 和复制到剪贴板。
 - 独立内存跑分窗口，界面参考 AIDA64 Cache & Memory Benchmark。
-- C++ native 内存跑分 worker，当前测量 Memory Read / Write / Copy / Latency。
+- C++ native 内存跑分 worker，当前测量 Memory Read / Write / Copy / Latency，并支持 topology-aware 多线程 Memory Read / Write / Copy。
 - JSON 驱动的主题配置，支持跟随系统、浅色、深色和 Mica 开关。
 - 应用图标资源已接入 `HwScope.App`，用于窗口、任务栏和可执行文件图标。
 
@@ -30,7 +30,7 @@ src/
     硬件采集、CPU 详情模型、Windows topology API、格式化、benchmark runner 抽象和 native worker 调用
 
   HwScope.Native.MemoryBench/
-    C++ 内存跑分 worker，输出 CSV 给 HwScope.Core 解析
+    C++ 内存跑分 worker，输出 JSON / progress JSON 给 HwScope.Core 解析，CSV 仅保留为手动兼容格式
 
 docs/
   project-architecture.md
@@ -123,13 +123,17 @@ src\HwScope.Native.MemoryBench\build\Release\membench.exe
 
 GUI 中可以通过顶部工具栏 `跑分` 或左侧导航 `性能测试 -> 内存跑分` 打开独立窗口，然后点击 `Start Benchmark`。
 
-当前跑分仍是第一版原型：
+当前跑分仍在持续演进，但已经具备可解释的多线程 Memory 行：
 
 - 已实现 Memory Read / Write / Copy / Latency。
+- Read / Write / Copy 默认使用 Windows topology 选择每个物理核心一个 worker，并通过 `SetThreadGroupAffinity` 固定 worker。
+- Latency 仍保持单线程语义基线。
+- 结果包含 worker/protocol 版本、timer、options、raw samples、aggregate、placement、environment 和 quality flags。
+- Copy 主结果按 payload throughput 展示，诊断信息同时记录 estimated traffic throughput。
 - L1 / L2 / L3 Cache 行暂时是 UI 占位。
 - native worker 仍需要先通过 CMake 构建；随后 `HwScope.App` / `HwScope.Cli` 构建会把已有的 `membench.exe` 复制到输出目录的 `native\` 子目录。
 - runner 带默认超时、取消时会终止 worker 进程树，并把失败诊断写入 `%TEMP%\HwScope-memory-benchmark.log`。
-- 后续会补多线程、SIMD kernel、cache row、结果稳定性标记和导出。
+- 后续会继续补 SIMD / non-temporal kernel、真实 L1/L2/L3 cache row、NUMA interleaved/per-node 模式、结果历史和导出。
 
 详细设计见 [docs/memory-benchmark-design.md](docs/memory-benchmark-design.md)。
 
@@ -174,7 +178,7 @@ src\HwScope.App\Themes\Json\dark.json
 - CPU 详情页的拓扑/缓存来自 Windows OS topology，不等于完整 CPUID；feature flags 仍等待 native CPUID worker 完整接入。
 - CPU topology Visual Map 当前使用 nested domain layout，tree/radial 布局和 PNG/JSON 导出仍在后续阶段。
 - CPU code name、工艺、TDP 和部分指令集仍可能来自本地型号映射，页面会标注来源。
-- 内存跑分结果目前不应直接对标 AIDA64，算法和线程策略仍在演进。
+- 内存跑分结果目前不应直接对标 AIDA64，kernel、copy accounting、NUMA 和 cache row 仍在演进。
 - native worker 不会由 `dotnet build` 自动编译；需要先运行 native 构建脚本生成 Release 产物。
 
 ## License
