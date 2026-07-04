@@ -85,12 +85,22 @@ public sealed class HardwareInventoryCollector
                 elapsed.Elapsed));
             return result;
         }
-        catch (Exception ex) when (ex is ManagementException or UnauthorizedAccessException or COMException)
+        catch (Exception ex) when (IsRecoverableCollectionException(ex))
         {
             elapsed.Stop();
             steps.Add(new HardwareInventoryStepDiagnostic(name, HardwareInventoryStepStatus.Failed, 0, elapsed.Elapsed, ex.Message));
             return default;
         }
+    }
+
+    private static bool IsRecoverableCollectionException(Exception ex)
+    {
+        return ex is ManagementException
+            or UnauthorizedAccessException
+            or COMException
+            or InvalidCastException
+            or InvalidOperationException
+            or ArgumentException;
     }
 
     private static int CountItems<T>(T? value)
@@ -160,9 +170,9 @@ public sealed class HardwareInventoryCollector
     {
         var monitors = Wmi.Query(@"SELECT UserFriendlyName, ManufacturerName, ProductCodeID FROM WmiMonitorID", @"root\wmi")
             .Select(m => new MonitorSnapshot(
-                DecodeUShortArray(m["UserFriendlyName"]),
-                DecodeUShortArray(m["ManufacturerName"]),
-                DecodeUShortArray(m["ProductCodeID"]),
+                DecodeUShortArray(GetRawValue(m, "UserFriendlyName")),
+                DecodeUShortArray(GetRawValue(m, "ManufacturerName")),
+                DecodeUShortArray(GetRawValue(m, "ProductCodeID")),
                 string.Empty))
             .ToList();
 
@@ -174,6 +184,18 @@ public sealed class HardwareInventoryCollector
         return Wmi.Query("SELECT Name FROM Win32_DesktopMonitor")
             .Select(m => new MonitorSnapshot(string.Empty, string.Empty, string.Empty, Wmi.GetString(m, "Name")))
             .ToList();
+    }
+
+    private static object? GetRawValue(ManagementObject obj, string propertyName)
+    {
+        try
+        {
+            return obj[propertyName];
+        }
+        catch (ManagementException)
+        {
+            return null;
+        }
     }
 
     private static DiskDriveSnapshot ToDiskDrive(ManagementObject obj)
