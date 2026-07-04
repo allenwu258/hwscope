@@ -126,7 +126,7 @@ struct BenchResult {
     std::uint16_t actual_group = 0;
     int actual_processor = -1;
     std::vector<ActualProcessor> actual_workers;
-    std::vector<bool> worker_affinity_applied;
+    std::vector<std::uint8_t> worker_affinity_applied;
     bool read_converged = false;
     bool write_converged = false;
     bool copy_converged = false;
@@ -158,7 +158,7 @@ struct MultiThreadSample {
     double traffic_value = 0.0;
     double elapsed_ms = 0.0;
     std::vector<ActualProcessor> actual_workers;
-    std::vector<bool> affinity_applied;
+    std::vector<std::uint8_t> affinity_applied;
 };
 
 void print_usage() {
@@ -708,7 +708,7 @@ MultiThreadSample run_parallel_sample(
     std::atomic<bool> start{false};
     std::vector<std::uint64_t> worker_bytes(static_cast<std::size_t>(options.threads), 0);
     std::vector<ActualProcessor> actual(static_cast<std::size_t>(options.threads));
-    std::vector<bool> affinity(static_cast<std::size_t>(options.threads), false);
+    std::vector<std::uint8_t> affinity(static_cast<std::size_t>(options.threads), 0);
     std::vector<std::thread> threads;
     threads.reserve(static_cast<std::size_t>(options.threads));
 
@@ -716,9 +716,9 @@ MultiThreadSample run_parallel_sample(
         threads.emplace_back([&, worker]() {
             if (static_cast<std::size_t>(worker) < options.worker_processors.size()) {
                 const auto& placement = options.worker_processors[static_cast<std::size_t>(worker)];
-                affinity[static_cast<std::size_t>(worker)] = apply_affinity(placement.group, placement.processor);
+                affinity[static_cast<std::size_t>(worker)] = apply_affinity(placement.group, placement.processor) ? 1 : 0;
             } else if (options.worker_processors.empty()) {
-                affinity[static_cast<std::size_t>(worker)] = apply_current_affinity();
+                affinity[static_cast<std::size_t>(worker)] = apply_current_affinity() ? 1 : 0;
             }
 
             actual[static_cast<std::size_t>(worker)] = get_current_processor();
@@ -774,7 +774,7 @@ SampleSeries collect_parallel_samples(
     double traffic_multiplier,
     std::vector<double>* traffic_samples,
     std::vector<ActualProcessor>* actual_workers,
-    std::vector<bool>* worker_affinity_applied,
+    std::vector<std::uint8_t>* worker_affinity_applied,
     Operation&& operation) {
     for (int warmup = 0; warmup < options.warmup_runs; ++warmup) {
         (void)run_parallel_sample(options, timer, buffers, bytes_per_thread, 1, traffic_multiplier, operation);
@@ -1298,7 +1298,7 @@ BenchResult run_bench(const Options& options) {
 
     if (!single_thread) {
         result.affinity_applied = result.worker_affinity_applied.size() == static_cast<std::size_t>(options.threads)
-            && std::all_of(result.worker_affinity_applied.begin(), result.worker_affinity_applied.end(), [](bool value) { return value; });
+            && std::all_of(result.worker_affinity_applied.begin(), result.worker_affinity_applied.end(), [](std::uint8_t value) { return value != 0; });
         if (!result.actual_workers.empty()) {
             result.actual_group = result.actual_workers[0].group;
             result.actual_processor = result.actual_workers[0].processor;
