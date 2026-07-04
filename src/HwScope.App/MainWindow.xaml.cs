@@ -144,8 +144,7 @@ public partial class MainWindow : FluentWindow
                     }
 
                     return new MemoryBenchmarkWindow(_currentReport);
-                },
-                this);
+                });
             SetFooterStatus("已打开内存跑分窗口。");
         }
         catch (Exception ex)

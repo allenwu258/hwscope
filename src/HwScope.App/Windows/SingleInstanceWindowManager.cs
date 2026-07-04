@@ -17,7 +17,7 @@ public sealed class SingleInstanceWindowManager
         return true;
     }
 
-    public T ShowOrActivate<T>(string key, Func<T> factory, Window? owner = null)
+    public T ShowOrActivate<T>(string key, Func<T> factory)
         where T : Window
     {
         if (_windows.TryGetValue(key, out var existing))
@@ -27,11 +27,6 @@ public sealed class SingleInstanceWindowManager
         }
 
         var window = factory();
-        if (owner is not null && window.Owner is null && !ReferenceEquals(window, owner))
-        {
-            window.Owner = owner;
-        }
-
         _windows[key] = window;
         window.Closed += (_, _) => Remove(key, window);
         window.Show();

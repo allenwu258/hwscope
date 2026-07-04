@@ -136,8 +136,7 @@ public partial class CpuDetailPage : UserControl
 
         App.SingleInstanceWindows.ShowOrActivate(
             SingleInstanceWindowKeys.CpuTopologyInspect,
-            () => new CpuTopologyInspectWindow(_currentReport.Identity.SpecificationName.DisplayText, _currentReport.TopologyInspect),
-            Window.GetWindow(this));
+            () => new CpuTopologyInspectWindow(_currentReport.Identity.SpecificationName.DisplayText, _currentReport.TopologyInspect));
         SetStatus("已打开 CPU 拓扑 Inspect。");
     }
 
