@@ -35,8 +35,8 @@ constexpr int kDefaultWarmupRuns = 1;
 constexpr int kDefaultMaxSamples = 11;
 constexpr double kDefaultTargetSampleMs = 120.0;
 constexpr double kDefaultMaxCv = 0.03;
-constexpr std::string_view kWorkerVersion = "0.4.0";
-constexpr int kProtocolVersion = 4;
+constexpr std::string_view kWorkerVersion = "0.5.0";
+constexpr int kProtocolVersion = 5;
 
 volatile std::uint64_t g_sink = 0;
 
