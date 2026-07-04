@@ -1,7 +1,6 @@
 using System.Globalization;
 using System.Text.RegularExpressions;
 using HwScope.Core.Hardware.Inventory;
-using HwScope.Core.Windows;
 
 namespace HwScope.Core.Hardware.Cpu;
 
@@ -16,7 +15,6 @@ public sealed class CpuDetailCollector
     {
         var processors = snapshot.Processors;
         var cpu = processors.FirstOrDefault();
-        var perfClock = CollectPerfClockMHz();
         var topologyAnalysis = snapshot.CpuTopology;
 
         var processorName = CleanName(cpu?.Name);
@@ -36,7 +34,7 @@ public sealed class CpuDetailCollector
 
         var coreCount = processors.Sum(processor => processor.NumberOfCores);
         var logicalCount = processors.Sum(processor => processor.NumberOfLogicalProcessors);
-        var currentClock = perfClock ?? Positive(cpu?.CurrentClockSpeed ?? 0);
+        var currentClock = Positive(snapshot.ProcessorFrequencyMHz) ?? Positive(cpu?.CurrentClockSpeed ?? 0);
         var maxClock = Positive(cpu?.MaxClockSpeed ?? 0);
         var busClock = EstimateBusClock(currentClock, maxClock);
         var multiplier = currentClock is > 0 && busClock is > 0 ? currentClock / busClock : null;
@@ -70,7 +68,7 @@ public sealed class CpuDetailCollector
                 CpuGroupCount: CpuField.Placeholder<int>("待接入 Windows 拓扑 API"),
                 NumaNodeCount: CpuField.Placeholder<int>("待接入 Windows 拓扑 API")),
             Clocks: new CpuClockInfo(
-                CurrentMHz: CpuField.MHz(currentClock, perfClock is not null ? CpuDataSource.Wmi : CpuDataSource.Wmi),
+                CurrentMHz: CpuField.MHz(currentClock, CpuDataSource.Wmi),
                 BaseMHz: CpuField.MHz(maxClock, CpuDataSource.Wmi),
                 MaxMHz: CpuField.MHz(maxClock, CpuDataSource.Wmi),
                 BusMHz: CpuField.MHz(busClock, CpuDataSource.Computed, isEstimated: true, note: "按常见 100 MHz 基准时钟估算。"),
@@ -113,17 +111,6 @@ public sealed class CpuDetailCollector
         [
             new CpuFeature(CpuField.PendingCpuidText, CpuFeatureGroup.Other, IsSupported: false, CpuDataSource.Placeholder)
         ];
-    }
-
-    private static double? CollectPerfClockMHz()
-    {
-        var sample = Wmi.Query("""
-            SELECT Name, PercentProcessorPerformance, ProcessorFrequency
-            FROM Win32_PerfFormattedData_Counters_ProcessorInformation
-            WHERE Name = '_Total'
-            """).FirstOrDefault();
-        var frequency = Wmi.GetUInt(sample, "ProcessorFrequency");
-        return Positive(frequency);
     }
 
     private static double? Positive(uint value)

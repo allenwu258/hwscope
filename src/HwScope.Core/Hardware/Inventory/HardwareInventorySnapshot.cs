@@ -12,6 +12,7 @@ public sealed record HardwareInventorySnapshot(
     IReadOnlyList<DiskDriveSnapshot> DiskDrives,
     IReadOnlyList<AudioDeviceSnapshot> AudioDevices,
     IReadOnlyList<NetworkAdapterSnapshot> NetworkAdapters,
+    uint ProcessorFrequencyMHz,
     CpuTopologyAnalysis? CpuTopology,
     HardwareInventoryDiagnostics Diagnostics,
     DateTimeOffset GeneratedAt);

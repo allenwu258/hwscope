@@ -50,6 +50,7 @@ public sealed class HardwareInventoryCollector
             .Select(ToNetworkAdapter)
             .ToList());
 
+        var processorFrequencyMHz = CollectStep(steps, "cpu-performance", CollectProcessorFrequencyMHz);
         var cpuTopology = CollectStep(steps, "cpu-topology", CpuTopologyAnalyzer.TryAnalyze);
 
         total.Stop();
@@ -63,6 +64,7 @@ public sealed class HardwareInventoryCollector
             diskDrives ?? [],
             audioDevices ?? [],
             networkAdapters ?? [],
+            processorFrequencyMHz,
             cpuTopology,
             new HardwareInventoryDiagnostics(steps, total.Elapsed),
             DateTimeOffset.Now);
@@ -196,6 +198,16 @@ public sealed class HardwareInventoryCollector
             Wmi.GetString(obj, "PhysicalAdapter").Equals("True", StringComparison.OrdinalIgnoreCase),
             Wmi.GetString(obj, "AdapterType"),
             Wmi.GetULong(obj, "Speed"));
+    }
+
+    private static uint CollectProcessorFrequencyMHz()
+    {
+        var sample = Wmi.Query("""
+            SELECT Name, PercentProcessorPerformance, ProcessorFrequency
+            FROM Win32_PerfFormattedData_Counters_ProcessorInformation
+            WHERE Name = '_Total'
+            """).FirstOrDefault();
+        return Wmi.GetUInt(sample, "ProcessorFrequency");
     }
 
     private static string DecodeUShortArray(object? value)
