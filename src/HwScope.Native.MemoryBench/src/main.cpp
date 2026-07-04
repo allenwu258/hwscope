@@ -706,17 +706,31 @@ std::vector<WorkerBuffers> make_worker_buffers(const Options& options, std::size
 }
 
 template <typename Operation>
-MultiThreadSample run_parallel_sample(
+SampleSeries collect_parallel_samples(
     const Options& options,
     const Timer& timer,
     std::vector<WorkerBuffers>& buffers,
     std::size_t bytes_per_thread,
-    std::uint64_t inner_iterations,
     double traffic_multiplier,
+    std::vector<double>* traffic_samples,
+    std::vector<ActualProcessor>* actual_workers,
+    std::vector<std::uint8_t>* worker_affinity_applied,
     Operation&& operation) {
+    SampleSeries series;
+    series.values.reserve(static_cast<std::size_t>(options.max_samples));
+    series.inner_iterations.reserve(static_cast<std::size_t>(options.max_samples));
+    if (traffic_samples) {
+        traffic_samples->clear();
+        traffic_samples->reserve(static_cast<std::size_t>(options.max_samples));
+    }
+
+    std::atomic<int> command_epoch{0};
+    std::atomic<int> start_epoch{0};
+    std::atomic<int> completed_epoch{0};
     std::atomic<int> ready{0};
     std::atomic<int> done{0};
-    std::atomic<bool> start{false};
+    std::atomic<bool> stop{false};
+    std::atomic<std::uint64_t> requested_inner_iterations{0};
     std::vector<std::uint64_t> worker_bytes(static_cast<std::size_t>(options.threads), 0);
     std::vector<std::uint64_t> worker_sinks(static_cast<std::size_t>(options.threads), 0);
     std::vector<ActualProcessor> actual(static_cast<std::size_t>(options.threads));
@@ -734,84 +748,86 @@ MultiThreadSample run_parallel_sample(
             }
 
             actual[static_cast<std::size_t>(worker)] = get_current_processor();
-            ready.fetch_add(1, std::memory_order_release);
-            while (!start.load(std::memory_order_acquire)) {
-                std::this_thread::yield();
-            }
+            auto observed_epoch = 0;
+            for (;;) {
+                while (command_epoch.load(std::memory_order_acquire) == observed_epoch
+                    && !stop.load(std::memory_order_acquire)) {
+                    std::this_thread::yield();
+                }
+                if (stop.load(std::memory_order_acquire)) {
+                    break;
+                }
 
-            std::uint64_t bytes = 0;
-            std::uint64_t local_sink = 0;
-            auto& worker_buffers = buffers[static_cast<std::size_t>(worker)];
-            for (std::uint64_t round = 0; round < inner_iterations; ++round) {
-                const auto result = operation(worker_buffers, bytes_per_thread, round + static_cast<std::uint64_t>(worker) * 131u);
-                bytes += result.bytes;
-                local_sink ^= result.sink;
-            }
+                observed_epoch = command_epoch.load(std::memory_order_acquire);
+                ready.fetch_add(1, std::memory_order_release);
+                while (start_epoch.load(std::memory_order_acquire) < observed_epoch
+                    && !stop.load(std::memory_order_acquire)) {
+                    std::this_thread::yield();
+                }
+                if (stop.load(std::memory_order_acquire)) {
+                    break;
+                }
 
-            worker_bytes[static_cast<std::size_t>(worker)] = bytes;
-            worker_sinks[static_cast<std::size_t>(worker)] = local_sink;
-            done.fetch_add(1, std::memory_order_release);
+                const auto inner_iterations_for_sample = requested_inner_iterations.load(std::memory_order_acquire);
+                std::uint64_t bytes = 0;
+                std::uint64_t local_sink = 0;
+                auto& worker_buffers = buffers[static_cast<std::size_t>(worker)];
+                for (std::uint64_t round = 0; round < inner_iterations_for_sample; ++round) {
+                    const auto result = operation(worker_buffers, bytes_per_thread, round + static_cast<std::uint64_t>(worker) * 131u);
+                    bytes += result.bytes;
+                    local_sink ^= result.sink;
+                }
+
+                worker_bytes[static_cast<std::size_t>(worker)] = bytes;
+                worker_sinks[static_cast<std::size_t>(worker)] = local_sink;
+                if (done.fetch_add(1, std::memory_order_acq_rel) + 1 == options.threads) {
+                    completed_epoch.store(observed_epoch, std::memory_order_release);
+                }
+            }
         });
     }
 
-    while (ready.load(std::memory_order_acquire) < options.threads) {
-        std::this_thread::yield();
-    }
+    auto run_sample = [&](std::uint64_t sample_inner_iterations) {
+        ready.store(0, std::memory_order_release);
+        done.store(0, std::memory_order_release);
+        requested_inner_iterations.store(sample_inner_iterations, std::memory_order_release);
+        const auto next_epoch = command_epoch.load(std::memory_order_acquire) + 1;
+        command_epoch.store(next_epoch, std::memory_order_release);
+        while (ready.load(std::memory_order_acquire) < options.threads) {
+            std::this_thread::yield();
+        }
 
-    const auto start_ticks = timer.now_ticks();
-    start.store(true, std::memory_order_release);
-    while (done.load(std::memory_order_acquire) < options.threads) {
-        std::this_thread::yield();
-    }
-    const auto finish_ticks = timer.now_ticks();
+        const auto start_ticks = timer.now_ticks();
+        start_epoch.store(next_epoch, std::memory_order_release);
+        while (completed_epoch.load(std::memory_order_acquire) != next_epoch) {
+            std::this_thread::yield();
+        }
+        const auto finish_ticks = timer.now_ticks();
 
-    for (auto& thread : threads) {
-        thread.join();
-    }
-
-    const auto elapsed_seconds = timer.elapsed_seconds(start_ticks, finish_ticks);
-    const auto total_bytes = std::accumulate(worker_bytes.begin(), worker_bytes.end(), std::uint64_t{0});
-    for (const auto sink : worker_sinks) {
-        g_sink ^= sink;
-    }
-    const auto payload_mib = static_cast<double>(total_bytes) / static_cast<double>(kMiB);
-    return MultiThreadSample{
-        payload_mib / elapsed_seconds,
-        payload_mib * traffic_multiplier / elapsed_seconds,
-        elapsed_seconds * 1000.0,
-        actual,
-        affinity
+        const auto elapsed_seconds = timer.elapsed_seconds(start_ticks, finish_ticks);
+        const auto total_bytes = std::accumulate(worker_bytes.begin(), worker_bytes.end(), std::uint64_t{0});
+        for (const auto sink : worker_sinks) {
+            g_sink ^= sink;
+        }
+        const auto payload_mib = static_cast<double>(total_bytes) / static_cast<double>(kMiB);
+        return MultiThreadSample{
+            payload_mib / elapsed_seconds,
+            payload_mib * traffic_multiplier / elapsed_seconds,
+            elapsed_seconds * 1000.0,
+            actual,
+            affinity
+        };
     };
-}
 
-template <typename Operation>
-SampleSeries collect_parallel_samples(
-    const Options& options,
-    const Timer& timer,
-    std::vector<WorkerBuffers>& buffers,
-    std::size_t bytes_per_thread,
-    double traffic_multiplier,
-    std::vector<double>* traffic_samples,
-    std::vector<ActualProcessor>* actual_workers,
-    std::vector<std::uint8_t>* worker_affinity_applied,
-    Operation&& operation) {
     for (int warmup = 0; warmup < options.warmup_runs; ++warmup) {
-        (void)run_parallel_sample(options, timer, buffers, bytes_per_thread, 1, traffic_multiplier, operation);
-    }
-
-    SampleSeries series;
-    series.values.reserve(static_cast<std::size_t>(options.max_samples));
-    series.inner_iterations.reserve(static_cast<std::size_t>(options.max_samples));
-    if (traffic_samples) {
-        traffic_samples->clear();
-        traffic_samples->reserve(static_cast<std::size_t>(options.max_samples));
+        (void)run_sample(1);
     }
 
     std::uint64_t inner_iterations = 1;
     while (static_cast<int>(series.values.size()) < options.max_samples) {
         MultiThreadSample sample;
         for (;;) {
-            sample = run_parallel_sample(options, timer, buffers, bytes_per_thread, inner_iterations, traffic_multiplier, operation);
+            sample = run_sample(inner_iterations);
             if (sample.elapsed_ms >= options.target_sample_ms || inner_iterations >= (std::numeric_limits<std::uint64_t>::max() / 2)) {
                 break;
             }
@@ -828,10 +844,10 @@ SampleSeries collect_parallel_samples(
         if (traffic_samples) {
             traffic_samples->push_back(sample.traffic_value);
         }
-        if (actual_workers && actual_workers->empty()) {
+        if (actual_workers) {
             *actual_workers = sample.actual_workers;
         }
-        if (worker_affinity_applied && worker_affinity_applied->empty()) {
+        if (worker_affinity_applied) {
             *worker_affinity_applied = sample.affinity_applied;
         }
 
@@ -839,6 +855,13 @@ SampleSeries collect_parallel_samples(
             series.converged = true;
             break;
         }
+    }
+
+    stop.store(true, std::memory_order_release);
+    command_epoch.fetch_add(1, std::memory_order_release);
+    start_epoch.fetch_add(1, std::memory_order_release);
+    for (auto& thread : threads) {
+        thread.join();
     }
 
     return series;

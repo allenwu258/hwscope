@@ -385,6 +385,7 @@ Implemented baseline:
 - `LogicalProcessors` fills primary SMT units first, then SMT siblings.
 - Each native worker owns independent source and destination buffers.
 - Workers synchronize with an atomic ready/start/done barrier, and throughput uses total worker bytes over the shared measurement window.
+- Each metric reuses a persistent native worker pool across warmup and measured samples so thread creation is not part of every sample window.
 - Direct native invocation without Core topology still pins each worker to its current processor as a fallback, and marks the placement as `nativeFallback`.
 - Copy reports payload throughput as the displayed score and records estimated bus traffic throughput as `traffic_samples` / `traffic_aggregate`.
 
