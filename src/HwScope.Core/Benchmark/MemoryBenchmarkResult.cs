@@ -35,6 +35,10 @@ public sealed record MemoryBenchmarkOptionsSnapshot(
     double TargetSampleMs,
     double MaxCv,
     int Threads,
+    string ThreadMode,
+    string NumaMode,
+    string Kernel,
+    string StorePolicy,
     bool UsePreferredCore,
     string WorkingSetKind);
 
@@ -44,12 +48,22 @@ public sealed record MemoryBenchmarkMetricSet(
     MemoryBenchmarkMetricResult Copy,
     MemoryBenchmarkMetricResult Latency);
 
-public sealed record MemoryBenchmarkMetricResult(
+public record MemoryBenchmarkMetricResult(
     string Unit,
     IReadOnlyList<double> Samples,
     IReadOnlyList<long> InnerIterations,
     bool Converged,
     MemoryBenchmarkAggregate Aggregate);
+
+public sealed record MemoryBenchmarkCopyMetricResult(
+    string Unit,
+    IReadOnlyList<double> Samples,
+    IReadOnlyList<long> InnerIterations,
+    bool Converged,
+    MemoryBenchmarkAggregate Aggregate,
+    IReadOnlyList<double> TrafficSamples,
+    MemoryBenchmarkAggregate? TrafficAggregate)
+    : MemoryBenchmarkMetricResult(Unit, Samples, InnerIterations, Converged, Aggregate);
 
 public sealed record MemoryBenchmarkTimer(
     string Name,
@@ -63,6 +77,8 @@ public sealed record MemoryBenchmarkPlacement(
     bool? AffinityApplied,
     MemoryBenchmarkProcessorPlacement? Requested,
     MemoryBenchmarkProcessorPlacement? Actual,
+    IReadOnlyList<MemoryBenchmarkProcessorPlacement> RequestedWorkers,
+    IReadOnlyList<MemoryBenchmarkProcessorPlacement> ActualWorkers,
     IReadOnlyList<MemoryBenchmarkProcessorPlacement> Candidates);
 
 public sealed record MemoryBenchmarkProcessorPlacement(

@@ -117,6 +117,8 @@ static string FormatOptions(MemoryBenchmarkResult result)
         $"max CV {options.MaxCv.ToString("P0", CultureInfo.InvariantCulture)}",
         $"latency steps {options.LatencySteps}",
         $"threads {options.Threads}",
+        options.ThreadMode,
+        options.NumaMode,
         options.WorkingSetKind);
 }
 
@@ -135,7 +137,8 @@ static string FormatPlacement(MemoryBenchmarkResult result)
         false => "affinity failed",
         _ => "affinity unknown"
     };
-    return $"{placement.Mode}, requested {requested}, actual {actual}, {placement.Confidence}, {affinity}";
+    var workers = placement.RequestedWorkers.Count > 0 ? $", workers {placement.RequestedWorkers.Count}" : string.Empty;
+    return $"{placement.Mode}, requested {requested}, actual {actual}, {placement.Confidence}, {affinity}{workers}";
 }
 
 static string FormatProcessor(MemoryBenchmarkProcessorPlacement? processor)

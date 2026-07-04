@@ -37,9 +37,7 @@ public sealed class MemoryBenchmarkProcessRunner : IMemoryBenchmarkRunner
             throw new FileNotFoundException("未找到 membench.exe。请先构建 src/HwScope.Native.MemoryBench，或确认构建产物已复制到应用输出目录的 native 子目录。");
         }
 
-        var placementPlan = options.UsePreferredCore
-            ? MemoryBenchmarkPlacementPlanner.CreatePreferredSingleThreadPlan()
-            : MemoryBenchmarkPlacementPlan.Fallback("Preferred core placement is disabled by options.");
+        var placementPlan = MemoryBenchmarkPlacementPlanner.CreatePlan(options);
         var arguments = BuildArguments(options, placementPlan, useProgressJson: progress is not null);
         var startInfo = new ProcessStartInfo
         {
@@ -141,39 +139,84 @@ public sealed class MemoryBenchmarkProcessRunner : IMemoryBenchmarkRunner
             "--target-sample-ms",
             options.TargetSampleMs.ToString(CultureInfo.InvariantCulture),
             "--max-cv",
-            options.MaxCv.ToString(CultureInfo.InvariantCulture)
+            options.MaxCv.ToString(CultureInfo.InvariantCulture),
+            "--threads",
+            placementPlan.EffectiveThreads.ToString(CultureInfo.InvariantCulture),
+            "--thread-mode",
+            options.ThreadMode,
+            "--numa-mode",
+            options.NumaMode,
+            "--kernel",
+            options.Kernel,
+            "--store-policy",
+            options.StorePolicy
         };
 
-        if (placementPlan.Requested is { } requested)
+        if (placementPlan.Workers.Count > 0)
         {
-            arguments.Add("--preferred-group");
-            arguments.Add(requested.Group.ToString(CultureInfo.InvariantCulture));
-            arguments.Add("--preferred-processor");
-            arguments.Add(requested.ProcessorNumber.ToString(CultureInfo.InvariantCulture));
-            arguments.Add("--preferred-core");
-            arguments.Add(requested.CoreIndex.ToString(CultureInfo.InvariantCulture));
-            if (requested.PackageIndex is { } packageIndex)
+            foreach (var worker in placementPlan.Workers)
             {
-                arguments.Add("--preferred-package");
-                arguments.Add(packageIndex.ToString(CultureInfo.InvariantCulture));
-            }
+                arguments.Add("--worker-processor");
+                arguments.Add(FormatWorkerProcessor(worker));
 
-            if (requested.NumaNodeNumber is { } numaNode)
-            {
-                arguments.Add("--preferred-numa-node");
-                arguments.Add(numaNode.ToString(CultureInfo.InvariantCulture));
+                if (placementPlan.Workers.Count == 1)
+                {
+                    AddPreferredProcessorMetadata(arguments, worker);
+                }
             }
+        }
 
-            arguments.Add("--preferred-smt-index");
-            arguments.Add(requested.SmtIndex.ToString(CultureInfo.InvariantCulture));
-            arguments.Add("--preferred-efficiency-class");
-            arguments.Add(requested.EfficiencyClass.ToString(CultureInfo.InvariantCulture));
-            arguments.Add("--preferred-has-smt");
-            arguments.Add(requested.HasSmt ? "1" : "0");
+        if (placementPlan.Requested is { } requested && placementPlan.Workers.Count != 1)
+        {
+            AddPreferredProcessorMetadata(arguments, requested);
         }
 
         arguments.Add(useProgressJson ? "--progress-json" : "--json");
         return [.. arguments];
+    }
+
+    private static string FormatWorkerProcessor(MemoryBenchmarkLogicalProcessor processor)
+    {
+        var values = new[]
+        {
+            processor.Group.ToString(CultureInfo.InvariantCulture),
+            processor.ProcessorNumber.ToString(CultureInfo.InvariantCulture),
+            processor.CoreIndex.ToString(CultureInfo.InvariantCulture),
+            processor.PackageIndex?.ToString(CultureInfo.InvariantCulture) ?? "-1",
+            processor.NumaNodeNumber?.ToString(CultureInfo.InvariantCulture) ?? "-1",
+            processor.SmtIndex.ToString(CultureInfo.InvariantCulture),
+            processor.EfficiencyClass.ToString(CultureInfo.InvariantCulture),
+            processor.HasSmt ? "1" : "0"
+        };
+        return string.Join(':', values);
+    }
+
+    private static void AddPreferredProcessorMetadata(List<string> arguments, MemoryBenchmarkLogicalProcessor requested)
+    {
+        arguments.Add("--preferred-group");
+        arguments.Add(requested.Group.ToString(CultureInfo.InvariantCulture));
+        arguments.Add("--preferred-processor");
+        arguments.Add(requested.ProcessorNumber.ToString(CultureInfo.InvariantCulture));
+        arguments.Add("--preferred-core");
+        arguments.Add(requested.CoreIndex.ToString(CultureInfo.InvariantCulture));
+        if (requested.PackageIndex is { } packageIndex)
+        {
+            arguments.Add("--preferred-package");
+            arguments.Add(packageIndex.ToString(CultureInfo.InvariantCulture));
+        }
+
+        if (requested.NumaNodeNumber is { } numaNode)
+        {
+            arguments.Add("--preferred-numa-node");
+            arguments.Add(numaNode.ToString(CultureInfo.InvariantCulture));
+        }
+
+        arguments.Add("--preferred-smt-index");
+        arguments.Add(requested.SmtIndex.ToString(CultureInfo.InvariantCulture));
+        arguments.Add("--preferred-efficiency-class");
+        arguments.Add(requested.EfficiencyClass.ToString(CultureInfo.InvariantCulture));
+        arguments.Add("--preferred-has-smt");
+        arguments.Add(requested.HasSmt ? "1" : "0");
     }
 
     private static void ValidateOptions(MemoryBenchmarkOptions options)
@@ -235,12 +278,37 @@ public sealed class MemoryBenchmarkProcessRunner : IMemoryBenchmarkRunner
 
         if (options.Threads <= 0)
         {
-            throw new ArgumentOutOfRangeException(nameof(options), "线程数必须大于 0。");
+            if (!options.ThreadMode.Equals("SingleCore", StringComparison.OrdinalIgnoreCase)
+                && !options.ThreadMode.Equals("PhysicalCores", StringComparison.OrdinalIgnoreCase)
+                && !options.ThreadMode.Equals("LogicalProcessors", StringComparison.OrdinalIgnoreCase))
+            {
+                throw new ArgumentOutOfRangeException(nameof(options), "自动线程数仅支持 SingleCore、PhysicalCores 或 LogicalProcessors 模式。");
+            }
         }
 
-        if (options.Threads != 1)
+        if (options.Threads > 1024)
         {
-            throw new NotSupportedException("当前内存跑分阶段仅支持单线程，--threads 将在后续阶段接入。");
+            throw new ArgumentOutOfRangeException(nameof(options), "线程数不能超过 1024。");
+        }
+
+        if (!IsOneOf(options.ThreadMode, "SingleCore", "PhysicalCores", "LogicalProcessors", "Custom"))
+        {
+            throw new ArgumentOutOfRangeException(nameof(options), "线程模式必须是 SingleCore、PhysicalCores、LogicalProcessors 或 Custom。");
+        }
+
+        if (!IsOneOf(options.NumaMode, "Local", "Interleaved", "PerNode"))
+        {
+            throw new ArgumentOutOfRangeException(nameof(options), "NUMA 模式必须是 Local、Interleaved 或 PerNode。");
+        }
+
+        if (!IsOneOf(options.Kernel, "Scalar", "Auto", "Avx2", "Avx512"))
+        {
+            throw new ArgumentOutOfRangeException(nameof(options), "Kernel 必须是 Scalar、Auto、Avx2 或 Avx512。");
+        }
+
+        if (!IsOneOf(options.StorePolicy, "Cached", "NonTemporal"))
+        {
+            throw new ArgumentOutOfRangeException(nameof(options), "StorePolicy 必须是 Cached 或 NonTemporal。");
         }
 
         if (!string.Equals(options.WorkingSetKind, "memory", StringComparison.OrdinalIgnoreCase))
@@ -252,6 +320,11 @@ public sealed class MemoryBenchmarkProcessRunner : IMemoryBenchmarkRunner
         {
             throw new ArgumentOutOfRangeException(nameof(options), "超时时间必须大于 0。");
         }
+    }
+
+    private static bool IsOneOf(string value, params string[] allowed)
+    {
+        return allowed.Any(candidate => string.Equals(value, candidate, StringComparison.OrdinalIgnoreCase));
     }
 
     private static async Task KillProcessTreeAsync(Process process)
@@ -528,6 +601,10 @@ public sealed class MemoryBenchmarkProcessRunner : IMemoryBenchmarkRunner
             TargetSampleMs: optionsElement.TryGetProperty("target_sample_ms", out var targetSampleMs) ? targetSampleMs.GetDouble() : 0.0,
             MaxCv: optionsElement.TryGetProperty("max_cv", out var maxCv) ? maxCv.GetDouble() : 0.0,
             Threads: optionsElement.GetProperty("threads").GetInt32(),
+            ThreadMode: optionsElement.TryGetProperty("thread_mode", out var threadMode) ? threadMode.GetString() ?? "SingleCore" : "SingleCore",
+            NumaMode: optionsElement.TryGetProperty("numa_mode", out var numaMode) ? numaMode.GetString() ?? "Local" : "Local",
+            Kernel: optionsElement.TryGetProperty("kernel", out var kernel) ? kernel.GetString() ?? "Auto" : "Auto",
+            StorePolicy: optionsElement.TryGetProperty("store_policy", out var storePolicy) ? storePolicy.GetString() ?? "Cached" : "Cached",
             UsePreferredCore: optionsElement.TryGetProperty("use_preferred_core", out var usePreferredCore) && usePreferredCore.GetBoolean(),
             WorkingSetKind: optionsElement.GetProperty("working_set_kind").GetString() ?? "memory");
         var placement = root.TryGetProperty("placement", out var placementElement)
@@ -560,6 +637,12 @@ public sealed class MemoryBenchmarkProcessRunner : IMemoryBenchmarkRunner
             AffinityApplied: element.TryGetProperty("affinity_applied", out var affinityApplied) ? affinityApplied.GetBoolean() : null,
             Requested: element.TryGetProperty("requested", out var requested) && requested.ValueKind == JsonValueKind.Object ? ParseProcessorPlacement(requested) : null,
             Actual: element.TryGetProperty("actual", out var actual) && actual.ValueKind == JsonValueKind.Object ? ParseProcessorPlacement(actual) : null,
+            RequestedWorkers: element.TryGetProperty("requested_workers", out var requestedWorkers) && requestedWorkers.ValueKind == JsonValueKind.Array
+                ? requestedWorkers.EnumerateArray().Select(ParseProcessorPlacement).ToList()
+                : [],
+            ActualWorkers: element.TryGetProperty("actual_workers", out var actualWorkers) && actualWorkers.ValueKind == JsonValueKind.Array
+                ? actualWorkers.EnumerateArray().Select(ParseProcessorPlacement).ToList()
+                : [],
             Candidates: element.TryGetProperty("candidates", out var candidates) && candidates.ValueKind == JsonValueKind.Array
                 ? candidates.EnumerateArray().Select(ParseProcessorPlacement).ToList()
                 : []);
@@ -588,7 +671,7 @@ public sealed class MemoryBenchmarkProcessRunner : IMemoryBenchmarkRunner
             ? innerIterationsElement.EnumerateArray().Select(sample => sample.GetInt64()).ToList()
             : [];
         var aggregate = element.GetProperty("aggregate");
-        return new MemoryBenchmarkMetricResult(
+        var result = new MemoryBenchmarkMetricResult(
             Unit: element.GetProperty("unit").GetString() ?? string.Empty,
             Samples: samples,
             InnerIterations: innerIterations,
@@ -600,6 +683,34 @@ public sealed class MemoryBenchmarkProcessRunner : IMemoryBenchmarkRunner
                 Mean: aggregate.GetProperty("mean").GetDouble(),
                 StdDev: aggregate.GetProperty("stddev").GetDouble(),
                 Cv: aggregate.GetProperty("cv").GetDouble()));
+        if (!element.TryGetProperty("traffic_samples", out var trafficSamplesElement)
+            || trafficSamplesElement.ValueKind != JsonValueKind.Array)
+        {
+            return result;
+        }
+
+        var trafficSamples = trafficSamplesElement
+            .EnumerateArray()
+            .Select(sample => sample.GetDouble())
+            .ToList();
+        var trafficAggregate = element.TryGetProperty("traffic_aggregate", out var trafficAggregateElement)
+            ? new MemoryBenchmarkAggregate(
+                Median: trafficAggregateElement.GetProperty("median").GetDouble(),
+                Min: trafficAggregateElement.GetProperty("min").GetDouble(),
+                Max: trafficAggregateElement.GetProperty("max").GetDouble(),
+                Mean: trafficAggregateElement.GetProperty("mean").GetDouble(),
+                StdDev: trafficAggregateElement.GetProperty("stddev").GetDouble(),
+                Cv: trafficAggregateElement.GetProperty("cv").GetDouble())
+            : null;
+
+        return new MemoryBenchmarkCopyMetricResult(
+            result.Unit,
+            result.Samples,
+            result.InnerIterations,
+            result.Converged,
+            result.Aggregate,
+            trafficSamples,
+            trafficAggregate);
     }
 
     private static MemoryBenchmarkResult EnrichResult(
@@ -627,6 +738,10 @@ public sealed class MemoryBenchmarkProcessRunner : IMemoryBenchmarkRunner
             options.TargetSampleMs,
             options.MaxCv,
             options.Threads,
+            options.ThreadMode,
+            options.NumaMode,
+            options.Kernel,
+            options.StorePolicy,
             options.UsePreferredCore,
             options.WorkingSetKind);
         var placement = MergePlacement(result.Placement, placementPlan);
@@ -652,6 +767,8 @@ public sealed class MemoryBenchmarkProcessRunner : IMemoryBenchmarkRunner
             Reason: plan.Reason,
             AffinityApplied: null,
             Requested: plan.Requested is null ? null : ToProcessorPlacement(plan.Requested),
+            RequestedWorkers: plan.Workers.Select(ToProcessorPlacement).ToList(),
+            ActualWorkers: actual is null ? [] : [actual],
             Actual: actual,
             Candidates: plan.Candidates.Select(ToProcessorPlacement).ToList());
     }
@@ -682,6 +799,8 @@ public sealed class MemoryBenchmarkProcessRunner : IMemoryBenchmarkRunner
                     ? Coalesce(nativePlacement.Reason, planned.Reason)
                     : planned.Reason,
             Requested = nativePlacement.Requested ?? planned.Requested,
+            RequestedWorkers = nativePlacement.RequestedWorkers.Count > 0 ? nativePlacement.RequestedWorkers : planned.RequestedWorkers,
+            ActualWorkers = nativePlacement.ActualWorkers.Count > 0 ? nativePlacement.ActualWorkers : planned.ActualWorkers,
             Candidates = nativePlacement.Candidates.Count > 0 ? nativePlacement.Candidates : planned.Candidates
         };
     }

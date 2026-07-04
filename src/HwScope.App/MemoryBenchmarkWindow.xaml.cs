@@ -204,6 +204,10 @@ public partial class MemoryBenchmarkWindow : FluentWindow
             lines.Add($"MaxCv             : {options.MaxCv.ToString("P2", CultureInfo.InvariantCulture)}");
             lines.Add($"LatencySteps      : {options.LatencySteps}");
             lines.Add($"Threads           : {options.Threads}");
+            lines.Add($"ThreadMode        : {options.ThreadMode}");
+            lines.Add($"NumaMode          : {options.NumaMode}");
+            lines.Add($"Kernel            : {options.Kernel}");
+            lines.Add($"StorePolicy       : {options.StorePolicy}");
             lines.Add($"UsePreferredCore  : {options.UsePreferredCore}");
             lines.Add($"WorkingSetKind    : {options.WorkingSetKind}");
         }
@@ -219,6 +223,8 @@ public partial class MemoryBenchmarkWindow : FluentWindow
             lines.Add($"AffinityApplied   : {FormatNullable(placement.AffinityApplied)}");
             AppendProcessorPlacement(lines, "Requested", placement.Requested);
             AppendProcessorPlacement(lines, "Actual", placement.Actual);
+            AppendProcessorPlacements(lines, "RequestedWorkers", placement.RequestedWorkers);
+            AppendProcessorPlacements(lines, "ActualWorkers", placement.ActualWorkers);
             lines.Add($"Candidates        : {placement.Candidates.Count}");
         }
 
@@ -276,6 +282,28 @@ public partial class MemoryBenchmarkWindow : FluentWindow
             lines.Add($"InnerLoop : {string.Join(", ", metric.InnerIterations.Select(sample => sample.ToString(CultureInfo.InvariantCulture)))}");
         }
         lines.Add($"Samples   : {string.Join(", ", metric.Samples.Select(sample => sample.ToString("F2", CultureInfo.InvariantCulture)))}");
+        if (metric is MemoryBenchmarkCopyMetricResult copy && copy.TrafficAggregate is { } traffic)
+        {
+            lines.Add($"TrafficMedian : {traffic.Median:F2} {copy.Unit}");
+            lines.Add($"TrafficSamples: {string.Join(", ", copy.TrafficSamples.Select(sample => sample.ToString("F2", CultureInfo.InvariantCulture)))}");
+        }
+    }
+
+    private static void AppendProcessorPlacements(
+        List<string> lines,
+        string label,
+        IReadOnlyList<MemoryBenchmarkProcessorPlacement> placements)
+    {
+        if (placements.Count == 0)
+        {
+            lines.Add($"{label,-17} : ");
+            return;
+        }
+
+        for (var i = 0; i < placements.Count; i++)
+        {
+            AppendProcessorPlacement(lines, $"{label}[{i}]", placements[i]);
+        }
     }
 
     private static void AppendProcessorPlacement(List<string> lines, string label, MemoryBenchmarkProcessorPlacement? placement)

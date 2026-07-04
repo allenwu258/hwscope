@@ -8,7 +8,11 @@ public sealed record MemoryBenchmarkOptions(
     int MaxSamples = 11,
     double TargetSampleMs = 120.0,
     double MaxCv = 0.03,
-    int Threads = 1,
+    int Threads = 0,
+    string ThreadMode = "PhysicalCores",
+    string NumaMode = "Local",
+    string Kernel = "Auto",
+    string StorePolicy = "Cached",
     bool UsePreferredCore = true,
     string WorkingSetKind = "memory",
     TimeSpan? Timeout = null);

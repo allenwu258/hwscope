@@ -52,6 +52,14 @@ membench --preferred-group 0 --preferred-processor 0 --preferred-core 0 --prefer
 
 The worker applies this with `SetThreadGroupAffinity` and records both requested and actual placement. Direct CLI runs without preferred placement are still allowed, but their JSON is marked as native fallback placement.
 
+Multi-thread read/write/copy is available through Core-selected worker processors:
+
+```text
+membench --threads 4 --thread-mode PhysicalCores --worker-processor 0:0:0:-1:0:0:0:0 --worker-processor 0:2:1:-1:0:0:0:0 --json
+```
+
+Each worker has independent source/destination buffers and the timed window starts after all workers are ready. `size_mib` is treated as the total requested working set and split across workers, with a 16 MiB minimum per worker. Latency remains single-threaded. Copy reports payload throughput as `samples`/`aggregate` and estimated read+write traffic as `traffic_samples`/`traffic_aggregate`.
+
 JSON output includes worker/protocol metadata, options, timer metadata, placement metadata, elapsed time, raw samples, inner-loop counts, convergence state, and aggregate statistics.
 
 CSV remains available for manual compatibility:

@@ -370,20 +370,29 @@ Native requirements:
 Stage 4 is implemented in two slices:
 
 1. Implemented: single-thread deterministic placement and metadata. This replaces "pin to whichever CPU the worker started on" and prepares the protocol.
-2. Pending: multi-thread placement execution. This adds worker threads, independent buffers, barrier start, physical-core-first placement, and NUMA modes.
+2. Implemented: multi-thread read/write/copy execution. The Core planner selects worker logical processors, the native worker creates one buffer pair per worker, pins each worker where possible, synchronizes the measurement window, and aggregates total payload bytes over shared elapsed time. Latency remains single-threaded as the semantic baseline.
 
 ### Stage 5: Multi-Threaded Memory Bandwidth
 
 This is the biggest expected improvement toward AIDA64-like memory bandwidth.
 
-- Add `--threads`.
-- Allocate independent buffers per worker thread.
-- Synchronize worker start with a barrier.
-- Pin each thread to a distinct physical core by default.
-- Avoid SMT sibling placement until physical cores are exhausted.
-- Aggregate per-thread bytes over a shared measurement window and report total throughput.
-- Keep single-thread mode available for diagnostic comparison.
-- Report both copy payload throughput and estimated copy traffic throughput.
+Implemented baseline:
+
+- `MemoryBenchmarkOptions` now carries `Threads`, `ThreadMode`, `NumaMode`, `Kernel`, and `StorePolicy`.
+- Default GUI/CLI behavior uses `ThreadMode=PhysicalCores` with automatic thread count from Windows topology. If topology is unavailable, Core falls back to a single native fallback worker so results are not worse than the previous single-thread path.
+- `SingleCore` keeps the old single-thread diagnostic baseline.
+- `PhysicalCores` selects one logical processor per physical core before using SMT.
+- `LogicalProcessors` fills primary SMT units first, then SMT siblings.
+- Each native worker owns independent source and destination buffers.
+- Workers synchronize with an atomic ready/start/done barrier, and throughput uses total worker bytes over the shared measurement window.
+- Direct native invocation without Core topology still pins each worker to its current processor as a fallback, and marks the placement as `nativeFallback`.
+- Copy reports payload throughput as the displayed score and records estimated bus traffic throughput as `traffic_samples` / `traffic_aggregate`.
+
+Pending refinements:
+
+- Implement `NumaMode=Interleaved` and `NumaMode=PerNode` as real allocation and reporting modes. The current baseline records the option and implements the default local planning path through Core.
+- Add explicit custom worker selection UI/CLI.
+- Add per-worker bytes/elapsed diagnostics if variance analysis needs to identify a single slow worker.
 
 ### Stage 6: SIMD Kernels
 
@@ -424,7 +433,7 @@ Improve repeatability, diagnostics, and user trust.
 Recommended next steps:
 
 1. Add topology-aware placement metadata before enabling multi-thread default behavior.
-2. Add `--threads` to the native worker and expose it through `MemoryBenchmarkOptions`.
+2. Add real NUMA interleaved/per-node modes for multi-thread memory bandwidth.
 3. Add explicit kernel metadata and then introduce SIMD kernels behind feature detection.
 4. Add L1/L2/L3 cache rows using detected cache sizes and sharing topology.
 5. Add a compact benchmark report export from `MemoryBenchmarkWindow`.
