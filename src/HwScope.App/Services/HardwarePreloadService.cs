@@ -60,7 +60,7 @@ public sealed class HardwarePreloadService
             }
             else
             {
-                task = LoadAsync(cancellationToken);
+                task = LoadAsync();
                 _loadTask = task;
             }
         }
@@ -72,12 +72,12 @@ public sealed class HardwarePreloadService
         return await task.WaitAsync(cancellationToken).ConfigureAwait(false);
     }
 
-    private async Task<HardwareInventorySnapshot> LoadAsync(CancellationToken cancellationToken)
+    private async Task<HardwareInventorySnapshot> LoadAsync()
     {
         SetState(HardwarePreloadState.Loading, "正在预加载硬件信息...");
         try
         {
-            var snapshot = await Task.Run(_collector.Collect, cancellationToken).ConfigureAwait(false);
+            var snapshot = await Task.Run(_collector.Collect).ConfigureAwait(false);
             Current = snapshot;
             _loadTask = null;
             SetState(HardwarePreloadState.Ready, $"硬件信息预加载完成，用时 {snapshot.Diagnostics.Elapsed.TotalMilliseconds:F0} ms。");
