@@ -40,6 +40,7 @@ docs/
   cpu-topology-visualization-plan.md
   theme-system.md
   memory-benchmark-design.md
+  memory-cache-benchmark-implementation-plan.md
 ```
 
 ## 运行
@@ -135,7 +136,7 @@ GUI 中可以通过顶部工具栏 `跑分` 或左侧导航 `性能测试 -> 内
 - runner 带默认超时、取消时会终止 worker 进程树，并把失败诊断写入 `%TEMP%\HwScope-memory-benchmark.log`。
 - 后续会继续补 SIMD / non-temporal kernel、真实 L1/L2/L3 cache row、NUMA interleaved/per-node 模式、结果历史和导出。
 
-详细设计见 [docs/memory-benchmark-design.md](docs/memory-benchmark-design.md)。
+详细设计见 [docs/memory-benchmark-design.md](docs/memory-benchmark-design.md)。L1 / L2 / L3 Cache 行开发方案见 [docs/memory-cache-benchmark-implementation-plan.md](docs/memory-cache-benchmark-implementation-plan.md)。
 
 ## 主题和配置
 

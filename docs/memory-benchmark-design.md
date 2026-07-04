@@ -19,6 +19,9 @@ Relevant files:
 - `src/HwScope.Core/Benchmark/MemoryBenchmarkProcessRunner.cs`
 - `src/HwScope.App/MemoryBenchmarkWindow.xaml`
 
+The implementation plan for real L1/L2/L3 rows is tracked separately in
+[`docs/memory-cache-benchmark-implementation-plan.md`](memory-cache-benchmark-implementation-plan.md).
+
 ## Current GUI Integration
 
 The WPF app opens the benchmark in a separate Fluent window, matching the AIDA64 pattern where the benchmark table is not embedded into the main dashboard.
@@ -294,6 +297,10 @@ Memory: much larger than LLC, for example 512 MiB or 1 GiB
 For a robust implementation, cache sizes should come from CPUID or `GetLogicalProcessorInformationEx`, not hardcoded constants. The benchmark matrix should derive sizes from detected topology, then run the same read/write/copy/latency kernels against each working set.
 
 Cache latency should also use pointer chasing. Sequential latency tests are misleading because hardware prefetchers can hide much of the access cost.
+
+The first implementation should follow
+[`memory-cache-benchmark-implementation-plan.md`](memory-cache-benchmark-implementation-plan.md):
+cache rows use topology-derived working sets, run as single-thread preferred-core tests, and extend the result protocol with row-level metrics while preserving the current Memory row behavior.
 
 ## Evolution Plan
 
