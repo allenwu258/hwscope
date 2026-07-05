@@ -48,6 +48,15 @@ This design introduces an application-level preload path that builds a reusable 
 - `CpuDetailCollector.Collect()` reads CPU, baseboard, BIOS, memory, graphics, current clock, and Windows logical processor topology.
 - The CPU topology inspect window is built from the resulting `CpuDetailReport.TopologyInspect`.
 
+### Memory / SPD Detail Page
+
+`src/HwScope.App/Pages/MemoryDetailPage.xaml.cs`
+
+- First `Loaded` event calls `App.HardwarePreload.EnsureLoadedAsync()`.
+- The page builds `MemoryDetailReport` from the shared snapshot.
+- Refresh calls global `App.HardwarePreload.RefreshAsync()`.
+- Current implementation uses WMI/SMBIOS-backed `Win32_PhysicalMemory` fields and shows explicit placeholders for raw SPD profiles and runtime controller timings.
+
 ### Memory Benchmark
 
 Memory benchmark UI receives a `HardwareReport?` for header display. Core benchmark code still performs its own environment and topology reads:
@@ -62,7 +71,7 @@ Memory benchmark UI receives a `HardwareReport?` for header display. Core benchm
 - On preload success, the window creates `MainWindow`, makes it the application main window, shows it, and closes itself.
 - On preload failure, the window shows retry and continue actions. Continue opens the app with no current snapshot, allowing later page refreshes to retry.
 - Closing the preload window cancels the startup UI flow so a late background completion cannot reopen the main window.
-- `HardwareSummaryPage`, `CpuDetailPage`, and memory benchmark header creation consume `App.HardwarePreload.EnsureLoadedAsync()` or `RefreshAsync()` instead of triggering independent WMI scans.
+- `HardwareSummaryPage`, `CpuDetailPage`, `MemoryDetailPage`, and memory benchmark header creation consume `App.HardwarePreload.EnsureLoadedAsync()` or `RefreshAsync()` instead of triggering independent WMI scans.
 
 The underlying WMI calls are still blocking. Cancellation can stop waiting callers and the startup UI flow, but a WMI query already running on the worker thread may continue until the provider returns.
 
@@ -99,7 +108,20 @@ These should be captured in the shared inventory snapshot:
   - ConfiguredClockSpeed
   - SMBIOSMemoryType
   - MemoryType
-  - Later extension candidates: Manufacturer, PartNumber, SerialNumber, BankLabel, DeviceLocator
+  - Manufacturer
+  - PartNumber
+  - SerialNumber
+  - BankLabel
+  - DeviceLocator
+  - FormFactor
+  - DataWidth
+  - TotalWidth
+  - ConfiguredVoltage
+  - MinVoltage
+  - MaxVoltage
+  - MemoryTypeDetail
+  - InterleavePosition
+  - Tag
 - Video controllers:
   - Name
   - AdapterRAM
@@ -330,6 +352,16 @@ The CPU detail page builds its report from the preload snapshot.
 
 CPU topology inspect continues to use `CpuDetailReport.TopologyInspect`, but now the report originates from the preloaded topology analysis.
 
+### Memory / SPD Detail Page
+
+The memory / SPD detail page builds its report from the preload snapshot.
+
+- On first load, call `await App.HardwarePreload.EnsureLoadedAsync()`.
+- Build `MemoryDetailReport` from the snapshot.
+- Render total capacity, memory type, configured speed, module tiles and selected module details.
+- Refresh button calls global `RefreshAsync()`, then rebuilds the report.
+- Raw SPD profiles and runtime timings remain provider-backed future data, shown as explicit placeholders rather than inferred values.
+
 ### Main Window
 
 Main window no longer uses the summary page as a data source for memory benchmark headers.
@@ -431,7 +463,7 @@ The preload pass should be best-effort.
 ### Phase 4: Page Migration
 
 - Status: implemented.
-- `HardwareSummaryPage` and `CpuDetailPage` consume the preload service.
+- `HardwareSummaryPage`, `CpuDetailPage`, and `MemoryDetailPage` consume the preload service.
 - Refresh buttons call global refresh.
 - Pages subscribe to inventory changes so related views can update from the same snapshot.
 
@@ -525,6 +557,7 @@ Mitigation:
 - Summary page does not synchronously read WMI on first load.
 - CPU page does not independently read the same WMI groups on first load.
 - Summary and CPU pages render from the same inventory timestamp after preload.
+- Memory / SPD detail page renders from the same inventory timestamp after preload.
 - Refresh action updates the shared inventory and re-renders consumers.
 - Memory benchmark window header no longer depends on forcing summary page refresh.
 - Preload diagnostics show step-level success/failure and elapsed time.

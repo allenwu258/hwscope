@@ -135,7 +135,7 @@
                     </Button>
                     <Button Style="{StaticResource QuickLaunchButtonStyle}"
                             ToolTip="内存"
-                            Click="ShowHardwareSummary_Click">
+                            Click="ShowMemoryDetail_Click">
                         <StackPanel HorizontalAlignment="Center">
                             <ui:SymbolIcon Symbol="Memory16"
                                            Width="30"
@@ -204,7 +204,7 @@
                                                    Icon="{ui:SymbolIcon DeveloperBoard20}"
                                                    Click="NavigationItem_Click" />
                             <ui:NavigationViewItem Content="内存"
-                                                   Tag="summary"
+                                                   Tag="memory-detail"
                                                    Icon="{ui:SymbolIcon Database24}"
                                                    Click="NavigationItem_Click" />
                             <ui:NavigationViewItem Content="显示设备"

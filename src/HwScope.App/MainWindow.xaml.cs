@@ -12,6 +12,7 @@ public partial class MainWindow : FluentWindow
 {
     private readonly HardwareSummaryPage _hardwareSummaryPage = new();
     private readonly CpuDetailPage _cpuDetailPage = new();
+    private readonly MemoryDetailPage _memoryDetailPage = new();
     private readonly HardwareCollector _hardwareReportBuilder = new();
     private HardwareReport? _currentReport;
 
@@ -22,6 +23,7 @@ public partial class MainWindow : FluentWindow
         _hardwareSummaryPage.StatusChanged += (_, status) => SetFooterStatus(status);
         _hardwareSummaryPage.CurrentReportChanged += (_, report) => _currentReport = report;
         _cpuDetailPage.StatusChanged += (_, status) => SetFooterStatus(status);
+        _memoryDetailPage.StatusChanged += (_, status) => SetFooterStatus(status);
         App.ThemeService.StatusChanged += (_, status) => SetFooterStatus(status);
         App.HardwarePreload.ProgressChanged += (_, progress) => SetFooterStatus(progress.Message);
         App.HardwarePreload.InventoryChanged += (_, snapshot) => _currentReport = _hardwareReportBuilder.CreateSummary(snapshot);
@@ -73,6 +75,9 @@ public partial class MainWindow : FluentWindow
             case "cpu-detail":
                 ShowCpuDetail();
                 break;
+            case "memory-detail":
+                ShowMemoryDetail();
+                break;
             case "summary":
                 ShowHardwareSummary();
                 break;
@@ -87,6 +92,11 @@ public partial class MainWindow : FluentWindow
     private void ShowMemoryBenchmark_Click(object sender, RoutedEventArgs e)
     {
         _ = ShowMemoryBenchmarkAsync();
+    }
+
+    private void ShowMemoryDetail_Click(object sender, RoutedEventArgs e)
+    {
+        ShowMemoryDetail();
     }
 
     private void StatusBarMenuItem_Click(object sender, RoutedEventArgs e)
@@ -130,6 +140,12 @@ public partial class MainWindow : FluentWindow
     {
         PageHost.Content = _cpuDetailPage;
         SetFooterStatus("CPU 详情。");
+    }
+
+    private void ShowMemoryDetail()
+    {
+        PageHost.Content = _memoryDetailPage;
+        SetFooterStatus("内存 / SPD 详情。");
     }
 
     private async Task ShowMemoryBenchmarkAsync()

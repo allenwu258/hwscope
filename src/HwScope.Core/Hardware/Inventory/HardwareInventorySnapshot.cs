@@ -41,7 +41,21 @@ public sealed record MemoryModuleSnapshot(
     uint Speed,
     uint ConfiguredClockSpeed,
     uint SmbiosMemoryType,
-    uint MemoryType);
+    uint MemoryType,
+    string Manufacturer,
+    string PartNumber,
+    string SerialNumber,
+    string BankLabel,
+    string DeviceLocator,
+    uint FormFactor,
+    uint DataWidth,
+    uint TotalWidth,
+    uint ConfiguredVoltage,
+    uint MinVoltage,
+    uint MaxVoltage,
+    uint MemoryTypeDetail,
+    uint InterleavePosition,
+    string Tag);
 
 public sealed record VideoControllerSnapshot(string Name, ulong AdapterRam, string PnpDeviceId);
 

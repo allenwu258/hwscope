@@ -45,7 +45,7 @@ public sealed class HardwareInventoryCollector
             .Select(ToBios)
             .FirstOrDefault());
 
-        var memoryModules = CollectStep(steps, progress, CollectionStepNames[3], totalSteps, ref completedSteps, () => Wmi.Query("SELECT Capacity, Speed, ConfiguredClockSpeed, SMBIOSMemoryType, MemoryType FROM Win32_PhysicalMemory")
+        var memoryModules = CollectStep(steps, progress, CollectionStepNames[3], totalSteps, ref completedSteps, () => Wmi.Query("SELECT * FROM Win32_PhysicalMemory")
             .Select(ToMemoryModule)
             .ToList());
 
@@ -195,7 +195,21 @@ public sealed class HardwareInventoryCollector
             Wmi.GetUInt(obj, "Speed"),
             Wmi.GetUInt(obj, "ConfiguredClockSpeed"),
             Wmi.GetUInt(obj, "SMBIOSMemoryType"),
-            Wmi.GetUInt(obj, "MemoryType"));
+            Wmi.GetUInt(obj, "MemoryType"),
+            Wmi.GetString(obj, "Manufacturer"),
+            Wmi.GetString(obj, "PartNumber"),
+            Wmi.GetString(obj, "SerialNumber"),
+            Wmi.GetString(obj, "BankLabel"),
+            Wmi.GetString(obj, "DeviceLocator"),
+            Wmi.GetUInt(obj, "FormFactor"),
+            Wmi.GetUInt(obj, "DataWidth"),
+            Wmi.GetUInt(obj, "TotalWidth"),
+            Wmi.GetUInt(obj, "ConfiguredVoltage"),
+            Wmi.GetUInt(obj, "MinVoltage"),
+            Wmi.GetUInt(obj, "MaxVoltage"),
+            Wmi.GetUInt(obj, "MemoryTypeDetail"),
+            Wmi.GetUInt(obj, "InterleavePosition"),
+            Wmi.GetString(obj, "Tag"));
     }
 
     private static VideoControllerSnapshot ToVideoController(ManagementObject obj)
