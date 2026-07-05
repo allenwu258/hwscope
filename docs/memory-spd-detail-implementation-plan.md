@@ -842,7 +842,7 @@ Stage 2 is intentionally close to Stage 1. It may be delivered in the same imple
 
 ## Stage 3 Native SPD Reader Plan
 
-The first UI change now has the Core boundary in place. The native worker project itself is still a later deliverable, but the app can already consume a schema-versioned `spd.exe --json` worker when present and degrade to structured notes when it is missing.
+The first UI change now has the Core boundary in place. The native worker project scaffold is available and the app can consume a schema-versioned `spd.exe --json` worker when present. The scaffold returns a structured non-fatal status until raw SMBus/SPD access is implemented.
 
 ### Project Shape
 
@@ -933,6 +933,7 @@ Implemented behavior:
 
 - `MemoryDetailCollector` depends on `ISpdProvider` and uses `NativeSpdProcessProvider` by default.
 - `NativeSpdProcessProvider` searches only relative worker locations under the app/base build tree.
+- `src/HwScope.Native.Spd` builds a minimal `spd.exe --json` worker that returns `platformBlocked` with diagnostics rather than fake module data.
 - Timing fields such as `casLatency`, `trcd`, `trp`, `tras`, and `trc` may be JSON numbers or strings.
 - Worker status values are mapped into `SpdProviderStatus` and shown through report notes and the summary chip.
 - SPD module data, when matched by serial, part number + locator, locator, or the single-module case, can override module identity fields and populate timing profiles.

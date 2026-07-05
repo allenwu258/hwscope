@@ -15,11 +15,17 @@
 
   <PropertyGroup>
     <MemoryBenchExecutable>$(MSBuildThisFileDirectory)..\HwScope.Native.MemoryBench\build\Release\membench.exe</MemoryBenchExecutable>
+    <SpdExecutable>$(MSBuildThisFileDirectory)..\HwScope.Native.Spd\build\Release\spd.exe</SpdExecutable>
   </PropertyGroup>
 
   <Target Name="CopyNativeMemoryBench" AfterTargets="Build" Condition="Exists('$(MemoryBenchExecutable)')">
     <MakeDir Directories="$(TargetDir)native" />
     <Copy SourceFiles="$(MemoryBenchExecutable)" DestinationFolder="$(TargetDir)native" SkipUnchangedFiles="true" />
+  </Target>
+
+  <Target Name="CopyNativeSpd" AfterTargets="Build" Condition="Exists('$(SpdExecutable)')">
+    <MakeDir Directories="$(TargetDir)native" />
+    <Copy SourceFiles="$(SpdExecutable)" DestinationFolder="$(TargetDir)native" SkipUnchangedFiles="true" />
   </Target>
 
   <PropertyGroup>
