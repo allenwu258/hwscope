@@ -1,7 +1,6 @@
 using System.Globalization;
-using System.Management;
 using System.Text.RegularExpressions;
-using HwScope.Core.Windows;
+using HwScope.Core.Hardware.Inventory;
 
 namespace HwScope.Core.Hardware.Cpu;
 
@@ -9,21 +8,16 @@ public sealed class CpuDetailCollector
 {
     public CpuDetailReport Collect()
     {
-        var processors = Wmi.Query("""
-            SELECT Name, Manufacturer, Description, NumberOfCores, NumberOfLogicalProcessors,
-                   MaxClockSpeed, CurrentClockSpeed, SocketDesignation, ProcessorId,
-                   Architecture, Family, Revision, Stepping
-            FROM Win32_Processor
-            """).ToList();
-        var cpu = processors.FirstOrDefault();
-        var board = Wmi.Query("SELECT Manufacturer, Product FROM Win32_BaseBoard").FirstOrDefault();
-        var bios = Wmi.Query("SELECT SMBIOSBIOSVersion, Version, ReleaseDate FROM Win32_BIOS").FirstOrDefault();
-        var memoryModules = Wmi.Query("SELECT Capacity, Speed, ConfiguredClockSpeed, SMBIOSMemoryType, MemoryType FROM Win32_PhysicalMemory").ToList();
-        var videoControllers = Wmi.Query("SELECT Name, AdapterRAM, PNPDeviceID FROM Win32_VideoController").ToList();
-        var perfClock = CollectPerfClockMHz();
-        var topologyAnalysis = CpuTopologyAnalyzer.TryAnalyze();
+        return CreateReport(new HardwareInventoryCollector().Collect());
+    }
 
-        var processorName = CleanName(Wmi.GetString(cpu, "Name"));
+    public CpuDetailReport CreateReport(HardwareInventorySnapshot snapshot)
+    {
+        var processors = snapshot.Processors;
+        var cpu = processors.FirstOrDefault();
+        var topologyAnalysis = snapshot.CpuTopology;
+
+        var processorName = CleanName(cpu?.Name);
         var knownInfo = CpuKnownProcessorCatalog.Match(processorName);
         var notes = new List<CpuDataNote>();
 
@@ -38,13 +32,13 @@ public sealed class CpuDetailCollector
             notes.AddRange(topologyAnalysis.Notes);
         }
 
-        var coreCount = SumUInt(processors, "NumberOfCores");
-        var logicalCount = SumUInt(processors, "NumberOfLogicalProcessors");
-        var currentClock = perfClock ?? Positive(Wmi.GetUInt(cpu, "CurrentClockSpeed"));
-        var maxClock = Positive(Wmi.GetUInt(cpu, "MaxClockSpeed"));
+        var coreCount = processors.Sum(processor => processor.NumberOfCores);
+        var logicalCount = processors.Sum(processor => processor.NumberOfLogicalProcessors);
+        var currentClock = Positive(snapshot.ProcessorFrequencyMHz) ?? Positive(cpu?.CurrentClockSpeed ?? 0);
+        var maxClock = Positive(cpu?.MaxClockSpeed ?? 0);
         var busClock = EstimateBusClock(currentClock, maxClock);
         var multiplier = currentClock is > 0 && busClock is > 0 ? currentClock / busClock : null;
-        var wmiPackage = FirstUseful(Wmi.GetString(cpu, "SocketDesignation"));
+        var wmiPackage = FirstUseful(cpu?.SocketDesignation);
         var packageValue = FirstUseful(wmiPackage, knownInfo?.Package);
         var packageSource = IsUseful(wmiPackage) ? CpuDataSource.Wmi : knownInfo is null ? CpuDataSource.Unknown : CpuDataSource.Mapping;
         var packageEstimated = !IsUseful(wmiPackage) && knownInfo is not null;
@@ -53,28 +47,28 @@ public sealed class CpuDetailCollector
             Identity: new CpuIdentity(
                 DisplayName: CpuField.Text(knownInfo?.DisplayName ?? ParseDisplayName(processorName), knownInfo is null ? CpuDataSource.Wmi : CpuDataSource.Mapping, isEstimated: knownInfo is not null),
                 SpecificationName: CpuField.Text(processorName, CpuDataSource.Wmi),
-                Vendor: CpuField.Text(NormalizeVendor(Wmi.GetString(cpu, "Manufacturer")), CpuDataSource.Wmi),
+                Vendor: CpuField.Text(NormalizeVendor(cpu?.Manufacturer ?? string.Empty), CpuDataSource.Wmi),
                 CodeName: CpuField.Text(knownInfo?.CodeName, knownInfo is null ? CpuDataSource.Unknown : CpuDataSource.Mapping, CpuField.PendingCpuidText, isEstimated: knownInfo is not null)),
             Specification: new CpuSpecification(
                 Package: CpuField.Text(packageValue, packageSource, isEstimated: packageEstimated),
                 Technology: CpuField.Text(knownInfo?.Technology, knownInfo is null ? CpuDataSource.Unknown : CpuDataSource.Mapping, CpuField.PendingCpuidText, isEstimated: knownInfo is not null),
                 Tdp: CpuField.Text(knownInfo?.Tdp, knownInfo is null ? CpuDataSource.Unknown : CpuDataSource.Mapping, CpuField.PendingCpuidText, isEstimated: knownInfo is not null),
                 CoreVoltage: CpuField.Placeholder<string>("待接入传感器"),
-                Family: CpuField.Text(FormatUInt(Wmi.GetUInt(cpu, "Family")), CpuDataSource.Wmi),
+                Family: CpuField.Text(FormatUInt(cpu?.Family ?? 0), CpuDataSource.Wmi),
                 Model: CpuField.Placeholder<string>(),
-                Stepping: CpuField.Text(Wmi.GetString(cpu, "Stepping"), CpuDataSource.Wmi),
+                Stepping: CpuField.Text(cpu?.Stepping ?? string.Empty, CpuDataSource.Wmi),
                 ExtendedFamily: CpuField.Placeholder<string>(),
                 ExtendedModel: CpuField.Placeholder<string>(),
-                Revision: CpuField.Text(knownInfo?.Revision ?? FormatRevision(Wmi.GetUInt(cpu, "Revision")), knownInfo is null ? CpuDataSource.Wmi : CpuDataSource.Mapping, isEstimated: knownInfo is not null)),
+                Revision: CpuField.Text(knownInfo?.Revision ?? FormatRevision(cpu?.Revision ?? 0), knownInfo is null ? CpuDataSource.Wmi : CpuDataSource.Mapping, isEstimated: knownInfo is not null)),
             Topology: topologyAnalysis?.Topology ?? new CpuTopology(
                 PackageCount: CpuField.Number(processors.Count, CpuDataSource.Wmi),
-                CoreCount: CpuField.Number(coreCount, CpuDataSource.Wmi),
-                LogicalProcessorCount: CpuField.Number(logicalCount, CpuDataSource.Wmi),
+                CoreCount: CpuField.Number((int)coreCount, CpuDataSource.Wmi),
+                LogicalProcessorCount: CpuField.Number((int)logicalCount, CpuDataSource.Wmi),
                 SmtEnabled: CpuField.Boolean(coreCount > 0 && logicalCount > coreCount, CpuDataSource.Computed, isEstimated: true),
                 CpuGroupCount: CpuField.Placeholder<int>("待接入 Windows 拓扑 API"),
                 NumaNodeCount: CpuField.Placeholder<int>("待接入 Windows 拓扑 API")),
             Clocks: new CpuClockInfo(
-                CurrentMHz: CpuField.MHz(currentClock, perfClock is not null ? CpuDataSource.Wmi : CpuDataSource.Wmi),
+                CurrentMHz: CpuField.MHz(currentClock, CpuDataSource.Wmi),
                 BaseMHz: CpuField.MHz(maxClock, CpuDataSource.Wmi),
                 MaxMHz: CpuField.MHz(maxClock, CpuDataSource.Wmi),
                 BusMHz: CpuField.MHz(busClock, CpuDataSource.Computed, isEstimated: true, note: "按常见 100 MHz 基准时钟估算。"),
@@ -84,15 +78,15 @@ public sealed class CpuDetailCollector
             TopologyInspect: topologyAnalysis?.InspectReport,
             Features: knownInfo?.Features ?? CreatePlaceholderFeatures(),
             Platform: new CpuPlatformContext(
-                Motherboard: CpuField.Text(JoinUseful(Wmi.GetString(board, "Manufacturer"), Wmi.GetString(board, "Product")), CpuDataSource.Wmi),
-                BiosVersion: CpuField.Text(FirstUseful(Wmi.GetString(bios, "SMBIOSBIOSVersion"), Wmi.GetString(bios, "Version")), CpuDataSource.Wmi),
+                Motherboard: CpuField.Text(JoinUseful(snapshot.BaseBoard?.Manufacturer, snapshot.BaseBoard?.Product), CpuDataSource.Wmi),
+                BiosVersion: CpuField.Text(FirstUseful(snapshot.Bios?.SmbiosBiosVersion, snapshot.Bios?.Version), CpuDataSource.Wmi),
                 Chipset: CpuField.Placeholder<string>(),
-                IntegratedVideo: CpuField.Text(CollectIntegratedVideo(videoControllers), CpuDataSource.Wmi, isEstimated: true),
-                MemoryType: CpuField.Text(CollectMemoryType(memoryModules), CpuDataSource.Wmi),
-                MemoryClock: CpuField.Text(CollectMemoryClock(memoryModules), CpuDataSource.Wmi),
+                IntegratedVideo: CpuField.Text(CollectIntegratedVideo(snapshot.VideoControllers), CpuDataSource.Wmi, isEstimated: true),
+                MemoryType: CpuField.Text(CollectMemoryType(snapshot.MemoryModules), CpuDataSource.Wmi),
+                MemoryClock: CpuField.Text(CollectMemoryClock(snapshot.MemoryModules), CpuDataSource.Wmi),
                 DramFsbRatio: CpuField.Placeholder<string>()),
             Notes: notes,
-            GeneratedAt: DateTimeOffset.Now);
+            GeneratedAt: snapshot.GeneratedAt);
     }
 
     private static IReadOnlyList<CpuCacheInfo> CreatePlaceholderCaches()
@@ -117,28 +111,6 @@ public sealed class CpuDetailCollector
         [
             new CpuFeature(CpuField.PendingCpuidText, CpuFeatureGroup.Other, IsSupported: false, CpuDataSource.Placeholder)
         ];
-    }
-
-    private static double? CollectPerfClockMHz()
-    {
-        var sample = Wmi.Query("""
-            SELECT Name, PercentProcessorPerformance, ProcessorFrequency
-            FROM Win32_PerfFormattedData_Counters_ProcessorInformation
-            WHERE Name = '_Total'
-            """).FirstOrDefault();
-        var frequency = Wmi.GetUInt(sample, "ProcessorFrequency");
-        return Positive(frequency);
-    }
-
-    private static uint SumUInt(IEnumerable<ManagementObject> objects, string propertyName)
-    {
-        var sum = 0u;
-        foreach (var obj in objects)
-        {
-            sum += Wmi.GetUInt(obj, propertyName);
-        }
-
-        return sum;
     }
 
     private static double? Positive(uint value)
@@ -195,13 +167,13 @@ public sealed class CpuDetailCollector
         return value > 0 ? value.ToString(CultureInfo.InvariantCulture) : string.Empty;
     }
 
-    private static string CollectIntegratedVideo(IEnumerable<ManagementObject> videoControllers)
+    private static string CollectIntegratedVideo(IEnumerable<VideoControllerSnapshot> videoControllers)
     {
         var integrated = videoControllers
             .Select(g => new
             {
-                Name = CleanName(Wmi.GetString(g, "Name")),
-                Pnp = Wmi.GetString(g, "PNPDeviceID")
+                Name = CleanName(g.Name),
+                Pnp = g.PnpDeviceId
             })
             .Where(g => IsUseful(g.Name))
             .Where(g => IsIntegratedGpu(g.Name, g.Pnp))
@@ -221,7 +193,7 @@ public sealed class CpuDetailCollector
             || pnp.Contains("VEN_8086", StringComparison.OrdinalIgnoreCase);
     }
 
-    private static string CollectMemoryType(IReadOnlyList<ManagementObject> modules)
+    private static string CollectMemoryType(IReadOnlyList<MemoryModuleSnapshot> modules)
     {
         if (modules.Count == 0)
         {
@@ -229,25 +201,25 @@ public sealed class CpuDetailCollector
         }
 
         var type = modules.Select(GetMemoryType).FirstOrDefault(IsUseful);
-        var speed = modules.Select(m => Wmi.GetUInt(m, "ConfiguredClockSpeed"))
-            .Concat(modules.Select(m => Wmi.GetUInt(m, "Speed")))
+        var speed = modules.Select(m => m.ConfiguredClockSpeed)
+            .Concat(modules.Select(m => m.Speed))
             .FirstOrDefault(s => s > 0);
 
         return JoinUseful(type, speed > 0 ? $"{speed} MHz" : string.Empty);
     }
 
-    private static string CollectMemoryClock(IReadOnlyList<ManagementObject> modules)
+    private static string CollectMemoryClock(IReadOnlyList<MemoryModuleSnapshot> modules)
     {
-        var speed = modules.Select(m => Wmi.GetUInt(m, "ConfiguredClockSpeed"))
-            .Concat(modules.Select(m => Wmi.GetUInt(m, "Speed")))
+        var speed = modules.Select(m => m.ConfiguredClockSpeed)
+            .Concat(modules.Select(m => m.Speed))
             .FirstOrDefault(s => s > 0);
 
         return speed > 0 ? $"{speed} MHz" : string.Empty;
     }
 
-    private static string GetMemoryType(ManagementObject module)
+    private static string GetMemoryType(MemoryModuleSnapshot module)
     {
-        var smbiosType = Wmi.GetUInt(module, "SMBIOSMemoryType");
+        var smbiosType = module.SmbiosMemoryType;
         if (smbiosType is 20 or 21 or 22 or 24 or 26 or 27 or 28 or 29 or 30 or 31 or 34 or 35)
         {
             return smbiosType switch
@@ -268,7 +240,7 @@ public sealed class CpuDetailCollector
             };
         }
 
-        var memoryType = Wmi.GetUInt(module, "MemoryType");
+        var memoryType = module.MemoryType;
         return memoryType switch
         {
             20 => "DDR",

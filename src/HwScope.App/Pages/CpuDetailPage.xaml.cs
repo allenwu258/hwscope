@@ -6,6 +6,7 @@ using System.Windows.Input;
 using System.IO;
 using System.Globalization;
 using HwScope.Core.Hardware.Cpu;
+using HwScope.Core.Hardware.Inventory;
 using HwScope.App.Windows;
 using Microsoft.Win32;
 
@@ -13,10 +14,11 @@ namespace HwScope.App.Pages;
 
 public partial class CpuDetailPage : UserControl
 {
-    private readonly CpuDetailCollector _collector = new();
+    private readonly CpuDetailCollector _reportBuilder = new();
     private CpuDetailReport? _currentReport;
     private int _refreshVersion;
     private bool _loadedOnce;
+    private bool _isSubscribedToPreload;
 
     public event EventHandler<string>? StatusChanged;
 
@@ -26,17 +28,29 @@ public partial class CpuDetailPage : UserControl
         SetBusy(false);
         Loaded += async (_, _) =>
         {
+            SubscribeToPreload();
             if (_loadedOnce)
             {
                 return;
             }
 
             _loadedOnce = true;
-            await RefreshAsync();
+            await LoadFromPreloadAsync();
         };
+        Unloaded += (_, _) => UnsubscribeFromPreload();
     }
 
     public async Task RefreshAsync()
+    {
+        await RefreshAsync(forceRefresh: true);
+    }
+
+    public async Task LoadFromPreloadAsync()
+    {
+        await RefreshAsync(forceRefresh: false);
+    }
+
+    private async Task RefreshAsync(bool forceRefresh)
     {
         var version = Interlocked.Increment(ref _refreshVersion);
         SetBusy(true);
@@ -44,13 +58,15 @@ public partial class CpuDetailPage : UserControl
 
         try
         {
-            var report = await Task.Run(_collector.Collect).ConfigureAwait(true);
+            var snapshot = forceRefresh
+                ? await App.HardwarePreload.RefreshAsync().ConfigureAwait(true)
+                : await App.HardwarePreload.EnsureLoadedAsync().ConfigureAwait(true);
+            var report = _reportBuilder.CreateReport(snapshot);
             if (version != _refreshVersion)
             {
                 return;
             }
 
-            _currentReport = report;
             Render(report);
             SetStatus("CPU 详情已刷新。");
         }
@@ -77,6 +93,38 @@ public partial class CpuDetailPage : UserControl
     private async void RefreshButton_Click(object sender, RoutedEventArgs e)
     {
         await RefreshAsync();
+    }
+
+    private void HardwarePreload_InventoryChanged(object? sender, HardwareInventorySnapshot snapshot)
+    {
+        if (_currentReport is null)
+        {
+            return;
+        }
+
+        Render(_reportBuilder.CreateReport(snapshot));
+    }
+
+    private void SubscribeToPreload()
+    {
+        if (_isSubscribedToPreload)
+        {
+            return;
+        }
+
+        App.HardwarePreload.InventoryChanged += HardwarePreload_InventoryChanged;
+        _isSubscribedToPreload = true;
+    }
+
+    private void UnsubscribeFromPreload()
+    {
+        if (!_isSubscribedToPreload)
+        {
+            return;
+        }
+
+        App.HardwarePreload.InventoryChanged -= HardwarePreload_InventoryChanged;
+        _isSubscribedToPreload = false;
     }
 
     private void CopyButton_Click(object sender, RoutedEventArgs e)
@@ -142,6 +190,7 @@ public partial class CpuDetailPage : UserControl
 
     private void Render(CpuDetailReport report)
     {
+        _currentReport = report;
         ProcessorNameText.Text = report.Identity.SpecificationName.DisplayText;
         ProcessorMetaText.Text = $"{report.Identity.Vendor.DisplayText} · {report.Identity.CodeName.DisplayText} · {report.GeneratedAt:yyyy-MM-dd HH:mm:ss}";
         CpuSubtitleText.Text = $"检测时间：{report.GeneratedAt:yyyy-MM-dd HH:mm:ss}";

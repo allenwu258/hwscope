@@ -1,6 +1,7 @@
 using System.Windows;
 using System.IO;
 using HwScope.App.Configuration;
+using HwScope.App.Services;
 using HwScope.App.Theming;
 using HwScope.App.Windows;
 
@@ -15,6 +16,7 @@ public partial class App : Application
 
     public static ThemeService ThemeService { get; private set; } = null!;
     public static SingleInstanceWindowManager SingleInstanceWindows { get; private set; } = null!;
+    public static HardwarePreloadService HardwarePreload { get; private set; } = null!;
 
     protected override void OnStartup(StartupEventArgs e)
     {
@@ -27,9 +29,12 @@ public partial class App : Application
             new ThemeDefinitionStore(),
             new ThemeResourceBuilder());
         SingleInstanceWindows = new SingleInstanceWindowManager();
+        HardwarePreload = new HardwarePreloadService();
         ThemeService.ApplyCurrentTheme();
 
         base.OnStartup(e);
+
+        new HardwarePreloadWindow().Show();
     }
 
     private static void OnDispatcherUnhandledException(object sender, System.Windows.Threading.DispatcherUnhandledExceptionEventArgs e)

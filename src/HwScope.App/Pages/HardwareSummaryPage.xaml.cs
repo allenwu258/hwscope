@@ -3,15 +3,18 @@ using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
 using HwScope.Core.Hardware;
+using HwScope.Core.Hardware.Inventory;
 using Wpf.Ui.Controls;
 
 namespace HwScope.App.Pages;
 
 public partial class HardwareSummaryPage : UserControl
 {
-    private readonly HardwareCollector _collector = new();
+    private readonly HardwareCollector _reportBuilder = new();
     private SummaryViewMode _viewMode = SummaryViewMode.Card;
     private HardwareReport? _currentReport;
+    private int _refreshVersion;
+    private bool _isSubscribedToPreload;
 
     public event EventHandler<HardwareReport?>? CurrentReportChanged;
     public event EventHandler<string>? StatusChanged;
@@ -20,29 +23,40 @@ public partial class HardwareSummaryPage : UserControl
     {
         InitializeComponent();
         ApplyViewMode();
-        Loaded += (_, _) =>
+        Loaded += async (_, _) =>
         {
+            SubscribeToPreload();
             if (_currentReport is null)
             {
-                RefreshHardwareSummary();
+                await RefreshHardwareSummaryAsync(forceRefresh: false);
             }
         };
+        Unloaded += (_, _) => UnsubscribeFromPreload();
     }
 
     public HardwareReport? CurrentReport => _currentReport;
 
-    public void RefreshHardwareSummary()
+    public Task RefreshHardwareSummaryAsync(bool forceRefresh = true)
     {
+        return RefreshHardwareSummaryCoreAsync(forceRefresh);
+    }
+
+    private async Task RefreshHardwareSummaryCoreAsync(bool forceRefresh)
+    {
+        var version = Interlocked.Increment(ref _refreshVersion);
         SetSummaryBusyState(true);
 
         try
         {
-            _currentReport = _collector.CollectSummary();
-            var summaryItems = HardwareSummaryItem.FromReport(_currentReport);
-            CardHardwareSummaryList.ItemsSource = summaryItems;
-            ListHardwareSummaryList.ItemsSource = summaryItems;
-            GeneratedAtText.Text = $"检测时间：{_currentReport.GeneratedAt:yyyy-MM-dd HH:mm:ss}";
-            RaiseCurrentReportChanged();
+            var snapshot = forceRefresh
+                ? await App.HardwarePreload.RefreshAsync().ConfigureAwait(true)
+                : await App.HardwarePreload.EnsureLoadedAsync().ConfigureAwait(true);
+            if (version != _refreshVersion)
+            {
+                return;
+            }
+
+            Render(snapshot);
             SetStatus("硬件检测完成。");
         }
         catch (Exception ex)
@@ -52,13 +66,48 @@ public partial class HardwareSummaryPage : UserControl
         }
         finally
         {
-            SetSummaryBusyState(false);
+            if (version == _refreshVersion)
+            {
+                SetSummaryBusyState(false);
+            }
         }
     }
 
-    private void RefreshButton_Click(object sender, RoutedEventArgs e)
+    private async void RefreshButton_Click(object sender, RoutedEventArgs e)
     {
-        RefreshHardwareSummary();
+        await RefreshHardwareSummaryAsync();
+    }
+
+    private void HardwarePreload_InventoryChanged(object? sender, HardwareInventorySnapshot snapshot)
+    {
+        if (_currentReport is null)
+        {
+            return;
+        }
+
+        Render(snapshot);
+    }
+
+    private void SubscribeToPreload()
+    {
+        if (_isSubscribedToPreload)
+        {
+            return;
+        }
+
+        App.HardwarePreload.InventoryChanged += HardwarePreload_InventoryChanged;
+        _isSubscribedToPreload = true;
+    }
+
+    private void UnsubscribeFromPreload()
+    {
+        if (!_isSubscribedToPreload)
+        {
+            return;
+        }
+
+        App.HardwarePreload.InventoryChanged -= HardwarePreload_InventoryChanged;
+        _isSubscribedToPreload = false;
     }
 
     private void CopyButton_Click(object sender, RoutedEventArgs e)
@@ -108,6 +157,16 @@ public partial class HardwareSummaryPage : UserControl
     private void RaiseCurrentReportChanged()
     {
         CurrentReportChanged?.Invoke(this, _currentReport);
+    }
+
+    private void Render(HardwareInventorySnapshot snapshot)
+    {
+        _currentReport = _reportBuilder.CreateSummary(snapshot);
+        var summaryItems = HardwareSummaryItem.FromReport(_currentReport);
+        CardHardwareSummaryList.ItemsSource = summaryItems;
+        ListHardwareSummaryList.ItemsSource = summaryItems;
+        GeneratedAtText.Text = $"检测时间：{_currentReport.GeneratedAt:yyyy-MM-dd HH:mm:ss}";
+        RaiseCurrentReportChanged();
     }
 
     private enum SummaryViewMode

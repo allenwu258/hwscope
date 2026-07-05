@@ -12,6 +12,7 @@ public partial class MainWindow : FluentWindow
 {
     private readonly HardwareSummaryPage _hardwareSummaryPage = new();
     private readonly CpuDetailPage _cpuDetailPage = new();
+    private readonly HardwareCollector _hardwareReportBuilder = new();
     private HardwareReport? _currentReport;
 
     public MainWindow()
@@ -22,6 +23,8 @@ public partial class MainWindow : FluentWindow
         _hardwareSummaryPage.CurrentReportChanged += (_, report) => _currentReport = report;
         _cpuDetailPage.StatusChanged += (_, status) => SetFooterStatus(status);
         App.ThemeService.StatusChanged += (_, status) => SetFooterStatus(status);
+        App.HardwarePreload.ProgressChanged += (_, progress) => SetFooterStatus(progress.Message);
+        App.HardwarePreload.InventoryChanged += (_, snapshot) => _currentReport = _hardwareReportBuilder.CreateSummary(snapshot);
 
         Loaded += (_, _) =>
         {
@@ -65,7 +68,7 @@ public partial class MainWindow : FluentWindow
         switch (tag)
         {
             case "memory-benchmark":
-                ShowMemoryBenchmark();
+                _ = ShowMemoryBenchmarkAsync();
                 break;
             case "cpu-detail":
                 ShowCpuDetail();
@@ -83,7 +86,7 @@ public partial class MainWindow : FluentWindow
 
     private void ShowMemoryBenchmark_Click(object sender, RoutedEventArgs e)
     {
-        ShowMemoryBenchmark();
+        _ = ShowMemoryBenchmarkAsync();
     }
 
     private void StatusBarMenuItem_Click(object sender, RoutedEventArgs e)
@@ -129,22 +132,25 @@ public partial class MainWindow : FluentWindow
         SetFooterStatus("CPU 详情。");
     }
 
-    private void ShowMemoryBenchmark()
+    private async Task ShowMemoryBenchmarkAsync()
     {
         try
         {
+            if (App.SingleInstanceWindows.TryActivate(SingleInstanceWindowKeys.MemoryBenchmark))
+            {
+                SetFooterStatus("已打开内存跑分窗口。");
+                return;
+            }
+
+            if (_currentReport is null)
+            {
+                var snapshot = await App.HardwarePreload.EnsureLoadedAsync().ConfigureAwait(true);
+                _currentReport = _hardwareReportBuilder.CreateSummary(snapshot);
+            }
+
             App.SingleInstanceWindows.ShowOrActivate(
                 SingleInstanceWindowKeys.MemoryBenchmark,
-                () =>
-                {
-                    if (_currentReport is null)
-                    {
-                        _hardwareSummaryPage.RefreshHardwareSummary();
-                        _currentReport = _hardwareSummaryPage.CurrentReport;
-                    }
-
-                    return new MemoryBenchmarkWindow(_currentReport);
-                });
+                () => new MemoryBenchmarkWindow(_currentReport));
             SetFooterStatus("已打开内存跑分窗口。");
         }
         catch (Exception ex)

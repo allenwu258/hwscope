@@ -1,7 +1,6 @@
 using System.Globalization;
-using System.Management;
 using System.Text.RegularExpressions;
-using HwScope.Core.Windows;
+using HwScope.Core.Hardware.Inventory;
 
 namespace HwScope.Core.Hardware;
 
@@ -11,30 +10,35 @@ public sealed class HardwareCollector
 
     public HardwareReport CollectSummary()
     {
-        return new HardwareReport(
-            Processor: CollectProcessor(),
-            Motherboard: CollectMotherboard(),
-            Memory: CollectMemory(),
-            Graphics: CollectGraphics(),
-            Display: CollectDisplay(),
-            Disk: CollectDisk(),
-            Audio: CollectAudio(),
-            Network: CollectNetwork(),
-            GeneratedAt: DateTimeOffset.Now);
+        return CreateSummary(new HardwareInventoryCollector().Collect());
     }
 
-    private static string CollectProcessor()
+    public HardwareReport CreateSummary(HardwareInventorySnapshot snapshot)
     {
-        var cpu = Wmi.Query("SELECT Name, NumberOfCores, NumberOfLogicalProcessors, MaxClockSpeed FROM Win32_Processor").FirstOrDefault();
+        return new HardwareReport(
+            Processor: CollectProcessor(snapshot),
+            Motherboard: CollectMotherboard(snapshot),
+            Memory: CollectMemory(snapshot),
+            Graphics: CollectGraphics(snapshot),
+            Display: CollectDisplay(snapshot),
+            Disk: CollectDisk(snapshot),
+            Audio: CollectAudio(snapshot),
+            Network: CollectNetwork(snapshot),
+            GeneratedAt: snapshot.GeneratedAt);
+    }
+
+    private static string CollectProcessor(HardwareInventorySnapshot snapshot)
+    {
+        var cpu = snapshot.Processors.FirstOrDefault();
         if (cpu is null)
         {
             return Unknown;
         }
 
-        var name = CleanName(Wmi.GetString(cpu, "Name"));
-        var cores = Wmi.GetUInt(cpu, "NumberOfCores");
-        var threads = Wmi.GetUInt(cpu, "NumberOfLogicalProcessors");
-        var clockMhz = Wmi.GetUInt(cpu, "MaxClockSpeed");
+        var name = CleanName(cpu.Name);
+        var cores = cpu.NumberOfCores;
+        var threads = cpu.NumberOfLogicalProcessors;
+        var clockMhz = cpu.MaxClockSpeed;
 
         var parts = new List<string>();
         if (!string.IsNullOrWhiteSpace(name))
@@ -55,44 +59,43 @@ public sealed class HardwareCollector
         return JoinOrUnknown(parts);
     }
 
-    private static string CollectMotherboard()
+    private static string CollectMotherboard(HardwareInventorySnapshot snapshot)
     {
-        var board = Wmi.Query("SELECT Manufacturer, Product FROM Win32_BaseBoard").FirstOrDefault();
-        var manufacturer = CleanName(Wmi.GetString(board, "Manufacturer"));
-        var product = CleanName(Wmi.GetString(board, "Product"));
+        var manufacturer = CleanName(snapshot.BaseBoard?.Manufacturer);
+        var product = CleanName(snapshot.BaseBoard?.Product);
         return JoinOrUnknown(new[] { manufacturer, product }.Where(IsUseful).Distinct(StringComparer.OrdinalIgnoreCase));
     }
 
-    private static string CollectMemory()
+    private static string CollectMemory(HardwareInventorySnapshot snapshot)
     {
-        var modules = Wmi.Query("SELECT Capacity, Speed, ConfiguredClockSpeed, SMBIOSMemoryType, MemoryType FROM Win32_PhysicalMemory").ToList();
+        var modules = snapshot.MemoryModules;
         if (modules.Count == 0)
         {
             return Unknown;
         }
 
-        var totalBytes = modules.Sum(m => (decimal)Wmi.GetULong(m, "Capacity"));
+        var totalBytes = modules.Sum(m => (decimal)m.Capacity);
         var total = FormatBinaryBytes(totalBytes, 0);
-        var speed = modules.Select(m => Wmi.GetUInt(m, "ConfiguredClockSpeed"))
-            .Concat(modules.Select(m => Wmi.GetUInt(m, "Speed")))
+        var speed = modules.Select(m => m.ConfiguredClockSpeed)
+            .Concat(modules.Select(m => m.Speed))
             .FirstOrDefault(s => s > 0);
         var ddr = modules.Select(GetMemoryType).FirstOrDefault(IsUseful);
         var layout = string.Join(" + ", modules
-            .Select(m => FormatBinaryBytes(Wmi.GetULong(m, "Capacity"), 0))
+            .Select(m => FormatBinaryBytes(m.Capacity, 0))
             .Where(IsUseful));
 
         var head = string.Join(' ', new[] { total, ddr, speed > 0 ? $"{speed}MHz" : string.Empty }.Where(IsUseful));
         return IsUseful(layout) ? $"{head}（{layout}）" : head;
     }
 
-    private static string CollectGraphics()
+    private static string CollectGraphics(HardwareInventorySnapshot snapshot)
     {
-        var gpus = Wmi.Query("SELECT Name, AdapterRAM, PNPDeviceID FROM Win32_VideoController")
+        var gpus = snapshot.VideoControllers
             .Select(g => new
             {
-                Name = CleanName(Wmi.GetString(g, "Name")),
-                Memory = Wmi.GetULong(g, "AdapterRAM"),
-                Pnp = Wmi.GetString(g, "PNPDeviceID")
+                Name = CleanName(g.Name),
+                Memory = g.AdapterRam,
+                Pnp = g.PnpDeviceId
             })
             .Where(g => IsUseful(g.Name))
             .OrderByDescending(g => IsDiscreteGpu(g.Name, g.Pnp))
@@ -111,18 +114,13 @@ public sealed class HardwareCollector
         }));
     }
 
-    private static string CollectDisplay()
+    private static string CollectDisplay(HardwareInventorySnapshot snapshot)
     {
-        var monitors = Wmi.Query(@"SELECT UserFriendlyName, ManufacturerName, ProductCodeID FROM WmiMonitorID", @"root\wmi")
-            .Select(m => new
-            {
-                Friendly = DecodeUShortArray(m["UserFriendlyName"]),
-                Manufacturer = DecodeUShortArray(m["ManufacturerName"]),
-                Product = DecodeUShortArray(m["ProductCodeID"])
-            })
+        var monitors = snapshot.Monitors
+            .Where(m => IsUseful(m.FriendlyName) || IsUseful(m.ManufacturerName) || IsUseful(m.ProductCodeId))
             .Select(m =>
             {
-                var model = IsUseful(m.Friendly) ? m.Friendly : JoinOrUnknown(new[] { m.Manufacturer, m.Product }.Where(IsUseful));
+                var model = IsUseful(m.FriendlyName) ? m.FriendlyName : JoinOrUnknown(new[] { m.ManufacturerName, m.ProductCodeId }.Where(IsUseful));
                 return CleanName(model);
             })
             .Where(IsUseful)
@@ -134,8 +132,8 @@ public sealed class HardwareCollector
             return string.Join(" / ", monitors);
         }
 
-        var desktopMonitors = Wmi.Query("SELECT Name FROM Win32_DesktopMonitor")
-            .Select(m => CleanName(Wmi.GetString(m, "Name")))
+        var desktopMonitors = snapshot.Monitors
+            .Select(m => CleanName(m.FallbackName))
             .Where(IsUseful)
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
@@ -143,15 +141,15 @@ public sealed class HardwareCollector
         return desktopMonitors.Count > 0 ? string.Join(" / ", desktopMonitors) : Unknown;
     }
 
-    private static string CollectDisk()
+    private static string CollectDisk(HardwareInventorySnapshot snapshot)
     {
-        var disks = Wmi.Query("SELECT Model, Size, MediaType, InterfaceType FROM Win32_DiskDrive")
+        var disks = snapshot.DiskDrives
             .Select(d => new
             {
-                Model = CleanName(Wmi.GetString(d, "Model")),
-                Size = Wmi.GetULong(d, "Size"),
-                MediaType = Wmi.GetString(d, "MediaType"),
-                Interface = Wmi.GetString(d, "InterfaceType")
+                Model = CleanName(d.Model),
+                d.Size,
+                MediaType = d.MediaType,
+                Interface = d.InterfaceType
             })
             .Where(d => IsUseful(d.Model))
             .OrderByDescending(d => d.Size)
@@ -169,10 +167,10 @@ public sealed class HardwareCollector
         }));
     }
 
-    private static IReadOnlyList<string> CollectAudio()
+    private static IReadOnlyList<string> CollectAudio(HardwareInventorySnapshot snapshot)
     {
-        var devices = Wmi.Query("SELECT Name FROM Win32_SoundDevice")
-            .Select(d => CleanName(Wmi.GetString(d, "Name")))
+        var devices = snapshot.AudioDevices
+            .Select(d => CleanName(d.Name))
             .Where(IsUseful)
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
@@ -180,15 +178,15 @@ public sealed class HardwareCollector
         return devices.Count > 0 ? devices : new[] { Unknown };
     }
 
-    private static string CollectNetwork()
+    private static string CollectNetwork(HardwareInventorySnapshot snapshot)
     {
-        var adapters = Wmi.Query("SELECT Name, NetConnectionStatus, PhysicalAdapter, AdapterType, Speed FROM Win32_NetworkAdapter WHERE PhysicalAdapter = True")
+        var adapters = snapshot.NetworkAdapters
             .Select(a => new
             {
-                Name = CleanName(Wmi.GetString(a, "Name")),
-                Status = Wmi.GetUInt(a, "NetConnectionStatus"),
-                AdapterType = Wmi.GetString(a, "AdapterType"),
-                Speed = Wmi.GetULong(a, "Speed")
+                Name = CleanName(a.Name),
+                Status = a.NetConnectionStatus,
+                a.AdapterType,
+                a.Speed
             })
             .Where(a => IsUseful(a.Name) && !IsVirtualNetworkAdapter(a.Name))
             .OrderByDescending(a => a.Status == 2)
@@ -204,9 +202,9 @@ public sealed class HardwareCollector
         return string.Join(" / ", adapters.Select(a => a.Name));
     }
 
-    private static string GetMemoryType(ManagementObject module)
+    private static string GetMemoryType(MemoryModuleSnapshot module)
     {
-        var smbiosType = Wmi.GetUInt(module, "SMBIOSMemoryType");
+        var smbiosType = module.SmbiosMemoryType;
         if (smbiosType is 20 or 21 or 22 or 24 or 26 or 27 or 28 or 29 or 30 or 31 or 34 or 35)
         {
             return smbiosType switch
@@ -227,7 +225,7 @@ public sealed class HardwareCollector
             };
         }
 
-        var memoryType = Wmi.GetUInt(module, "MemoryType");
+        var memoryType = module.MemoryType;
         return memoryType switch
         {
             20 => "DDR",
@@ -277,17 +275,6 @@ public sealed class HardwareCollector
 
         var cleaned = Regex.Replace(value, @"\s+", " ").Trim();
         return cleaned.Trim('\0');
-    }
-
-    private static string DecodeUShortArray(object? value)
-    {
-        if (value is not ushort[] data)
-        {
-            return string.Empty;
-        }
-
-        var chars = data.TakeWhile(c => c != 0).Select(c => (char)c).ToArray();
-        return CleanName(new string(chars));
     }
 
     private static string FormatBinaryBytes(decimal bytes, int decimals)
@@ -340,4 +327,3 @@ public sealed class HardwareCollector
             && !trimmed.Equals("System manufacturer", StringComparison.OrdinalIgnoreCase);
     }
 }
-
