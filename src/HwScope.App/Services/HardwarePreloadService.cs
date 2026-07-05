@@ -10,6 +10,7 @@ public sealed class HardwarePreloadService
     private readonly Dispatcher _dispatcher;
     private readonly SemaphoreSlim _gate = new(1, 1);
     private Task<HardwareInventorySnapshot>? _loadTask;
+    private long _loadGeneration;
 
     public HardwarePreloadService()
         : this(Application.Current.Dispatcher)
@@ -60,7 +61,8 @@ public sealed class HardwarePreloadService
             }
             else
             {
-                task = LoadAsync();
+                var generation = ++_loadGeneration;
+                task = LoadAsync(generation);
                 _loadTask = task;
             }
         }
@@ -72,49 +74,84 @@ public sealed class HardwarePreloadService
         return await task.WaitAsync(cancellationToken).ConfigureAwait(false);
     }
 
-    private async Task<HardwareInventorySnapshot> LoadAsync()
+    private async Task<HardwareInventorySnapshot> LoadAsync(long generation)
     {
-        SetState(HardwarePreloadState.Loading, "正在预加载硬件信息...");
+        SetState(HardwarePreloadState.Loading, "正在预加载硬件信息...", generation);
         try
         {
-            var progress = new Progress<HardwareInventoryCollectionProgress>(ReportCollectionProgress);
+            var progress = new InlineProgress<HardwareInventoryCollectionProgress>(
+                progress => ReportCollectionProgress(generation, progress));
             var snapshot = await Task.Run(() => _collector.Collect(progress)).ConfigureAwait(false);
             Current = snapshot;
-            _loadTask = null;
-            SetState(HardwarePreloadState.Ready, $"硬件信息预加载完成，用时 {snapshot.Diagnostics.Elapsed.TotalMilliseconds:F0} ms。");
+            SetState(HardwarePreloadState.Ready, $"硬件信息预加载完成，用时 {snapshot.Diagnostics.Elapsed.TotalMilliseconds:F0} ms。", generation);
             RaiseInventoryChanged(snapshot);
             return snapshot;
         }
         catch
         {
-            _loadTask = null;
-            SetState(HardwarePreloadState.Failed, "硬件信息预加载失败。");
+            SetState(HardwarePreloadState.Failed, "硬件信息预加载失败。", generation);
             throw;
+        }
+        finally
+        {
+            await ClearLoadTaskAsync(generation).ConfigureAwait(false);
         }
     }
 
-    private void SetState(HardwarePreloadState state, string status)
+    private async Task ClearLoadTaskAsync(long generation)
     {
-        State = state;
-        LastStatusMessage = status;
-        RaiseOnDispatcher(() => ProgressChanged?.Invoke(this, new HardwarePreloadProgress(state, status, null, null, null, null)));
+        await _gate.WaitAsync().ConfigureAwait(false);
+        try
+        {
+            if (_loadGeneration == generation)
+            {
+                _loadTask = null;
+            }
+        }
+        finally
+        {
+            _gate.Release();
+        }
     }
 
-    private void ReportCollectionProgress(HardwareInventoryCollectionProgress progress)
+    private void SetState(HardwarePreloadState state, string status, long generation)
+    {
+        RaiseOnDispatcher(() =>
+        {
+            if (_loadGeneration != generation)
+            {
+                return;
+            }
+
+            State = state;
+            LastStatusMessage = status;
+            ProgressChanged?.Invoke(this, new HardwarePreloadProgress(state, status, null, null, null, null));
+        });
+    }
+
+    private void ReportCollectionProgress(long generation, HardwareInventoryCollectionProgress progress)
     {
         var stepLabel = FormatStepName(progress.StepName);
         var status = progress.Status == HardwareInventoryStepStatus.Failed
             ? $"{stepLabel} 读取失败，继续加载..."
             : $"{stepLabel} 已读取。";
-        State = HardwarePreloadState.Loading;
-        LastStatusMessage = status;
-        RaiseOnDispatcher(() => ProgressChanged?.Invoke(this, new HardwarePreloadProgress(
-            HardwarePreloadState.Loading,
-            status,
-            progress.StepName,
-            progress.CompletedSteps,
-            progress.TotalSteps,
-            progress.ItemCount)));
+        RaiseOnDispatcher(() =>
+        {
+            if (_loadGeneration != generation || State is HardwarePreloadState.Ready or HardwarePreloadState.Failed)
+            {
+                return;
+            }
+
+            State = HardwarePreloadState.Loading;
+            LastStatusMessage = status;
+            ProgressChanged?.Invoke(this, new HardwarePreloadProgress(
+                HardwarePreloadState.Loading,
+                status,
+                progress.StepName,
+                progress.CompletedSteps,
+                progress.TotalSteps,
+                progress.ItemCount));
+        });
     }
 
     private static string FormatStepName(string stepName)
@@ -169,3 +206,11 @@ public sealed record HardwarePreloadProgress(
     int? CompletedSteps,
     int? TotalSteps,
     int? ItemCount);
+
+internal sealed class InlineProgress<T>(Action<T> report) : IProgress<T>
+{
+    public void Report(T value)
+    {
+        report(value);
+    }
+}

@@ -10,7 +10,9 @@ public partial class HardwarePreloadWindow : FluentWindow
 {
     private static readonly TimeSpan MinimumVisibleDuration = TimeSpan.FromMilliseconds(650);
     private readonly Stopwatch _visibleTimer = new();
+    private CancellationTokenSource? _preloadCancellation;
     private bool _isOpeningMainWindow;
+    private bool _isClosed;
 
     public HardwarePreloadWindow()
     {
@@ -18,6 +20,7 @@ public partial class HardwarePreloadWindow : FluentWindow
         VersionText.Text = $"Version {GetVersion()}";
         Loaded += HardwarePreloadWindow_Loaded;
         Closing += HardwarePreloadWindow_Closing;
+        Closed += HardwarePreloadWindow_Closed;
         App.HardwarePreload.ProgressChanged += HardwarePreload_ProgressChanged;
     }
 
@@ -30,18 +33,33 @@ public partial class HardwarePreloadWindow : FluentWindow
 
     private async Task StartPreloadAsync()
     {
+        _preloadCancellation?.Cancel();
+        _preloadCancellation?.Dispose();
+        _preloadCancellation = new CancellationTokenSource();
+        var cancellationToken = _preloadCancellation.Token;
         _visibleTimer.Restart();
         ResetLoadingUi();
 
         try
         {
-            await App.HardwarePreload.RefreshAsync().ConfigureAwait(true);
-            await EnsureMinimumVisibleDurationAsync().ConfigureAwait(true);
+            await App.HardwarePreload.RefreshAsync(cancellationToken).ConfigureAwait(true);
+            await EnsureMinimumVisibleDurationAsync(cancellationToken).ConfigureAwait(true);
+            if (_isClosed || cancellationToken.IsCancellationRequested)
+            {
+                return;
+            }
+
             OpenMainWindow();
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
         }
         catch (Exception ex)
         {
-            ShowFailure(ex);
+            if (!_isClosed)
+            {
+                ShowFailure(ex);
+            }
         }
     }
 
@@ -80,13 +98,13 @@ public partial class HardwarePreloadWindow : FluentWindow
 
     private void OpenMainWindow()
     {
-        if (_isOpeningMainWindow)
+        if (_isOpeningMainWindow || _isClosed)
         {
             return;
         }
 
         _isOpeningMainWindow = true;
-        App.HardwarePreload.ProgressChanged -= HardwarePreload_ProgressChanged;
+        DetachEvents();
         var mainWindow = new MainWindow();
         Application.Current.MainWindow = mainWindow;
         mainWindow.Show();
@@ -118,22 +136,32 @@ public partial class HardwarePreloadWindow : FluentWindow
         ProgressBar.IsIndeterminate = true;
     }
 
-    private async Task EnsureMinimumVisibleDurationAsync()
+    private async Task EnsureMinimumVisibleDurationAsync(CancellationToken cancellationToken)
     {
         var remaining = MinimumVisibleDuration - _visibleTimer.Elapsed;
         if (remaining > TimeSpan.Zero)
         {
-            await Task.Delay(remaining).ConfigureAwait(true);
+            await Task.Delay(remaining, cancellationToken).ConfigureAwait(true);
         }
     }
 
     private void HardwarePreloadWindow_Closing(object? sender, System.ComponentModel.CancelEventArgs e)
     {
+        _isClosed = true;
+        _preloadCancellation?.Cancel();
+        DetachEvents();
+    }
+
+    private void HardwarePreloadWindow_Closed(object? sender, EventArgs e)
+    {
+        _preloadCancellation?.Dispose();
+        _preloadCancellation = null;
+        DetachEvents();
+    }
+
+    private void DetachEvents()
+    {
         App.HardwarePreload.ProgressChanged -= HardwarePreload_ProgressChanged;
-        if (!_isOpeningMainWindow)
-        {
-            Application.Current.Shutdown();
-        }
     }
 
     private static string FormatStepName(string stepName)
