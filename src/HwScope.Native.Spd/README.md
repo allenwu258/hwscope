@@ -48,3 +48,14 @@ Current scaffold output:
 ```
 
 Future worker versions should keep `schemaVersion` stable until the JSON shape changes. Module timing fields such as `casLatency`, `trcd`, `trp`, `tras`, and `trc` may be emitted as JSON numbers or strings; Core accepts both.
+
+## Real Reader Roadmap
+
+Real SPD support is split into two tracks:
+
+- A fixture/offline SPD bytes parser that can parse DDR4/DDR5 samples without hardware access.
+- A Windows raw reader backend that attempts SMBus/SPD EEPROM access only when a supported, safe path is available.
+
+The parser should land first. It should add `--backend fixture --fixture <path>`, checksum/CRC validation, DDR4/DDR5 detection, identity fields, organization fields, voltages, and JEDEC timing profiles. The default `--backend auto` can keep returning `notImplemented` until a Windows reader backend is safe enough to enable.
+
+See [`../../docs/memory-spd-detail-implementation-plan.md`](../../docs/memory-spd-detail-implementation-plan.md) for the full Stage 3A/3B development plan.

@@ -939,6 +939,486 @@ Implemented behavior:
 - SPD module data, when matched by serial, part number + locator, locator, or the single-module case, can override module identity fields and populate timing profiles.
 - Missing worker, timeout, parse failure, permission failure and platform-blocked states are non-fatal.
 
+## Stage 3A/3B Real SPD Reading And Parsing Plan
+
+真实 SPD 支持要拆成两条相互解耦的工程线：
+
+- **SPD bytes parser**：给定一段 raw SPD bytes，稳定解析 DDR4/DDR5 字段、校验和、module identity、organization、voltages 和 timing profiles。这个部分必须能用 fixture 离线测试，不依赖当前机器能否读取 SMBus。
+- **Raw SPD reader**：在 Windows 上尽力枚举 SMBus/SPD EEPROM 并读取 bytes。这个部分是平台敏感、权限敏感和硬件敏感的，应作为可替换 backend，并且失败不影响 WMI/SMBIOS 页面。
+
+第一批真实开发不要直接把 SMBus 读取和 DDR 解析写在一起。先让 `spd.exe` 能通过 fixture/导入 bytes 输出真实解析结果，再逐步接入 Windows raw reader。这样可以在没有可读 SPD 的笔记本、LPDDR/onboard memory、OEM BIOS 屏蔽平台上继续推进解析和 UI 合并。
+
+### Goals
+
+- `spd.exe --json` 能输出 schema-versioned raw access status、模块列表、diagnostics 和解析后的 SPD 字段。
+- 支持 fixture/offline 输入，便于开发、测试、回归和第三方样本排查。
+- 先支持 DDR5 UDIMM/SO-DIMM 和 DDR4 UDIMM/SO-DIMM 的关键字段；RDIMM/LRDIMM、LPDDR、CAMM 和厂商私有扩展作为后续增强。
+- Raw reader 失败必须结构化：权限不足、平台屏蔽、未实现、unsupported memory type、checksum failed、parse failed。
+- 页面始终保留 WMI/SMBIOS-backed fallback，SPD 只覆盖明确匹配且校验可信的字段。
+
+### Non-Goals For First Real Reader
+
+- 不内置未签名 kernel driver。
+- 不承诺读取所有芯片组、所有 OEM BIOS 或 LPDDR/onboard memory。
+- 不把 SPD 静态 profile 当作当前运行态时序。
+- 不解析所有厂商私有 bytes。
+- 不在 UI 上显示未验证的 raw bytes 为事实字段。
+
+### Native Worker Architecture
+
+`src/HwScope.Native.Spd/src/main.cpp` 应拆分为小型模块，避免单文件膨胀：
+
+```text
+src/HwScope.Native.Spd/
+  src/
+    main.cpp
+    cli_options.h/.cpp
+    json_writer.h/.cpp
+    spd_result.h
+    spd_bytes.h
+    spd_checksum.h/.cpp
+    spd_parser.h/.cpp
+    spd_parser_ddr4.h/.cpp
+    spd_parser_ddr5.h/.cpp
+    spd_reader.h
+    spd_reader_fixture.h/.cpp
+    spd_reader_windows_smbus.h/.cpp
+```
+
+Core types:
+
+```cpp
+enum class SpdStatus {
+    Ok,
+    NotImplemented,
+    WorkerMissing,
+    AccessDenied,
+    PlatformBlocked,
+    UnsupportedMemoryType,
+    ChecksumFailed,
+    ParseFailed,
+    Timeout,
+    Failed
+};
+
+struct RawSpdImage {
+    std::string locator;
+    std::string source;
+    std::vector<std::uint8_t> bytes;
+    bool checksum_ok;
+    std::vector<std::string> diagnostics;
+};
+
+struct ParsedSpdModule {
+    std::string locator;
+    std::string type;
+    std::string module_type;
+    std::uint64_t capacity_bytes;
+    std::string manufacturer;
+    std::string dram_manufacturer;
+    std::string part_number;
+    std::string serial_number;
+    int manufacturing_week;
+    int manufacturing_year;
+    std::string revision;
+    std::vector<ParsedTimingProfile> timing_profiles;
+    std::vector<ParsedFeature> features;
+    std::vector<std::string> diagnostics;
+};
+```
+
+### CLI Contract Evolution
+
+Keep the current base command:
+
+```powershell
+spd.exe --json
+```
+
+Add development and diagnostics options:
+
+```powershell
+spd.exe --json --backend auto
+spd.exe --json --backend fixture --fixture .\fixtures\ddr5-so-dimm-32gb.json
+spd.exe --json --dump-raw
+spd.exe --json --probe-only
+```
+
+Backends:
+
+| Backend | Purpose | Expected Status |
+| --- | --- | --- |
+| `auto` | default production path, tries safe native readers | `ok`, `platformBlocked`, `accessDenied`, `unsupportedMemoryType`, `notImplemented` |
+| `fixture` | parser development and regression tests | `ok`, `parseFailed`, `checksumFailed` |
+| `windows-smbus` | Windows raw SMBus/SPD reader | `ok`, `platformBlocked`, `accessDenied`, `failed` |
+
+Initial schema can remain `schemaVersion: 1` if new fields are optional. Bump schema only when existing field meaning changes.
+
+Recommended output shape:
+
+```json
+{
+  "schemaVersion": 1,
+  "workerVersion": "0.2.0",
+  "status": "ok",
+  "backend": "fixture",
+  "modules": [
+    {
+      "locator": "DIMM 0",
+      "type": "DDR5",
+      "moduleType": "SO-DIMM",
+      "capacityBytes": 34359738368,
+      "manufacturer": "Micron Technology",
+      "dramManufacturer": "Micron",
+      "partNumber": "CT32G56C46S5.M16D1",
+      "serialNumber": "EB235139",
+      "manufacturingWeek": 4,
+      "manufacturingYear": 2025,
+      "revision": "1.0",
+      "organization": {
+        "rankCount": 2,
+        "deviceWidthBits": 16,
+        "busWidthBits": 64,
+        "dieCount": null,
+        "bankGroups": 8,
+        "banksPerGroup": 4
+      },
+      "voltages": {
+        "vddMv": 1100,
+        "vddqMv": 1100,
+        "vppMv": 1800
+      },
+      "timingProfiles": [
+        {
+          "name": "JEDEC #9",
+          "kind": "jedec",
+          "frequencyMHz": 2800,
+          "effectiveRateMTps": 5600,
+          "casLatency": 46,
+          "trcd": 45,
+          "trp": 45,
+          "tras": 90,
+          "trc": 135,
+          "voltageMv": 1100
+        }
+      ],
+      "raw": {
+        "byteCount": 512,
+        "checksumOk": true,
+        "crcOk": true,
+        "sha256": "..."
+      },
+      "diagnostics": []
+    }
+  ],
+  "diagnostics": []
+}
+```
+
+`raw.bytes` should not be emitted by default. If `--dump-raw` is passed, include hex/base64 raw bytes for diagnostics and bug reports. The GUI should not display raw dumps in the normal page.
+
+### Parser Implementation Plan
+
+Parser should be byte-array first:
+
+```cpp
+ParseResult parse_spd(std::span<const std::uint8_t> bytes);
+```
+
+Detection:
+
+- Validate minimum length before reading offsets.
+- Detect memory technology from SPD header bytes.
+- Route to DDR4 or DDR5 parser.
+- Unknown or LPDDR types return `unsupportedMemoryType` with diagnostics, not crash.
+
+Validation:
+
+- Validate checksum/CRC blocks applicable to the detected SPD generation.
+- Parser may return partial fields with `checksumOk=false`, but final worker status should be `checksumFailed` if no trustworthy module can be produced.
+- Never use bytes outside validated bounds.
+
+DDR4 first-pass fields:
+
+- SPD revision.
+- DRAM device type.
+- Module type.
+- Module nominal voltage.
+- SDRAM density / bank addressing / package type.
+- Module organization: rank count, device width, bus width.
+- Module manufacturer ID and module manufacturing location/date.
+- Serial number and part number.
+- JEDEC timing profiles sufficient for table display.
+
+DDR5 first-pass fields:
+
+- SPD revision.
+- Base module type.
+- SDRAM density / IO width / bank groups / banks.
+- Module organization: ranks, data width, bus width.
+- Module nominal voltages: VDD, VDDQ, VPP where encoded.
+- Module manufacturer, DRAM manufacturer where available, serial, part number, manufacturing date.
+- JEDEC timing profiles sufficient for table display.
+- DDR5 feature flags that are already present in UI placeholders: write temperature sense, bounded fault, BL32, non-standard timings.
+
+XMP / EXPO:
+
+- Do not make XMP/EXPO part of the first parser merge unless the base JEDEC parser is stable.
+- Add extension parser hooks:
+
+```cpp
+std::vector<ParsedTimingProfile> parse_xmp_profiles(...);
+std::vector<ParsedTimingProfile> parse_expo_profiles(...);
+```
+
+- Profiles must be labeled `kind: "xmp"` or `kind: "expo"` and must include diagnostics if partially parsed.
+
+Manufacturer ID decoding:
+
+- Implement a local JEDEC manufacturer table file or generated header only after deciding the data source and license constraints.
+- Until then, return hex manufacturer IDs and let UI show `未识别` or `ID xxxx` rather than guessing names.
+
+### Raw Reader Implementation Plan
+
+Windows does not expose a stable universal user-mode API for raw SPD EEPROM reads. Treat raw access as optional backend work.
+
+Reader interface:
+
+```cpp
+class ISpdReader {
+public:
+    virtual ~ISpdReader() = default;
+    virtual ReaderResult collect() = 0;
+};
+```
+
+Reader result:
+
+```cpp
+struct ReaderResult {
+    SpdStatus status;
+    std::string backend;
+    std::vector<RawSpdImage> images;
+    std::vector<std::string> diagnostics;
+};
+```
+
+Backends by phase:
+
+1. **Fixture reader**
+   - Reads JSON fixture files containing locator, source and hex/base64 SPD bytes.
+   - Used for unit/regression tests and parser development.
+   - This is the first backend to implement.
+
+2. **Windows probe reader**
+   - Enumerates candidate SMBus controllers and reports diagnostics only.
+   - Does not read hardware yet.
+   - Helps collect chipset/vendor/device IDs and platform-blocked cases.
+
+3. **Windows SMBus reader**
+   - Attempts raw reads only when a supported controller path exists.
+   - Must clearly report when admin/driver/platform access is missing.
+   - Must guard every IO operation; failures return structured diagnostics.
+
+4. **Optional privileged backend**
+   - If a driver is required, it must be explicit, signed for release, and disabled by default during development.
+   - Do not silently install or load third-party drivers.
+
+SMBus reader acceptance rules:
+
+- No bluescreen-prone direct IO in ordinary GUI process.
+- No hidden elevation prompt from the worker.
+- No raw reads unless backend can identify a supported controller.
+- No infinite retries; worker timeout remains bounded by Core.
+- LPDDR/onboard memory without SPD EEPROM should return `unsupportedMemoryType` or `platformBlocked`.
+
+### Fixture Format
+
+Store fixtures under:
+
+```text
+src/HwScope.Native.Spd/fixtures/
+  ddr4-udimm-8gb.sample.json
+  ddr5-sodimm-32gb.sample.json
+```
+
+Fixture JSON:
+
+```json
+{
+  "locator": "DIMM 0",
+  "source": "fixture",
+  "memoryType": "DDR5",
+  "bytesHex": "2310...",
+  "expected": {
+    "type": "DDR5",
+    "moduleType": "SO-DIMM",
+    "capacityBytes": 34359738368,
+    "partNumber": "CT32G56C46S5.M16D1"
+  }
+}
+```
+
+Do not commit user-private raw SPD dumps without review. SPD dumps can contain serial numbers and manufacturing details. Public fixtures should be synthetic, vendor-sanitized, or explicitly approved.
+
+### Core Integration Plan
+
+Current Core result types should be extended conservatively:
+
+```text
+SpdMemoryModule
+  Organization
+  Voltages
+  Raw
+  Diagnostics
+
+SpdTimingProfile
+  Kind
+  EffectiveRateMTps
+```
+
+`NativeSpdProcessProvider` should:
+
+- Parse optional new fields without requiring them.
+- Keep accepting current minimal scaffold output.
+- Map `notImplemented` separately from `platformBlocked`.
+- Treat unknown fields as forward-compatible.
+- Avoid throwing through `MemoryDetailPage`; convert parse errors to `ParseFailed`.
+
+`MemoryDetailCollector` should:
+
+- Only override WMI fields when SPD module matching is strong.
+- Keep WMI slot/locator as the display anchor unless SPD locator matches.
+- Add module-level diagnostics for checksum failure, partial parse or weak matching.
+- Fill organization and voltage fields from SPD only when available.
+- Replace pending timing row with real JEDEC/XMP/EXPO rows when parsed.
+
+Matching priority remains:
+
+1. Serial number.
+2. Part number + locator.
+3. Locator.
+4. Single WMI module + single SPD module.
+
+No multi-module index fallback.
+
+### UI Integration Plan
+
+When real SPD data is present:
+
+- Summary chip: `SPD 已读取`.
+- Timing Profiles table:
+  - `Kind` may be shown in the profile name: `JEDEC #9`, `XMP #1`, `EXPO #1`.
+  - Source badge remains `SPD`.
+- Module identity:
+  - DRAM manufacturer, production date and revision should move from placeholder to SPD.
+- Module organization:
+  - Rank count, device width, bus width, bank group/bank counts should move from placeholder to SPD.
+- Voltages/features:
+  - VDD/VDDQ/VPP and DDR5 feature bits should move from placeholder to SPD.
+- Notes:
+  - Show checksum/CRC status.
+  - Show backend diagnostics only in data notes, not as blocking errors.
+
+If SPD status is `notImplemented`, `workerMissing`, `platformBlocked`, `accessDenied`, `unsupportedMemoryType`, `checksumFailed` or `parseFailed`, the page remains usable with WMI-backed fields.
+
+### Testing And Verification
+
+Native tests:
+
+- `spd.exe --json --backend fixture --fixture fixtures\ddr5-sodimm-32gb.sample.json`
+- `spd.exe --json --backend fixture --fixture fixtures\ddr4-udimm-8gb.sample.json`
+- Invalid fixture path returns non-zero with clear stderr.
+- Bad checksum fixture returns `checksumFailed`.
+- Unknown DDR type returns `unsupportedMemoryType`.
+
+Core tests or probe commands:
+
+- Provider parses numeric and string timing fields.
+- Provider parses optional organization/voltage/raw sections.
+- Provider maps `notImplemented`, `platformBlocked`, `accessDenied`, `checksumFailed` and `parseFailed`.
+- Collector keeps WMI fallback when SPD has no modules.
+- Collector does not cross-assign SPD modules in multi-module systems.
+
+Manual hardware matrix:
+
+| Platform | Expected |
+| --- | --- |
+| DDR5 SO-DIMM laptop with readable SPD | `ok`, real JEDEC profiles |
+| DDR4 desktop DIMM | `ok`, DDR4 identity and JEDEC profiles |
+| LPDDR/onboard laptop | `unsupportedMemoryType` or `platformBlocked` |
+| OEM BIOS blocks SMBus | `platformBlocked` |
+| Non-admin where backend requires privilege | `accessDenied` |
+| No worker built | `workerMissing` |
+
+Required validation before merging a real reader:
+
+```powershell
+.\src\HwScope.Native.Spd\scripts\build-msvc.ps1
+.\src\HwScope.Native.Spd\build\Release\spd.exe --json
+dotnet build
+dotnet run --project .\src\HwScope.Cli\HwScope.Cli.csproj -- --json
+```
+
+If fixture backend exists:
+
+```powershell
+.\src\HwScope.Native.Spd\build\Release\spd.exe --json --backend fixture --fixture .\src\HwScope.Native.Spd\fixtures\ddr5-sodimm-32gb.sample.json
+```
+
+### Implementation Milestones
+
+1. **Parser scaffold**
+   - Split native worker files.
+   - Add CLI options and JSON writer.
+   - Add fixture backend and raw bytes model.
+   - Keep current `notImplemented` default for `--backend auto`.
+
+2. **Checksum and detection**
+   - Implement safe byte access helpers.
+   - Detect DDR4/DDR5/unsupported.
+   - Validate checksum/CRC enough to gate trust.
+
+3. **DDR5 parser first pass**
+   - Parse identity, module type, capacity, organization, voltages and JEDEC timing profiles.
+   - Add synthetic/sanitized DDR5 fixture.
+
+4. **DDR4 parser first pass**
+   - Parse identity, module type, capacity, organization, voltages and JEDEC timing profiles.
+   - Add synthetic/sanitized DDR4 fixture.
+
+5. **Core JSON expansion**
+   - Extend `SpdMemoryModule`, parser and collector.
+   - Fill UI placeholders from fixture-backed SPD data.
+
+6. **Windows probe backend**
+   - Enumerate candidate controllers where possible.
+   - Report diagnostics and platform restrictions without reading hardware.
+
+7. **Windows SMBus backend**
+   - Implement one supported controller family behind explicit capability checks.
+   - Keep failure structured and bounded.
+
+8. **XMP/EXPO and advanced DDR5**
+   - Add extension parsers after JEDEC base parser stabilizes.
+   - Add UI row grouping if profile count grows.
+
+### Stage 3 Definition Of Done
+
+Stage 3 parser is done when:
+
+- Fixture backend can parse at least one DDR4 and one DDR5 sample.
+- Core can render real SPD identity, organization, voltage and JEDEC timing rows from fixture data.
+- Bad checksum, unsupported type and malformed bytes are covered by tests/probes.
+- WMI fallback remains unchanged when SPD fails.
+
+Stage 3 raw reader is done when:
+
+- `spd.exe --json --backend auto` can return `ok` with real SPD bytes on at least one supported Windows DDR4/DDR5 platform.
+- Platform blocked and access denied cases are distinguishable.
+- Worker cannot hang the GUI beyond Core timeout.
+- No privileged/driver behavior happens implicitly.
+
 ## Risks And Mitigations
 
 ### Existing Summary Semantics
