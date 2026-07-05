@@ -37,7 +37,7 @@ public sealed class MemoryDetailCollector
         return new MemoryDetailReport(
             BuildSummary(modules),
             BuildRuntime(modules),
-            modules.Select((module, index) => BuildModule(module, index, FindSpdModule(module, index, spdResult.Modules), spdResult.Modules.Count > 0)).ToList(),
+            modules.Select((module, index) => BuildModule(module, index, FindSpdModule(module, modules.Count, spdResult.Modules), spdResult.Modules.Count > 0)).ToList(),
             notes,
             BuildSpdAccessInfo(spdResult),
             snapshot.GeneratedAt);
@@ -247,7 +247,7 @@ public sealed class MemoryDetailCollector
             result.Diagnostics);
     }
 
-    private static SpdMemoryModule? FindSpdModule(MemoryModuleSnapshot module, int index, IReadOnlyList<SpdMemoryModule> spdModules)
+    private static SpdMemoryModule? FindSpdModule(MemoryModuleSnapshot module, int moduleCount, IReadOnlyList<SpdMemoryModule> spdModules)
     {
         if (spdModules.Count == 0)
         {
@@ -261,9 +261,7 @@ public sealed class MemoryDetailCollector
         return spdModules.FirstOrDefault(candidate => SameUseful(candidate.SerialNumber, serialNumber))
             ?? spdModules.FirstOrDefault(candidate => SameUseful(candidate.PartNumber, partNumber) && SameUseful(candidate.Locator, locator))
             ?? spdModules.FirstOrDefault(candidate => SameUseful(candidate.Locator, locator))
-            ?? (index < spdModules.Count ? spdModules[index] : null)
-            ?? spdModules.FirstOrDefault(candidate => SameUseful(candidate.PartNumber, partNumber))
-            ?? spdModules.FirstOrDefault();
+            ?? (moduleCount == 1 && spdModules.Count == 1 ? spdModules[0] : null);
     }
 
     private static MemoryFieldValue<string> SpdOrWmi(string? spdValue, string? wmiValue)

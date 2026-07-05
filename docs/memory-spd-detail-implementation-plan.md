@@ -933,8 +933,9 @@ Implemented behavior:
 
 - `MemoryDetailCollector` depends on `ISpdProvider` and uses `NativeSpdProcessProvider` by default.
 - `NativeSpdProcessProvider` searches only relative worker locations under the app/base build tree.
+- Timing fields such as `casLatency`, `trcd`, `trp`, `tras`, and `trc` may be JSON numbers or strings.
 - Worker status values are mapped into `SpdProviderStatus` and shown through report notes and the summary chip.
-- SPD module data, when available, can override module identity fields and populate timing profiles.
+- SPD module data, when matched by serial, part number + locator, locator, or the single-module case, can override module identity fields and populate timing profiles.
 - Missing worker, timeout, parse failure, permission failure and platform-blocked states are non-fatal.
 
 ## Risks And Mitigations

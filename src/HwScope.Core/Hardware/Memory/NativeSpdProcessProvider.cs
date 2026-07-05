@@ -128,12 +128,24 @@ public sealed class NativeSpdProcessProvider : ISpdProvider
             profile.Name ?? string.Empty,
             profile.FrequencyMHz,
             profile.EffectiveRateMTps,
-            profile.CasLatency ?? string.Empty,
-            profile.Trcd ?? string.Empty,
-            profile.Trp ?? string.Empty,
-            profile.Tras ?? string.Empty,
-            profile.Trc ?? string.Empty,
+            JsonValueToString(profile.CasLatency),
+            JsonValueToString(profile.Trcd),
+            JsonValueToString(profile.Trp),
+            JsonValueToString(profile.Tras),
+            JsonValueToString(profile.Trc),
             profile.VoltageMv);
+    }
+
+    private static string JsonValueToString(JsonElement value)
+    {
+        return value.ValueKind switch
+        {
+            JsonValueKind.String => value.GetString() ?? string.Empty,
+            JsonValueKind.Number => value.GetRawText(),
+            JsonValueKind.True => "true",
+            JsonValueKind.False => "false",
+            _ => string.Empty
+        };
     }
 
     private static SpdProviderStatus MapStatus(string? status)
@@ -194,10 +206,10 @@ public sealed class NativeSpdProcessProvider : ISpdProvider
         string? Name,
         double FrequencyMHz,
         uint EffectiveRateMTps,
-        string? CasLatency,
-        string? Trcd,
-        string? Trp,
-        string? Tras,
-        string? Trc,
+        JsonElement CasLatency,
+        JsonElement Trcd,
+        JsonElement Trp,
+        JsonElement Tras,
+        JsonElement Trc,
         uint VoltageMv);
 }

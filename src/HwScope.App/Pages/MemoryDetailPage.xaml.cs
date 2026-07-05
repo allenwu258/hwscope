@@ -140,9 +140,15 @@ public partial class MemoryDetailPage : UserControl
             return;
         }
 
+        var version = Volatile.Read(ref _refreshVersion);
         try
         {
             var report = await Task.Run(() => _reportBuilder.CreateReport(snapshot)).ConfigureAwait(true);
+            if (version != _refreshVersion)
+            {
+                return;
+            }
+
             Render(report);
         }
         catch (Exception ex)
