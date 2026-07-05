@@ -46,16 +46,9 @@ public sealed class MemoryDetailCollector
 
     private static MemoryRuntimeInfo BuildRuntime(IReadOnlyList<MemoryModuleSnapshot> modules)
     {
-        var configuredSpeeds = modules
-            .Select(GetConfiguredSpeed)
-            .Where(speed => speed > 0)
-            .Distinct()
-            .OrderByDescending(speed => speed)
-            .ToList();
-
         return new MemoryRuntimeInfo(
             ClockMHz: MemoryField.Placeholder<double>(MemoryField.PendingControllerText),
-            EffectiveRate: MemoryField.Text(FormatSpeedList(configuredSpeeds), MemoryDataSource.Wmi),
+            EffectiveRate: MemoryField.Placeholder<string>(MemoryField.PendingControllerText),
             Ratio: MemoryField.Placeholder<string>(MemoryField.PendingControllerText),
             PrimaryTimings: new MemoryTimingValues(
                 MemoryField.Placeholder<string>(MemoryField.PendingControllerText),
@@ -76,7 +69,7 @@ public sealed class MemoryDetailCollector
         var manufacturer = CleanName(module.Manufacturer);
         var displayName = JoinUseful(manufacturer, partNumber);
         var capacity = MemoryField.FormatBytes(module.Capacity);
-        var maxBandwidth = speed > 0 ? $"{memoryType}-{speed} ({speed / 2.0:0.#} MHz)" : string.Empty;
+        var maxBandwidth = FormatMaxBandwidth(memoryType, speed);
 
         return new MemoryModuleDetail(
             Id: BuildModuleId(module, index),
@@ -229,6 +222,19 @@ public sealed class MemoryDetailCollector
     private static uint GetConfiguredSpeed(MemoryModuleSnapshot module)
     {
         return module.ConfiguredClockSpeed > 0 ? module.ConfiguredClockSpeed : module.Speed;
+    }
+
+    private static string FormatMaxBandwidth(string memoryType, uint speed)
+    {
+        if (speed == 0)
+        {
+            return string.Empty;
+        }
+
+        var clock = $"{speed / 2.0:0.#} MHz";
+        return IsUseful(memoryType)
+            ? $"{memoryType}-{speed} ({clock})"
+            : $"{speed} MT/s ({clock})";
     }
 
     private static string FormatSpeedList(IReadOnlyList<uint> speeds)

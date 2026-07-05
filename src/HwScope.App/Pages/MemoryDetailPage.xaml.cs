@@ -221,7 +221,7 @@ public partial class MemoryDetailPage : UserControl
             ]),
             new MemorySectionView("当前时序", [
                 Row("内存频率", report.Runtime.ClockMHz),
-                Row("有效速率", report.Runtime.EffectiveRate),
+                Row("当前有效速率", report.Runtime.EffectiveRate),
                 Row("Ratio", report.Runtime.Ratio),
                 Row("CAS Latency", report.Runtime.PrimaryTimings.CasLatency),
                 Row("tRCD", report.Runtime.PrimaryTimings.Trcd),
@@ -273,8 +273,24 @@ public partial class MemoryDetailPage : UserControl
                 Row("VDDQ", module.Voltages.Vddq),
                 Row("VPP", module.Voltages.Vpp),
                 .. module.Features.Select(feature => Row(feature.Name, feature.Value))
-            ])
+            ]),
+            new MemorySectionView("模块说明", BuildModuleNoteRows(module))
         ];
+    }
+
+    private static IReadOnlyList<MemoryFieldRowView> BuildModuleNoteRows(MemoryModuleDetail module)
+    {
+        if (module.Notes.Count == 0)
+        {
+            return
+            [
+                new MemoryFieldRowView("状态", "未发现模块级提示。", "-", "无额外模块说明。")
+            ];
+        }
+
+        return module.Notes
+            .Select((note, index) => new MemoryFieldRowView($"提示 {index + 1}", note.Message, FormatSource(note.Source, isEstimated: false), DescribeSource(note.Source, isEstimated: false, note: null)))
+            .ToList();
     }
 
     private static MemoryModuleTileView ToTile(MemoryModuleDetail module, bool isSelected)
@@ -283,7 +299,8 @@ public partial class MemoryDetailPage : UserControl
         var subtitle = $"{module.Identity.Capacity.DisplayText} {module.Identity.MemoryType.DisplayText} {module.Identity.ModuleType.DisplayText}".Trim();
         var detail = module.Identity.DisplayName.DisplayText;
         var hasWarning = module.Notes.Count > 0;
-        return new MemoryModuleTileView(module.Id, title, subtitle, detail, isSelected, hasWarning);
+        var warning = hasWarning ? string.Join(Environment.NewLine, module.Notes.Select(note => note.Message)) : string.Empty;
+        return new MemoryModuleTileView(module.Id, title, subtitle, detail, isSelected, hasWarning, warning);
     }
 
     private static MemoryTimingProfileView ToTimingProfileView(MemoryTimingProfile profile)
@@ -370,7 +387,7 @@ public sealed record MemorySectionView(string Title, IReadOnlyList<MemoryFieldRo
 
 public sealed record MemoryFieldRowView(string Label, string Value, string Source, string SourceDescription);
 
-public sealed record MemoryModuleTileView(string Id, string Title, string Subtitle, string Detail, bool IsSelected, bool HasWarning)
+public sealed record MemoryModuleTileView(string Id, string Title, string Subtitle, string Detail, bool IsSelected, bool HasWarning, string Warning)
 {
     public Visibility WarningVisibility => HasWarning ? Visibility.Visible : Visibility.Collapsed;
 }

@@ -265,7 +265,8 @@
                                                         Padding="6,2"
                                                         Background="{DynamicResource HwScopeIconBackplateBrush}"
                                                         CornerRadius="4"
-                                                        Visibility="{Binding WarningVisibility}">
+                                                        Visibility="{Binding WarningVisibility}"
+                                                        ToolTip="{Binding Warning}">
                                                     <TextBlock Text="注意"
                                                                FontSize="11"
                                                                Foreground="{DynamicResource HwScopeMutedTextBrush}" />
