@@ -77,7 +77,8 @@ public sealed class HardwarePreloadService
         SetState(HardwarePreloadState.Loading, "正在预加载硬件信息...");
         try
         {
-            var snapshot = await Task.Run(_collector.Collect).ConfigureAwait(false);
+            var progress = new Progress<HardwareInventoryCollectionProgress>(ReportCollectionProgress);
+            var snapshot = await Task.Run(() => _collector.Collect(progress)).ConfigureAwait(false);
             Current = snapshot;
             _loadTask = null;
             SetState(HardwarePreloadState.Ready, $"硬件信息预加载完成，用时 {snapshot.Diagnostics.Elapsed.TotalMilliseconds:F0} ms。");
@@ -96,7 +97,43 @@ public sealed class HardwarePreloadService
     {
         State = state;
         LastStatusMessage = status;
-        RaiseOnDispatcher(() => ProgressChanged?.Invoke(this, new HardwarePreloadProgress(state, status)));
+        RaiseOnDispatcher(() => ProgressChanged?.Invoke(this, new HardwarePreloadProgress(state, status, null, null, null, null)));
+    }
+
+    private void ReportCollectionProgress(HardwareInventoryCollectionProgress progress)
+    {
+        var stepLabel = FormatStepName(progress.StepName);
+        var status = progress.Status == HardwareInventoryStepStatus.Failed
+            ? $"{stepLabel} 读取失败，继续加载..."
+            : $"{stepLabel} 已读取。";
+        State = HardwarePreloadState.Loading;
+        LastStatusMessage = status;
+        RaiseOnDispatcher(() => ProgressChanged?.Invoke(this, new HardwarePreloadProgress(
+            HardwarePreloadState.Loading,
+            status,
+            progress.StepName,
+            progress.CompletedSteps,
+            progress.TotalSteps,
+            progress.ItemCount)));
+    }
+
+    private static string FormatStepName(string stepName)
+    {
+        return stepName switch
+        {
+            "processors" => "处理器",
+            "baseboard" => "主板",
+            "bios" => "BIOS",
+            "memory" => "内存模块",
+            "video" => "显示适配器",
+            "monitors" => "显示器",
+            "disks" => "存储设备",
+            "audio" => "音频设备",
+            "network" => "网络适配器",
+            "cpu-performance" => "处理器频率",
+            "cpu-topology" => "处理器拓扑",
+            _ => stepName
+        };
     }
 
     private void RaiseInventoryChanged(HardwareInventorySnapshot snapshot)
@@ -125,4 +162,10 @@ public enum HardwarePreloadState
     Failed
 }
 
-public sealed record HardwarePreloadProgress(HardwarePreloadState State, string Message);
+public sealed record HardwarePreloadProgress(
+    HardwarePreloadState State,
+    string Message,
+    string? StepName,
+    int? CompletedSteps,
+    int? TotalSteps,
+    int? ItemCount);

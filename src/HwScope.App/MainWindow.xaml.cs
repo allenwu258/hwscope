@@ -37,8 +37,6 @@ public partial class MainWindow : FluentWindow
             {
                 SetFooterStatus(App.ThemeService.LastStatusMessage);
             }
-
-            _ = PreloadHardwareAsync();
         };
     }
 
@@ -161,18 +159,6 @@ public partial class MainWindow : FluentWindow
             File.AppendAllText(Path.Combine(Path.GetTempPath(), "HwScope-crash.log"),
                 $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] ShowMemoryBenchmark{Environment.NewLine}{ex}{Environment.NewLine}{new string('-', 80)}{Environment.NewLine}");
             System.Windows.MessageBox.Show(this, ex.ToString(), "打开内存跑分窗口失败", System.Windows.MessageBoxButton.OK, MessageBoxImage.Error);
-        }
-    }
-
-    private async Task PreloadHardwareAsync()
-    {
-        try
-        {
-            await App.HardwarePreload.EnsureLoadedAsync().ConfigureAwait(true);
-        }
-        catch (Exception ex)
-        {
-            SetFooterStatus($"硬件信息预加载失败：{ex.Message}");
         }
     }
 

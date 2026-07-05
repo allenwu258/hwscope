@@ -8,50 +8,53 @@ namespace HwScope.Core.Hardware.Inventory;
 
 public sealed class HardwareInventoryCollector
 {
-    public HardwareInventorySnapshot Collect()
+    private const int TotalSteps = 11;
+
+    public HardwareInventorySnapshot Collect(IProgress<HardwareInventoryCollectionProgress>? progress = null)
     {
         var total = Stopwatch.StartNew();
         var steps = new List<HardwareInventoryStepDiagnostic>();
+        var completedSteps = 0;
 
-        var processors = CollectStep(steps, "processors", () => Wmi.Query("""
+        var processors = CollectStep(steps, progress, "processors", ref completedSteps, () => Wmi.Query("""
             SELECT Name, Manufacturer, Description, NumberOfCores, NumberOfLogicalProcessors,
                    MaxClockSpeed, CurrentClockSpeed, SocketDesignation, ProcessorId,
                    Architecture, Family, Revision, Stepping
             FROM Win32_Processor
             """).Select(ToProcessor).ToList());
 
-        var baseBoard = CollectStep(steps, "baseboard", () => Wmi.Query("SELECT Manufacturer, Product FROM Win32_BaseBoard")
+        var baseBoard = CollectStep(steps, progress, "baseboard", ref completedSteps, () => Wmi.Query("SELECT Manufacturer, Product FROM Win32_BaseBoard")
             .Select(ToBaseBoard)
             .FirstOrDefault());
 
-        var bios = CollectStep(steps, "bios", () => Wmi.Query("SELECT SMBIOSBIOSVersion, Version, ReleaseDate FROM Win32_BIOS")
+        var bios = CollectStep(steps, progress, "bios", ref completedSteps, () => Wmi.Query("SELECT SMBIOSBIOSVersion, Version, ReleaseDate FROM Win32_BIOS")
             .Select(ToBios)
             .FirstOrDefault());
 
-        var memoryModules = CollectStep(steps, "memory", () => Wmi.Query("SELECT Capacity, Speed, ConfiguredClockSpeed, SMBIOSMemoryType, MemoryType FROM Win32_PhysicalMemory")
+        var memoryModules = CollectStep(steps, progress, "memory", ref completedSteps, () => Wmi.Query("SELECT Capacity, Speed, ConfiguredClockSpeed, SMBIOSMemoryType, MemoryType FROM Win32_PhysicalMemory")
             .Select(ToMemoryModule)
             .ToList());
 
-        var videoControllers = CollectStep(steps, "video", () => Wmi.Query("SELECT Name, AdapterRAM, PNPDeviceID FROM Win32_VideoController")
+        var videoControllers = CollectStep(steps, progress, "video", ref completedSteps, () => Wmi.Query("SELECT Name, AdapterRAM, PNPDeviceID FROM Win32_VideoController")
             .Select(ToVideoController)
             .ToList());
 
-        var monitors = CollectStep(steps, "monitors", CollectMonitors);
+        var monitors = CollectStep(steps, progress, "monitors", ref completedSteps, CollectMonitors);
 
-        var diskDrives = CollectStep(steps, "disks", () => Wmi.Query("SELECT Model, Size, MediaType, InterfaceType FROM Win32_DiskDrive")
+        var diskDrives = CollectStep(steps, progress, "disks", ref completedSteps, () => Wmi.Query("SELECT Model, Size, MediaType, InterfaceType FROM Win32_DiskDrive")
             .Select(ToDiskDrive)
             .ToList());
 
-        var audioDevices = CollectStep(steps, "audio", () => Wmi.Query("SELECT Name FROM Win32_SoundDevice")
+        var audioDevices = CollectStep(steps, progress, "audio", ref completedSteps, () => Wmi.Query("SELECT Name FROM Win32_SoundDevice")
             .Select(ToAudioDevice)
             .ToList());
 
-        var networkAdapters = CollectStep(steps, "network", () => Wmi.Query("SELECT Name, NetConnectionStatus, PhysicalAdapter, AdapterType, Speed FROM Win32_NetworkAdapter WHERE PhysicalAdapter = True")
+        var networkAdapters = CollectStep(steps, progress, "network", ref completedSteps, () => Wmi.Query("SELECT Name, NetConnectionStatus, PhysicalAdapter, AdapterType, Speed FROM Win32_NetworkAdapter WHERE PhysicalAdapter = True")
             .Select(ToNetworkAdapter)
             .ToList());
 
-        var processorFrequencyMHz = CollectStep(steps, "cpu-performance", CollectProcessorFrequencyMHz);
-        var cpuTopology = CollectStep(steps, "cpu-topology", CpuTopologyAnalyzer.TryAnalyze);
+        var processorFrequencyMHz = CollectStep(steps, progress, "cpu-performance", ref completedSteps, CollectProcessorFrequencyMHz);
+        var cpuTopology = CollectStep(steps, progress, "cpu-topology", ref completedSteps, CpuTopologyAnalyzer.TryAnalyze);
 
         total.Stop();
         return new HardwareInventorySnapshot(
@@ -70,7 +73,12 @@ public sealed class HardwareInventoryCollector
             DateTimeOffset.Now);
     }
 
-    private static T? CollectStep<T>(ICollection<HardwareInventoryStepDiagnostic> steps, string name, Func<T?> collect)
+    private static T? CollectStep<T>(
+        ICollection<HardwareInventoryStepDiagnostic> steps,
+        IProgress<HardwareInventoryCollectionProgress>? progress,
+        string name,
+        ref int completedSteps,
+        Func<T?> collect)
     {
         var elapsed = Stopwatch.StartNew();
         try
@@ -78,19 +86,32 @@ public sealed class HardwareInventoryCollector
             var result = collect();
             elapsed.Stop();
             var count = CountItems(result);
-            steps.Add(new HardwareInventoryStepDiagnostic(
+            var diagnostic = new HardwareInventoryStepDiagnostic(
                 name,
                 count > 0 ? HardwareInventoryStepStatus.Success : HardwareInventoryStepStatus.Empty,
                 count,
-                elapsed.Elapsed));
+                elapsed.Elapsed);
+            steps.Add(diagnostic);
+            ReportProgress(progress, diagnostic, ref completedSteps);
             return result;
         }
         catch (Exception ex) when (IsRecoverableCollectionException(ex))
         {
             elapsed.Stop();
-            steps.Add(new HardwareInventoryStepDiagnostic(name, HardwareInventoryStepStatus.Failed, 0, elapsed.Elapsed, ex.Message, ex.ToString()));
+            var diagnostic = new HardwareInventoryStepDiagnostic(name, HardwareInventoryStepStatus.Failed, 0, elapsed.Elapsed, ex.Message, ex.ToString());
+            steps.Add(diagnostic);
+            ReportProgress(progress, diagnostic, ref completedSteps);
             return default;
         }
+    }
+
+    private static void ReportProgress(
+        IProgress<HardwareInventoryCollectionProgress>? progress,
+        HardwareInventoryStepDiagnostic diagnostic,
+        ref int completedSteps)
+    {
+        completedSteps++;
+        progress?.Report(new HardwareInventoryCollectionProgress(diagnostic.Name, diagnostic.Status, completedSteps, TotalSteps, diagnostic.ItemCount));
     }
 
     private static bool IsRecoverableCollectionException(Exception ex)

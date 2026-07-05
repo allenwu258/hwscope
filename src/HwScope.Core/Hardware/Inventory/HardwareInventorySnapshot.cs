@@ -70,6 +70,13 @@ public sealed record HardwareInventoryStepDiagnostic(
     string? Message = null,
     string? ExceptionText = null);
 
+public sealed record HardwareInventoryCollectionProgress(
+    string StepName,
+    HardwareInventoryStepStatus Status,
+    int CompletedSteps,
+    int TotalSteps,
+    int ItemCount);
+
 public enum HardwareInventoryStepStatus
 {
     Success,

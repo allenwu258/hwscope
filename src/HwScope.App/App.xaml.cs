@@ -33,6 +33,8 @@ public partial class App : Application
         ThemeService.ApplyCurrentTheme();
 
         base.OnStartup(e);
+
+        new HardwarePreloadWindow().Show();
     }
 
     private static void OnDispatcherUnhandledException(object sender, System.Windows.Threading.DispatcherUnhandledExceptionEventArgs e)
