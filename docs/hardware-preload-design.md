@@ -4,13 +4,13 @@
 
 Classic hardware tools such as CPU-Z, AIDA64, and HWiNFO perform an upfront load pass before the main experience becomes fully interactive. That pass reduces later page and dialog latency, avoids repeated low-level probes, and creates a shared baseline inventory that downstream tools can trust.
 
-HwScope currently reads hardware data lazily in each surface:
+Before this work, HwScope read hardware data lazily in each surface:
 
 - `HardwareSummaryPage` creates `HardwareCollector` and synchronously reads WMI on first load.
 - `CpuDetailPage` creates `CpuDetailCollector` and reads WMI plus Windows processor topology on first load.
 - `MemoryBenchmarkWindow` receives a summary report from the main window, while the benchmark runner and placement planner still read CPU/topology data on demand.
 
-This design introduces an application-level preload path that builds a reusable hardware inventory snapshot near startup.
+This design introduces an application-level preload path that builds a reusable hardware inventory snapshot near startup. The current implementation now shows a lightweight startup preload window before the main window, then shares the resulting snapshot with summary, CPU detail, topology inspect, and memory benchmark entry points.
 
 ## Goals
 
@@ -25,10 +25,10 @@ This design introduces an application-level preload path that builds a reusable 
 
 - This does not implement live sensor polling.
 - This does not make memory benchmark results part of the preload database.
-- This does not require a branded splash screen in the first iteration.
+- This does not make the preload window a marketing splash screen; it is a functional loading and recovery surface.
 - This does not cache `ManagementObject` instances long term.
 
-## Current Read Paths
+## Previous Read Paths
 
 ### Summary Page
 
@@ -54,6 +54,17 @@ Memory benchmark UI receives a `HardwareReport?` for header display. Core benchm
 
 - `MemoryBenchmarkProcessRunner` reads CPU name/core counts for environment details.
 - `MemoryBenchmarkPlacementPlanner` reads logical processor topology for placement and cache row planning.
+
+## Current Implemented Flow
+
+- `App.OnStartup` creates `HardwarePreloadService` and shows `HardwarePreloadWindow`.
+- `HardwarePreloadWindow` starts `App.HardwarePreload.RefreshAsync()` after `Loaded`, displays step progress, and attaches to `ThemeService` after the window handle exists.
+- On preload success, the window creates `MainWindow`, makes it the application main window, shows it, and closes itself.
+- On preload failure, the window shows retry and continue actions. Continue opens the app with no current snapshot, allowing later page refreshes to retry.
+- Closing the preload window cancels the startup UI flow so a late background completion cannot reopen the main window.
+- `HardwareSummaryPage`, `CpuDetailPage`, and memory benchmark header creation consume `App.HardwarePreload.EnsureLoadedAsync()` or `RefreshAsync()` instead of triggering independent WMI scans.
+
+The underlying WMI calls are still blocking. Cancellation can stop waiting callers and the startup UI flow, but a WMI query already running on the worker thread may continue until the provider returns.
 
 ## Preload Candidates
 
@@ -140,9 +151,9 @@ Dynamic values may be captured as `InitialSnapshot` fields, but pages must label
 
 ### Core Snapshot Models
 
-Add a pure managed inventory model under `src/HwScope.Core/Hardware/Inventory`.
+The pure managed inventory model lives under `src/HwScope.Core/Hardware/Inventory`.
 
-Suggested records:
+Key records:
 
 - `HardwareInventorySnapshot`
 - `HardwareInventoryDiagnostics`
@@ -156,7 +167,8 @@ Suggested records:
 - `DiskDriveSnapshot`
 - `AudioDeviceSnapshot`
 - `NetworkAdapterSnapshot`
-- `CpuTopologySnapshot` or reuse `CpuTopologyAnalysis` where practical
+- `HardwareInventoryCollectionProgress`
+- `CpuTopologyAnalysis`, reused for topology data
 
 Important rule: do not expose or cache `System.Management.ManagementObject`. WMI and COM objects should be converted to plain records during collection.
 
@@ -180,7 +192,7 @@ public sealed record HardwareInventorySnapshot(
 
 ### Unified Collector
 
-Add `HardwareInventoryCollector`.
+`HardwareInventoryCollector` owns the unified baseline collection pass.
 
 Responsibilities:
 
@@ -190,12 +202,12 @@ Responsibilities:
 - Continue collecting other groups if one group fails.
 - Record per-step elapsed time and error/fallback status.
 
-Suggested public API:
+Current public API:
 
 ```csharp
 public sealed class HardwareInventoryCollector
 {
-    public HardwareInventorySnapshot Collect();
+    public HardwareInventorySnapshot Collect(IProgress<HardwareInventoryCollectionProgress>? progress = null);
 }
 ```
 
@@ -210,20 +222,19 @@ Collection should be step-based:
 - `disks`
 - `audio`
 - `network`
+- `cpu-performance`
 - `cpu-topology`
 
-Each step should be isolated so a `ManagementException`, `UnauthorizedAccessException`, or `COMException` does not abort the whole preload pass.
+Each step is isolated so recoverable WMI/COM/provider exceptions do not abort the whole preload pass. Failed steps record both a short message and full exception text in diagnostics.
 
 ### Report Builders
 
-Refactor current collectors into builders over the inventory snapshot.
-
-Recommended transition:
+Current collectors now also act as builders over the inventory snapshot.
 
 - Keep existing `HardwareCollector.CollectSummary()` for compatibility.
-- Add `HardwareCollector.CreateSummary(HardwareInventorySnapshot snapshot)`.
+- Use `HardwareCollector.CreateSummary(HardwareInventorySnapshot snapshot)` for app pages and window headers.
 - Keep existing `CpuDetailCollector.Collect()` for compatibility.
-- Add `CpuDetailCollector.CreateReport(HardwareInventorySnapshot snapshot)`.
+- Use `CpuDetailCollector.CreateReport(HardwareInventorySnapshot snapshot)` for the CPU page.
 
 After pages move to preload service, direct no-arg collection remains useful for CLI/tests/fallback.
 
@@ -236,7 +247,7 @@ That can wait until after behavior is stable.
 
 ### App Preload Service
 
-Add `HardwarePreloadService` in the app project.
+`HardwarePreloadService` lives in the app project.
 
 Responsibilities:
 
@@ -246,7 +257,7 @@ Responsibilities:
 - Expose state and diagnostics for UI.
 - Raise events when new inventory is available.
 
-Suggested state:
+Current state:
 
 ```csharp
 public enum HardwarePreloadState
@@ -258,7 +269,7 @@ public enum HardwarePreloadState
 }
 ```
 
-Suggested API:
+Current API:
 
 ```csharp
 public sealed class HardwarePreloadService
@@ -283,27 +294,21 @@ public static HardwarePreloadService HardwarePreload { get; private set; } = nul
 
 ### Startup Flow
 
-First iteration:
+Current startup flow:
 
 1. `App.OnStartup` creates `HardwarePreloadService`.
-2. `MainWindow.Loaded` starts preload in the background.
-3. Footer/status bar shows preload progress.
-4. Summary page waits for preload and renders immediately when ready.
-5. CPU page waits for the same snapshot and builds its report from it.
-
-Second iteration:
-
-1. Add a lightweight preload window or startup overlay.
-2. Display product/version, current step, progress bar, and diagnostics hint.
-3. Show the main window when preload reaches `Ready` or enters a recoverable `Failed` state.
+2. `App.OnStartup` shows `HardwarePreloadWindow` instead of using `StartupUri`.
+3. The preload window displays product version, current step, progress count, and failure details.
+4. The preload window calls `RefreshAsync()` so startup establishes a fresh baseline snapshot.
+5. On `Ready`, it opens `MainWindow`.
+6. On recoverable failure, it offers retry or continue.
+7. `MainWindow` subscribes to preload progress for footer messages and to inventory changes for its cached hardware report.
 
 ## UI Integration
 
 ### Hardware Summary Page
 
-Replace private `HardwareCollector` ownership with preload service consumption.
-
-New behavior:
+The summary page consumes the preload service.
 
 - On first load, call `await App.HardwarePreload.EnsureLoadedAsync()`.
 - Convert snapshot to `HardwareReport`.
@@ -315,9 +320,7 @@ The page should no longer perform synchronous WMI collection on the UI thread.
 
 ### CPU Detail Page
 
-Replace private `CpuDetailCollector` ownership with snapshot-to-report build.
-
-New behavior:
+The CPU detail page builds its report from the preload snapshot.
 
 - On first load, call `await App.HardwarePreload.EnsureLoadedAsync()`.
 - Build `CpuDetailReport` from the snapshot.
@@ -329,13 +332,7 @@ CPU topology inspect continues to use `CpuDetailReport.TopologyInspect`, but now
 
 ### Main Window
 
-Main window should stop using summary page as a data source for memory benchmark headers.
-
-Current behavior:
-
-- If `_currentReport` is null, `ShowMemoryBenchmark()` forces `_hardwareSummaryPage.RefreshHardwareSummary()`.
-
-Recommended behavior:
+Main window no longer uses the summary page as a data source for memory benchmark headers.
 
 - Ensure preload is ready.
 - Build/obtain `HardwareReport` from the preload snapshot.
@@ -344,8 +341,6 @@ Recommended behavior:
 This removes a hidden dependency between the memory benchmark entry and the summary page.
 
 ### Memory Benchmark
-
-Short-term:
 
 - Use preloaded `HardwareReport` for window header fields.
 
@@ -375,12 +370,18 @@ Preload diagnostics should include:
 - Per-step elapsed time.
 - Step status: success, empty, failed, skipped.
 - Exception message for failed steps.
+- Full exception text for failed steps.
 - Data source notes.
 
-Expose diagnostics in one of these surfaces:
+Diagnostics are currently exposed through:
 
 - Status bar short message.
-- Future diagnostics window.
+- Preload window failure text.
+- `HardwareInventorySnapshot.Diagnostics` for later diagnostics UI.
+
+Future surfaces:
+
+- Dedicated diagnostics window.
 - CPU detail notes section for relevant CPU/topology fallback messages.
 
 ## Error Handling
@@ -399,52 +400,53 @@ The preload pass should be best-effort.
 - Avoid sharing mutable collections.
 - Avoid exposing WMI objects beyond collection methods.
 - Serialize refreshes to prevent competing WMI scans.
+- Dispatch preload progress and inventory events back to the WPF Dispatcher.
+- Do not depend on `Progress<T>` synchronization-context capture for correctness; progress reporting must remain safe when the first caller is not on the UI thread.
 
 ## Implementation Plan
 
 ### Phase 1: Inventory Snapshot Foundation
 
-- Add snapshot records.
-- Add `HardwareInventoryCollector`.
-- Move duplicated WMI query logic into the collector.
-- Convert raw WMI results into plain records.
-- Add diagnostics per collection step.
-- Keep existing page behavior unchanged.
+- Status: implemented.
+- Snapshot records and `HardwareInventoryCollector` are in `HwScope.Core.Hardware.Inventory`.
+- Duplicated WMI/topology reads were moved into the collector.
+- Raw WMI objects are converted into plain records.
+- Diagnostics are recorded per collection step.
 
 ### Phase 2: Report Builders
 
-- Add `HardwareCollector.CreateSummary(HardwareInventorySnapshot snapshot)`.
-- Add `CpuDetailCollector.CreateReport(HardwareInventorySnapshot snapshot)`.
-- Preserve existing no-arg collection methods through a compatibility path.
-- Add focused tests or smoke checks for summary and CPU report generation from a synthetic snapshot.
+- Status: implemented.
+- `HardwareCollector.CreateSummary(HardwareInventorySnapshot snapshot)` builds summary reports from preload snapshots.
+- `CpuDetailCollector.CreateReport(HardwareInventorySnapshot snapshot)` builds CPU detail reports from preload snapshots.
+- Existing no-arg collection methods remain useful for CLI/tests/fallback.
 
 ### Phase 3: App Preload Service
 
-- Add `HardwarePreloadService`.
-- Create it in `App.OnStartup`.
-- Start preload from `MainWindow.Loaded`.
-- Wire status/progress to footer.
-- Ensure repeated `EnsureLoadedAsync()` calls share the same task.
+- Status: implemented, with startup window behavior.
+- `HardwarePreloadService` is created in `App.OnStartup`.
+- Repeated `EnsureLoadedAsync()` calls share the same running task.
+- `RefreshAsync()` updates the global snapshot and publishes `InventoryChanged`.
+- Progress includes state, message, step name, completed step count, total step count, and item count.
 
 ### Phase 4: Page Migration
 
-- Migrate `HardwareSummaryPage` to consume preload service.
-- Migrate `CpuDetailPage` to consume preload service.
-- Change refresh buttons to call global refresh.
-- Remove page-owned collector instances.
+- Status: implemented.
+- `HardwareSummaryPage` and `CpuDetailPage` consume the preload service.
+- Refresh buttons call global refresh.
+- Pages subscribe to inventory changes so related views can update from the same snapshot.
 
 ### Phase 5: Benchmark Integration
 
-- Change `MainWindow.ShowMemoryBenchmark()` to get header data from preload service instead of forcing summary refresh.
-- Pass preloaded CPU/topology data into benchmark environment/placement where useful.
-- Keep benchmark-specific diagnostics fresh at run time.
+- Status: partially implemented.
+- `MainWindow.ShowMemoryBenchmarkAsync()` gets header data from preload service instead of forcing summary refresh.
+- Benchmark environment, placement, power, and run-time diagnostics still remain benchmark-time reads.
 
 ### Phase 6: Preload UI Polish
 
-- Add optional startup preload window or overlay.
-- Display step progress and version.
-- Add diagnostics access.
-- Tune visual style to match HwScope rather than copying CPU-Z/AIDA64 directly.
+- Status: implemented for startup.
+- `HardwarePreloadWindow` displays product version, step progress, retry, and continue.
+- It uses existing theme resources and attaches to `ThemeService` after `Loaded`.
+- Future polish can add a richer diagnostics link/window.
 
 ## Risks and Mitigations
 
@@ -464,9 +466,9 @@ Moving work earlier can make startup feel slower.
 
 Mitigation:
 
-- First iteration uses background preload.
-- UI remains usable with loading states.
-- Splash/overlay can be introduced only after the pipeline is stable.
+- The startup window shows concrete step progress instead of leaving the app blank.
+- Failures expose retry and continue actions.
+- The window has a minimum visible duration to avoid flicker, but this intentionally adds a small delay when collection is very fast.
 
 ### Partial WMI Failure
 
@@ -477,6 +479,26 @@ Mitigation:
 - Isolate collection steps.
 - Store diagnostics.
 - Render partial data.
+
+### Preload Window Lifecycle
+
+The startup window is responsible for opening `MainWindow`. If the user closes it while collection is still in flight, a late completion must not reopen the app.
+
+Mitigation:
+
+- Closing the preload window cancels the startup UI flow.
+- Event handlers are detached on close.
+- The code checks cancellation before opening `MainWindow`.
+
+### Progress Ordering
+
+Step progress can arrive close to final Ready/Failed state.
+
+Mitigation:
+
+- Progress reporting uses a deterministic inline progress adapter.
+- Each load pass has a generation id.
+- Older progress is ignored after a newer load starts or after the current pass reaches Ready/Failed.
 
 ### Cross-Thread WMI Object Lifetime
 
@@ -506,5 +528,5 @@ Mitigation:
 - Refresh action updates the shared inventory and re-renders consumers.
 - Memory benchmark window header no longer depends on forcing summary page refresh.
 - Preload diagnostics show step-level success/failure and elapsed time.
+- Preload window shows current step progress and exposes retry/continue on failure.
 - Existing CPU topology inspect and memory benchmark behavior remains functionally intact.
-

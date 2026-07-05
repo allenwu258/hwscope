@@ -7,6 +7,7 @@ HwScope 是一个 Windows 本地硬件工具箱项目，目标是在一个程序
 - WPF 图形界面，基于 WPF-UI / Fluent 风格，包含传统桌面应用式标题栏菜单、左侧导航和 HWiNFO 风格图标+文字快捷工具栏。
 - 首页硬件配置摘要，支持卡片视图和列表视图。
 - CPU 详情页，展示身份、规格、频率、拓扑、缓存、核心映射、指令集和平台上下文。
+- 启动期硬件预加载窗口，先建立共享硬件信息库，再由概览页、CPU 页和内存跑分窗口复用同一份快照。
 - Windows `GetLogicalProcessorInformationEx` 拓扑采集，提供真实 package/core/thread、CPU group、NUMA、缓存共享和 core-to-logical-processor mapping。
 - CPU topology Inspect 窗口，包含 raw report 和绘制版 Visual Map。
 - CLI 硬件摘要输出，支持文本、JSON 和复制到剪贴板。
@@ -21,13 +22,13 @@ HwScope 是一个 Windows 本地硬件工具箱项目，目标是在一个程序
 HwScope.sln
 src/
   HwScope.App/
-    WPF GUI 入口，主窗口、应用图标资源、硬件摘要页、CPU 详情页、主题系统、内存跑分窗口
+    WPF GUI 入口，启动预加载窗口、主窗口、应用图标资源、硬件摘要页、CPU 详情页、主题系统、内存跑分窗口
 
   HwScope.Cli/
     命令行入口，复用 HwScope.Core 的硬件采集和跑分能力
 
   HwScope.Core/
-    硬件采集、CPU 详情模型、Windows topology API、格式化、benchmark runner 抽象和 native worker 调用
+    硬件采集、共享硬件 inventory 快照、CPU 详情模型、Windows topology API、格式化、benchmark runner 抽象和 native worker 调用
 
   HwScope.Native.MemoryBench/
     C++ 内存跑分 worker，输出 JSON / progress JSON 给 HwScope.Core 解析，CSV 仅保留为手动兼容格式
@@ -51,6 +52,8 @@ GUI：
 dotnet run --project .\src\HwScope.App\HwScope.App.csproj
 ```
 
+GUI 启动时会先显示硬件预加载窗口，建立共享硬件信息库。加载成功后自动进入主窗口；如果预加载失败，窗口会提供重试或继续进入应用的选择。
+
 CLI 硬件摘要：
 
 ```powershell
@@ -68,6 +71,8 @@ dotnet run --project .\src\HwScope.Cli\HwScope.Cli.csproj -- benchmark memory
 ## CPU 详情页
 
 GUI 中可以通过左侧导航 `硬件 -> 中央处理器 (CPU)` 打开 CPU 详情页。
+
+CPU 详情页默认消费启动期共享硬件快照；用户点击刷新时会触发全局硬件 inventory 刷新，并让概览页、CPU 页等订阅者同步到新快照。
 
 当前 CPU 模块采用分层数据源：
 
@@ -99,6 +104,7 @@ GUI 中可以通过左侧导航 `硬件 -> 中央处理器 (CPU)` 打开 CPU 详
 - [docs/cpu-detail-implementation-plan.md](docs/cpu-detail-implementation-plan.md)
 - [docs/cpu-stage2-topology-plan.md](docs/cpu-stage2-topology-plan.md)
 - [docs/cpu-topology-visualization-plan.md](docs/cpu-topology-visualization-plan.md)
+- [docs/hardware-preload-design.md](docs/hardware-preload-design.md)
 
 ## 构建
 
@@ -123,6 +129,8 @@ src\HwScope.Native.MemoryBench\build\Release\membench.exe
 ```
 
 GUI 中可以通过顶部工具栏 `跑分` 或左侧导航 `性能测试 -> 内存跑分` 打开独立窗口，然后点击 `Start Benchmark`。
+
+内存跑分窗口的硬件标题信息来自共享预加载快照，不再依赖先打开或刷新首页概览。
 
 当前跑分仍在持续演进，但已经具备可解释的多线程 Memory 行：
 
@@ -176,6 +184,7 @@ src\HwScope.App\Themes\Json\dark.json
 ## 已知限制
 
 - 当前只支持 Windows。
+- 首次启动会等待硬件预加载完成或失败后用户选择继续；WMI 或 Windows topology API 响应慢时，进入主窗口时间会变长。
 - 硬件摘要依赖 WMI，部分设备字段可能显示为“未识别”。
 - CPU 详情页的拓扑/缓存来自 Windows OS topology，不等于完整 CPUID；feature flags 仍等待 native CPUID worker 完整接入。
 - CPU topology Visual Map 当前使用 nested domain layout，tree/radial 布局和 PNG/JSON 导出仍在后续阶段。
