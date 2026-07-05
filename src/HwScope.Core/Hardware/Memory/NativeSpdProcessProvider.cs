@@ -156,6 +156,7 @@ public sealed class NativeSpdProcessProvider : ISpdProvider
             "workerMissing" => SpdProviderStatus.WorkerMissing,
             "accessDenied" => SpdProviderStatus.AccessDenied,
             "platformBlocked" => SpdProviderStatus.PlatformBlocked,
+            "notImplemented" => SpdProviderStatus.NotImplemented,
             "unsupportedMemoryType" => SpdProviderStatus.UnsupportedMemoryType,
             "checksumFailed" => SpdProviderStatus.ChecksumFailed,
             "parseFailed" => SpdProviderStatus.ParseFailed,

@@ -1,4 +1,6 @@
 #include <iostream>
+#include <exception>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -51,7 +53,7 @@ void print_usage() {
         << "Usage: spd --json\n"
         << "\n"
         << "HwScope SPD worker protocol scaffold. This build exposes the JSON contract\n"
-        << "and reports a non-fatal platformBlocked status until raw SMBus/SPD access\n"
+        << "and reports a non-fatal notImplemented status until raw SMBus/SPD access\n"
         << "is implemented for the current platform.\n";
 }
 
@@ -75,7 +77,7 @@ void print_scaffold_json(std::ostream& os) {
     os << "{\"schemaVersion\":" << kSchemaVersion
        << ",\"workerVersion\":";
     print_json_string(os, kWorkerVersion);
-    os << ",\"status\":\"platformBlocked\""
+    os << ",\"status\":\"notImplemented\""
        << ",\"modules\":[]"
        << ",\"diagnostics\":[";
     print_json_string(os, "Native SPD worker scaffold is available, but raw SMBus/SPD reading is not implemented yet.");

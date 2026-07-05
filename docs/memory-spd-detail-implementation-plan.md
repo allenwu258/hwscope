@@ -933,7 +933,7 @@ Implemented behavior:
 
 - `MemoryDetailCollector` depends on `ISpdProvider` and uses `NativeSpdProcessProvider` by default.
 - `NativeSpdProcessProvider` searches only relative worker locations under the app/base build tree.
-- `src/HwScope.Native.Spd` builds a minimal `spd.exe --json` worker that returns `platformBlocked` with diagnostics rather than fake module data.
+- `src/HwScope.Native.Spd` builds a minimal `spd.exe --json` worker that returns `notImplemented` with diagnostics rather than fake module data.
 - Timing fields such as `casLatency`, `trcd`, `trp`, `tras`, and `trc` may be JSON numbers or strings.
 - Worker status values are mapped into `SpdProviderStatus` and shown through report notes and the summary chip.
 - SPD module data, when matched by serial, part number + locator, locator, or the single-module case, can override module identity fields and populate timing profiles.

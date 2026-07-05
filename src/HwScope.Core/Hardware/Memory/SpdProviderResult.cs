@@ -20,6 +20,7 @@ public enum SpdProviderStatus
     WorkerMissing,
     AccessDenied,
     PlatformBlocked,
+    NotImplemented,
     UnsupportedMemoryType,
     ChecksumFailed,
     ParseFailed,

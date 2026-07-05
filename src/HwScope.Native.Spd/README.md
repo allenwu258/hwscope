@@ -2,7 +2,7 @@
 
 Native C++ worker for HwScope Memory / SPD collection.
 
-This project is the Stage 3 worker scaffold. It already provides the process boundary and JSON protocol consumed by `HwScope.Core.Hardware.Memory.NativeSpdProcessProvider`, but it does not yet read raw SMBus/SPD EEPROM bytes. Until that low-level reader is implemented, the worker returns a non-fatal `platformBlocked` status with an empty module list.
+This project is the Stage 3 worker scaffold. It already provides the process boundary and JSON protocol consumed by `HwScope.Core.Hardware.Memory.NativeSpdProcessProvider`, but it does not yet read raw SMBus/SPD EEPROM bytes. Until that low-level reader is implemented, the worker returns a non-fatal `notImplemented` status with an empty module list.
 
 ## Build
 
@@ -38,7 +38,7 @@ Current scaffold output:
 {
   "schemaVersion": 1,
   "workerVersion": "0.1.0",
-  "status": "platformBlocked",
+  "status": "notImplemented",
   "modules": [],
   "diagnostics": [
     "Native SPD worker scaffold is available, but raw SMBus/SPD reading is not implemented yet.",

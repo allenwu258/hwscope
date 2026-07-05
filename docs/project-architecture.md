@@ -168,7 +168,7 @@ AppContext.BaseDirectory\native\spd.exe
 src\HwScope.Native.Spd\build\Release\spd.exe
 ```
 
-当前 native worker 是 Stage 3 scaffold：返回 schemaVersion 1、workerVersion、`platformBlocked` 状态、空 modules 和 diagnostics，不伪造 JEDEC/XMP/EXPO profile。`HwScope.App` 和 `HwScope.Cli` 在构建后会在 native Release 产物存在时复制到各自输出目录的 `native\spd.exe`。
+当前 native worker 是 Stage 3 scaffold：返回 schemaVersion 1、workerVersion、`notImplemented` 状态、空 modules 和 diagnostics，不伪造 JEDEC/XMP/EXPO profile。`HwScope.App` 和 `HwScope.Cli` 在构建后会在 native Release 产物存在时复制到各自输出目录的 `native\spd.exe`。
 
 ## GUI Startup And Preload
 

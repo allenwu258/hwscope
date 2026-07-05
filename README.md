@@ -14,7 +14,7 @@ HwScope 是一个 Windows 本地硬件工具箱项目，目标是在一个程序
 - CLI 硬件摘要输出，支持文本、JSON 和复制到剪贴板。
 - 独立内存跑分窗口，界面参考 AIDA64 Cache & Memory Benchmark。
 - C++ native 内存跑分 worker，当前测量 Memory/L1/L2/L3 Read / Write / Copy / Latency，并支持 topology-aware 多线程 Memory Read / Write / Copy。
-- C++ native SPD worker 骨架，输出 schema-versioned JSON；当前返回非致命 `platformBlocked` 状态，后续接入 raw SMBus/SPD 读取。
+- C++ native SPD worker 骨架，输出 schema-versioned JSON；当前返回非致命 `notImplemented` 状态，后续接入 raw SMBus/SPD 读取。
 - JSON 驱动的主题配置，支持跟随系统、浅色、深色和 Mica 开关。
 - 应用图标资源已接入 `HwScope.App`，用于窗口、任务栏和可执行文件图标。
 
@@ -138,7 +138,7 @@ GUI 中可以通过左侧导航 `硬件 -> 内存` 或顶部快捷工具栏 `内
 src\HwScope.Native.Spd\build\Release\spd.exe
 ```
 
-当前 worker 已提供 `spd.exe --json` 协议，但尚未读取 raw SPD bytes；它会返回非致命 `platformBlocked` 状态，页面继续显示 WMI/SMBIOS 字段和明确占位。
+当前 worker 已提供 `spd.exe --json` 协议，但尚未读取 raw SPD bytes；它会返回非致命 `notImplemented` 状态，页面继续显示 WMI/SMBIOS 字段和明确占位。
 
 详细设计见：
 
