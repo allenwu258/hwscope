@@ -54,7 +54,7 @@ public partial class MemoryDetailPage : UserControl
             var snapshot = forceRefresh
                 ? await App.HardwarePreload.RefreshAsync().ConfigureAwait(true)
                 : await App.HardwarePreload.EnsureLoadedAsync().ConfigureAwait(true);
-            var report = _reportBuilder.CreateReport(snapshot);
+            var report = await Task.Run(() => _reportBuilder.CreateReport(snapshot)).ConfigureAwait(true);
             if (version != _refreshVersion)
             {
                 return;
@@ -133,14 +133,22 @@ public partial class MemoryDetailPage : UserControl
         }
     }
 
-    private void HardwarePreload_InventoryChanged(object? sender, HardwareInventorySnapshot snapshot)
+    private async void HardwarePreload_InventoryChanged(object? sender, HardwareInventorySnapshot snapshot)
     {
         if (_currentReport is null)
         {
             return;
         }
 
-        Render(_reportBuilder.CreateReport(snapshot));
+        try
+        {
+            var report = await Task.Run(() => _reportBuilder.CreateReport(snapshot)).ConfigureAwait(true);
+            Render(report);
+        }
+        catch (Exception ex)
+        {
+            SetStatus($"内存 / SPD 详情刷新失败：{ex.Message}");
+        }
     }
 
     private void SubscribeToPreload()
@@ -203,7 +211,7 @@ public partial class MemoryDetailPage : UserControl
         AddChip(chips, report.Summary.TotalCapacity);
         AddChip(chips, report.Summary.Layout);
         AddChip(chips, report.Summary.ConfiguredSpeed);
-        chips.Add("SPD 待接入");
+        chips.Add(report.SpdAccess.DisplayText);
         return chips;
     }
 

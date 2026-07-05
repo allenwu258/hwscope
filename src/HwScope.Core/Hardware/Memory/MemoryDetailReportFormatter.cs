@@ -17,6 +17,8 @@ public static class MemoryDetailReportFormatter
         AppendLine(builder, "布局", report.Summary.Layout);
         AppendLine(builder, "配置速率", report.Summary.ConfiguredSpeed);
         AppendLine(builder, "通道模式", report.Summary.ChannelMode);
+        builder.Append("SPD 状态：");
+        builder.AppendLine(report.SpdAccess.DisplayText);
         builder.AppendLine();
 
         builder.AppendLine("Runtime");

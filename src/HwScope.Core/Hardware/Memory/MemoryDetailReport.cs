@@ -5,7 +5,13 @@ public sealed record MemoryDetailReport(
     MemoryRuntimeInfo Runtime,
     IReadOnlyList<MemoryModuleDetail> Modules,
     IReadOnlyList<MemoryDataNote> Notes,
+    MemorySpdAccessInfo SpdAccess,
     DateTimeOffset GeneratedAt);
+
+public sealed record MemorySpdAccessInfo(
+    SpdProviderStatus Status,
+    string DisplayText,
+    IReadOnlyList<string> Diagnostics);
 
 public sealed record MemorySummary(
     MemoryFieldValue<string> Type,

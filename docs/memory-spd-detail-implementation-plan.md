@@ -842,7 +842,7 @@ Stage 2 is intentionally close to Stage 1. It may be delivered in the same imple
 
 ## Stage 3 Native SPD Reader Plan
 
-Do not implement in the first UI change, but design the boundary now.
+The first UI change now has the Core boundary in place. The native worker project itself is still a later deliverable, but the app can already consume a schema-versioned `spd.exe --json` worker when present and degrade to structured notes when it is missing.
 
 ### Project Shape
 
@@ -915,6 +915,7 @@ Failure example:
 src/HwScope.Core/Hardware/Memory/ISpdProvider.cs
 src/HwScope.Core/Hardware/Memory/NativeSpdProcessProvider.cs
 src/HwScope.Core/Hardware/Memory/SpdProviderResult.cs
+src/HwScope.Core/Hardware/Memory/NullSpdProvider.cs
 ```
 
 API:
@@ -927,6 +928,14 @@ public interface ISpdProvider
 ```
 
 Missing worker is expected during development and should produce notes, not exceptions through the page.
+
+Implemented behavior:
+
+- `MemoryDetailCollector` depends on `ISpdProvider` and uses `NativeSpdProcessProvider` by default.
+- `NativeSpdProcessProvider` searches only relative worker locations under the app/base build tree.
+- Worker status values are mapped into `SpdProviderStatus` and shown through report notes and the summary chip.
+- SPD module data, when available, can override module identity fields and populate timing profiles.
+- Missing worker, timeout, parse failure, permission failure and platform-blocked states are non-fatal.
 
 ## Risks And Mitigations
 

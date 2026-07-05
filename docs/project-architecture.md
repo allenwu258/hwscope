@@ -88,7 +88,7 @@ GUI 依赖 `WPF-UI`，当前版本为 `4.3.0`。
   CPU 详情领域模型、WMI 采集、Windows topology API 聚合、已知型号 fallback、文本报告格式化。
 
 - `HwScope.Core.Hardware.Memory`
-  内存 / SPD 详情领域模型、WMI/SMBIOS-backed 报告构建、内存类型/形态格式化和文本报告格式化。Raw SPD reader 和运行态 timing provider 是后续扩展点。
+  内存 / SPD 详情领域模型、WMI/SMBIOS-backed 报告构建、内存类型/形态格式化、文本报告格式化和 SPD provider 契约。当前默认通过 `NativeSpdProcessProvider` 查找可选 `spd.exe --json` worker；worker 缺失、权限不足或平台屏蔽会转成结构化状态和页面说明，不影响 WMI-backed 页面显示。运行态 timing provider 是后续扩展点。
 
 - `HwScope.Core.Benchmark`
   定义内存跑分结果、选项、runner 抽象和 native worker 进程调用。
