@@ -15,16 +15,23 @@ public sealed class NativeSpdProcessProvider : ISpdProvider
 
     private readonly IReadOnlyList<string> _candidatePaths;
     private readonly TimeSpan _timeout;
+    private readonly IReadOnlyList<string> _arguments;
 
     public NativeSpdProcessProvider()
-        : this(GetDefaultCandidatePaths(), TimeSpan.FromSeconds(5))
+        : this(GetDefaultCandidatePaths(), TimeSpan.FromSeconds(5), GetDefaultArguments())
     {
     }
 
     public NativeSpdProcessProvider(IReadOnlyList<string> candidatePaths, TimeSpan timeout)
+        : this(candidatePaths, timeout, ["--json"])
+    {
+    }
+
+    public NativeSpdProcessProvider(IReadOnlyList<string> candidatePaths, TimeSpan timeout, IReadOnlyList<string> arguments)
     {
         _candidatePaths = candidatePaths;
         _timeout = timeout;
+        _arguments = arguments.Count > 0 ? arguments : ["--json"];
     }
 
     public SpdProviderResult TryCollect()
@@ -41,12 +48,15 @@ public sealed class NativeSpdProcessProvider : ISpdProvider
             process.StartInfo = new ProcessStartInfo
             {
                 FileName = workerPath,
-                Arguments = "--json",
                 UseShellExecute = false,
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
                 CreateNoWindow = true
             };
+            foreach (var argument in _arguments)
+            {
+                process.StartInfo.ArgumentList.Add(argument);
+            }
 
             process.Start();
             var stdoutTask = process.StandardOutput.ReadToEndAsync();
@@ -119,13 +129,47 @@ public sealed class NativeSpdProcessProvider : ISpdProvider
             module.ManufacturingWeek,
             module.ManufacturingYear,
             module.Revision ?? string.Empty,
-            module.TimingProfiles?.Select(ToTimingProfile).ToList() ?? []);
+            ToOrganization(module.Organization),
+            ToVoltages(module.Voltages),
+            ToRaw(module.Raw),
+            module.TimingProfiles?.Select(ToTimingProfile).ToList() ?? [],
+            module.Features?.Select(feature => new SpdModuleFeature(feature.Name ?? string.Empty, JsonValueToString(feature.Value))).ToList() ?? [],
+            module.Diagnostics?.Where(diagnostic => !string.IsNullOrWhiteSpace(diagnostic)).Select(diagnostic => diagnostic.Trim()).ToList() ?? []);
+    }
+
+    private static SpdModuleOrganization ToOrganization(NativeSpdOrganization? organization)
+    {
+        return organization is null
+            ? new SpdModuleOrganization(0, 0, 0, 0, 0, 0, 0)
+            : new SpdModuleOrganization(
+                organization.RankCount,
+                organization.BankGroupCount,
+                organization.BanksPerGroup,
+                organization.DeviceWidthBits,
+                organization.BusWidthBits,
+                organization.DataWidthBits,
+                organization.TotalWidthBits);
+    }
+
+    private static SpdModuleVoltages ToVoltages(NativeSpdVoltages? voltages)
+    {
+        return voltages is null
+            ? new SpdModuleVoltages(0, 0, 0)
+            : new SpdModuleVoltages(voltages.VddMv, voltages.VddqMv, voltages.VppMv);
+    }
+
+    private static SpdRawInfo ToRaw(NativeSpdRaw? raw)
+    {
+        return raw is null
+            ? new SpdRawInfo(0, null, null, string.Empty)
+            : new SpdRawInfo(raw.ByteCount, raw.ChecksumOk, raw.CrcOk, raw.Sha256 ?? string.Empty);
     }
 
     private static SpdTimingProfile ToTimingProfile(NativeSpdTimingProfile profile)
     {
         return new SpdTimingProfile(
             profile.Name ?? string.Empty,
+            profile.Kind ?? string.Empty,
             profile.FrequencyMHz,
             profile.EffectiveRateMTps,
             JsonValueToString(profile.CasLatency),
@@ -183,6 +227,14 @@ public sealed class NativeSpdProcessProvider : ISpdProvider
         ];
     }
 
+    private static IReadOnlyList<string> GetDefaultArguments()
+    {
+        var fixture = Environment.GetEnvironmentVariable("HWSCOPE_SPD_FIXTURE");
+        return string.IsNullOrWhiteSpace(fixture)
+            ? ["--json"]
+            : ["--json", "--backend", "fixture", "--fixture", fixture];
+    }
+
     private sealed record NativeSpdPayload(
         int SchemaVersion,
         string? Status,
@@ -201,10 +253,40 @@ public sealed class NativeSpdProcessProvider : ISpdProvider
         int ManufacturingWeek,
         int ManufacturingYear,
         string? Revision,
-        IReadOnlyList<NativeSpdTimingProfile>? TimingProfiles);
+        NativeSpdOrganization? Organization,
+        NativeSpdVoltages? Voltages,
+        NativeSpdRaw? Raw,
+        IReadOnlyList<NativeSpdTimingProfile>? TimingProfiles,
+        IReadOnlyList<NativeSpdFeature>? Features,
+        IReadOnlyList<string>? Diagnostics);
+
+    private sealed record NativeSpdOrganization(
+        int RankCount,
+        int BankGroupCount,
+        int BanksPerGroup,
+        int DeviceWidthBits,
+        int BusWidthBits,
+        int DataWidthBits,
+        int TotalWidthBits);
+
+    private sealed record NativeSpdVoltages(
+        uint VddMv,
+        uint VddqMv,
+        uint VppMv);
+
+    private sealed record NativeSpdRaw(
+        int ByteCount,
+        bool? ChecksumOk,
+        bool? CrcOk,
+        string? Sha256);
+
+    private sealed record NativeSpdFeature(
+        string? Name,
+        JsonElement Value);
 
     private sealed record NativeSpdTimingProfile(
         string? Name,
+        string? Kind,
         double FrequencyMHz,
         uint EffectiveRateMTps,
         JsonElement CasLatency,

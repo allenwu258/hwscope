@@ -107,32 +107,26 @@ public sealed class MemoryDetailCollector
                 Revision: SpdOrPlaceholder(spdModule?.Revision)),
             Organization: new MemoryModuleOrganization(
                 RankMix: MemoryField.Placeholder<string>(MemoryField.PendingSpdText),
-                RankCount: MemoryField.Placeholder<int>(MemoryField.PendingSpdText),
-                BankGroupCount: MemoryField.Placeholder<int>(MemoryField.PendingSpdText),
-                BanksPerGroup: MemoryField.Placeholder<int>(MemoryField.PendingSpdText),
+                RankCount: SpdNumberOrPlaceholder(spdModule?.Organization.RankCount),
+                BankGroupCount: SpdNumberOrPlaceholder(spdModule?.Organization.BankGroupCount),
+                BanksPerGroup: SpdNumberOrPlaceholder(spdModule?.Organization.BanksPerGroup),
                 RowAddressBits: MemoryField.Placeholder<int>(MemoryField.PendingSpdText),
                 ColumnAddressBits: MemoryField.Placeholder<int>(MemoryField.PendingSpdText),
-                DeviceWidth: MemoryField.Placeholder<string>(MemoryField.PendingSpdText),
-                BusWidth: FormatBits(module.TotalWidth > 0 ? module.TotalWidth : module.DataWidth, MemoryDataSource.Wmi),
-                DataWidth: FormatBits(module.DataWidth, MemoryDataSource.Wmi),
-                TotalWidth: FormatBits(module.TotalWidth, MemoryDataSource.Wmi),
+                DeviceWidth: SpdBitsOrPlaceholder(spdModule?.Organization.DeviceWidthBits),
+                BusWidth: SpdBitsOrWmi(spdModule?.Organization.BusWidthBits, module.TotalWidth > 0 ? module.TotalWidth : module.DataWidth),
+                DataWidth: SpdBitsOrWmi(spdModule?.Organization.DataWidthBits, module.DataWidth),
+                TotalWidth: SpdBitsOrWmi(spdModule?.Organization.TotalWidthBits, module.TotalWidth),
                 Ecc: FormatEcc(module),
                 OnDieEcc: MemoryField.Placeholder<string>(MemoryField.PendingSpdText)),
             Voltages: new MemoryModuleVoltages(
                 ConfiguredVoltage: MemoryField.Millivolts(module.ConfiguredVoltage, MemoryDataSource.Wmi),
                 MinVoltage: MemoryField.Millivolts(module.MinVoltage, MemoryDataSource.Wmi),
                 MaxVoltage: MemoryField.Millivolts(module.MaxVoltage, MemoryDataSource.Wmi),
-                Vdd: MemoryField.Placeholder<string>(MemoryField.PendingSpdText),
-                Vddq: MemoryField.Placeholder<string>(MemoryField.PendingSpdText),
-                Vpp: MemoryField.Placeholder<string>(MemoryField.PendingSpdText)),
+                Vdd: SpdMillivoltsOrPlaceholder(spdModule?.Voltages.VddMv),
+                Vddq: SpdMillivoltsOrPlaceholder(spdModule?.Voltages.VddqMv),
+                Vpp: SpdMillivoltsOrPlaceholder(spdModule?.Voltages.VppMv)),
             TimingProfiles: BuildTimingProfiles(spdModule),
-            Features:
-            [
-                new MemoryModuleFeature("Write Temperature Sense", MemoryField.Placeholder<string>(MemoryField.PendingSpdText), MemoryDataSource.Placeholder),
-                new MemoryModuleFeature("Bounded Fault", MemoryField.Placeholder<string>(MemoryField.PendingSpdText), MemoryDataSource.Placeholder),
-                new MemoryModuleFeature("BL32", MemoryField.Placeholder<string>(MemoryField.PendingSpdText), MemoryDataSource.Placeholder),
-                new MemoryModuleFeature("Non-Standard Core Timings", MemoryField.Placeholder<string>(MemoryField.PendingSpdText), MemoryDataSource.Placeholder)
-            ],
+            Features: BuildFeatures(spdModule),
             Notes: BuildModuleNotes(module, spdModule, hasSpdModules));
     }
 
@@ -148,8 +142,9 @@ public sealed class MemoryDetailCollector
 
     private static MemoryTimingProfile ToTimingProfile(SpdTimingProfile profile)
     {
+        var name = FirstUseful(profile.Name, profile.Kind, "SPD Profile");
         return new MemoryTimingProfile(
-            FirstUseful(profile.Name, "SPD Profile"),
+            name,
             profile.FrequencyMHz > 0 ? MemoryField.Text($"{profile.FrequencyMHz:0.#} MHz", MemoryDataSource.Spd) : MemoryField.Placeholder<string>(MemoryField.PendingSpdText),
             profile.EffectiveRateMTps > 0 ? MemoryField.MegaTransfers(profile.EffectiveRateMTps, MemoryDataSource.Spd) : MemoryField.Placeholder<string>(MemoryField.PendingSpdText),
             SpdOrPlaceholder(profile.CasLatency),
@@ -174,6 +169,25 @@ public sealed class MemoryDetailCollector
             MemoryField.Placeholder<string>(MemoryField.PendingSpdText),
             MemoryField.Placeholder<string>(MemoryField.PendingSpdText),
             MemoryDataSource.Placeholder);
+    }
+
+    private static IReadOnlyList<MemoryModuleFeature> BuildFeatures(SpdMemoryModule? spdModule)
+    {
+        if (spdModule?.Features.Count > 0)
+        {
+            return spdModule.Features
+                .Where(feature => IsUseful(feature.Name))
+                .Select(feature => new MemoryModuleFeature(feature.Name, SpdOrPlaceholder(feature.Value), MemoryDataSource.Spd))
+                .ToList();
+        }
+
+        return
+        [
+            new MemoryModuleFeature("Write Temperature Sense", MemoryField.Placeholder<string>(MemoryField.PendingSpdText), MemoryDataSource.Placeholder),
+            new MemoryModuleFeature("Bounded Fault", MemoryField.Placeholder<string>(MemoryField.PendingSpdText), MemoryDataSource.Placeholder),
+            new MemoryModuleFeature("BL32", MemoryField.Placeholder<string>(MemoryField.PendingSpdText), MemoryDataSource.Placeholder),
+            new MemoryModuleFeature("Non-Standard Core Timings", MemoryField.Placeholder<string>(MemoryField.PendingSpdText), MemoryDataSource.Placeholder)
+        ];
     }
 
     private static IReadOnlyList<MemoryDataNote> BuildNotes(HardwareInventorySnapshot snapshot, SpdProviderResult spdResult)
@@ -236,6 +250,24 @@ public sealed class MemoryDetailCollector
             notes.Add(new MemoryDataNote("未匹配到该模块的 SPD 数据。", MemoryDataSource.Placeholder));
         }
 
+        if (spdModule is not null)
+        {
+            if (spdModule.Raw.ByteCount > 0)
+            {
+                var checksum = spdModule.Raw.ChecksumOk switch
+                {
+                    true => "校验通过",
+                    false => "校验失败",
+                    _ => "校验状态未知"
+                };
+                notes.Add(new MemoryDataNote($"SPD raw bytes：{spdModule.Raw.ByteCount} bytes，{checksum}。", MemoryDataSource.Spd));
+            }
+
+            notes.AddRange(spdModule.Diagnostics
+                .Where(IsUseful)
+                .Select(diagnostic => new MemoryDataNote(diagnostic, MemoryDataSource.Spd)));
+        }
+
         return notes;
     }
 
@@ -275,6 +307,34 @@ public sealed class MemoryDetailCollector
     {
         return IsUseful(value)
             ? MemoryField.Text(value, MemoryDataSource.Spd)
+            : MemoryField.Placeholder<string>(MemoryField.PendingSpdText);
+    }
+
+    private static MemoryFieldValue<int> SpdNumberOrPlaceholder(int? value)
+    {
+        return value is > 0
+            ? MemoryField.Number(value, MemoryDataSource.Spd)
+            : MemoryField.Placeholder<int>(MemoryField.PendingSpdText);
+    }
+
+    private static MemoryFieldValue<string> SpdBitsOrPlaceholder(int? bits)
+    {
+        return bits is > 0
+            ? MemoryField.Text($"{bits} bit", MemoryDataSource.Spd)
+            : MemoryField.Placeholder<string>(MemoryField.PendingSpdText);
+    }
+
+    private static MemoryFieldValue<string> SpdBitsOrWmi(int? spdBits, uint wmiBits)
+    {
+        return spdBits is > 0
+            ? MemoryField.Text($"{spdBits} bit", MemoryDataSource.Spd)
+            : FormatBits(wmiBits, MemoryDataSource.Wmi);
+    }
+
+    private static MemoryFieldValue<string> SpdMillivoltsOrPlaceholder(uint? millivolts)
+    {
+        return millivolts is > 0
+            ? MemoryField.Millivolts(millivolts.Value, MemoryDataSource.Spd)
             : MemoryField.Placeholder<string>(MemoryField.PendingSpdText);
     }
 

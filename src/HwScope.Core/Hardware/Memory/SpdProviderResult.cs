@@ -40,10 +40,38 @@ public sealed record SpdMemoryModule(
     int ManufacturingWeek,
     int ManufacturingYear,
     string Revision,
-    IReadOnlyList<SpdTimingProfile> TimingProfiles);
+    SpdModuleOrganization Organization,
+    SpdModuleVoltages Voltages,
+    SpdRawInfo Raw,
+    IReadOnlyList<SpdTimingProfile> TimingProfiles,
+    IReadOnlyList<SpdModuleFeature> Features,
+    IReadOnlyList<string> Diagnostics);
+
+public sealed record SpdModuleOrganization(
+    int RankCount,
+    int BankGroupCount,
+    int BanksPerGroup,
+    int DeviceWidthBits,
+    int BusWidthBits,
+    int DataWidthBits,
+    int TotalWidthBits);
+
+public sealed record SpdModuleVoltages(
+    uint VddMv,
+    uint VddqMv,
+    uint VppMv);
+
+public sealed record SpdRawInfo(
+    int ByteCount,
+    bool? ChecksumOk,
+    bool? CrcOk,
+    string Sha256);
+
+public sealed record SpdModuleFeature(string Name, string Value);
 
 public sealed record SpdTimingProfile(
     string Name,
+    string Kind,
     double FrequencyMHz,
     uint EffectiveRateMTps,
     string CasLatency,

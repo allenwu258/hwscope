@@ -2,7 +2,7 @@
 
 Native C++ worker for HwScope Memory / SPD collection.
 
-This project is the Stage 3 worker scaffold. It already provides the process boundary and JSON protocol consumed by `HwScope.Core.Hardware.Memory.NativeSpdProcessProvider`, but it does not yet read raw SMBus/SPD EEPROM bytes. Until that low-level reader is implemented, the worker returns a non-fatal `notImplemented` status with an empty module list.
+This project is the Stage 3 worker scaffold. It already provides the process boundary and JSON protocol consumed by `HwScope.Core.Hardware.Memory.NativeSpdProcessProvider`. The default backend reports raw SPD access as blocked unless a safe privileged SMBus/SPD backend is implemented for the current platform.
 
 ## Build
 
@@ -38,16 +38,25 @@ Current scaffold output:
 {
   "schemaVersion": 1,
   "workerVersion": "0.1.0",
-  "status": "notImplemented",
+  "status": "platformBlocked",
   "modules": [],
   "diagnostics": [
-    "Native SPD worker scaffold is available, but raw SMBus/SPD reading is not implemented yet.",
-    "HwScope will continue to show WMI/SMBIOS-backed memory fields and SPD placeholders."
+    "Windows does not expose a stable user-mode API for raw SPD EEPROM reads on this platform.",
+    "A privileged SMBus/SPD backend or supported controller-specific reader is required for raw hardware access.",
+    "Set HWSCOPE_SPD_FIXTURE to a fixture JSON path to validate parser/UI integration."
   ]
 }
 ```
 
 Future worker versions should keep `schemaVersion` stable until the JSON shape changes. Module timing fields such as `casLatency`, `trcd`, `trp`, `tras`, and `trc` may be emitted as JSON numbers or strings; Core accepts both.
+
+Fixture validation command:
+
+```powershell
+.\build\Release\spd.exe --json --backend fixture --fixture .\fixtures\ddr5-sodimm-32gb.sample.json
+```
+
+The fixture backend currently passes through worker-payload-shaped JSON. It exists to validate Core/UI integration with parsed SPD fields before unsafe raw SMBus access is available. To make the WPF page show fixture-backed SPD fields, set `HWSCOPE_SPD_FIXTURE` to an absolute fixture path before launching the app.
 
 ## Real Reader Roadmap
 
