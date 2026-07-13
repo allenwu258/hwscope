@@ -2,7 +2,7 @@
 
 Native C++ worker for HwScope Memory / SPD collection.
 
-This project is the Stage 3 worker scaffold. It already provides the process boundary and JSON protocol consumed by `HwScope.Core.Hardware.Memory.NativeSpdProcessProvider`. The default backend reports raw SPD access as blocked unless a safe privileged SMBus/SPD backend is implemented for the current platform.
+This project provides the offline SPD parser and JSON protocol consumed by `HwScope.Core.Hardware.Memory.NativeSpdProcessProvider`. Hardware SPD acquisition is currently not implemented because a safe general Windows implementation requires a kernel driver. The driver-dependent reader work is parked; fixture/offline parsing remains active.
 
 ## Build
 
@@ -32,18 +32,18 @@ The C# provider also keeps a source-tree `build\Release` developer fallback so A
 .\build\Release\spd.exe --json
 ```
 
-Current scaffold output:
+Current default output:
 
 ```json
 {
   "schemaVersion": 1,
-  "workerVersion": "0.1.0",
-  "status": "platformBlocked",
+  "workerVersion": "0.2.0",
+  "backend": "none",
+  "status": "notImplemented",
   "modules": [],
   "diagnostics": [
-    "Windows does not expose a stable user-mode API for raw SPD EEPROM reads on this platform.",
-    "A privileged SMBus/SPD backend or supported controller-specific reader is required for raw hardware access.",
-    "Set HWSCOPE_SPD_FIXTURE to a fixture JSON path to validate parser/UI integration."
+    "SPD hardware acquisition is not implemented.",
+    "Offline SPD parsing remains available through the fixture backend."
   ]
 }
 ```
@@ -54,17 +54,39 @@ Fixture validation command:
 
 ```powershell
 .\build\Release\spd.exe --json --backend fixture --fixture .\fixtures\ddr5-sodimm-32gb.sample.json
+.\build\Release\spd.exe --json --backend fixture --fixture .\fixtures\ddr4-udimm-32gb.raw.sample.json
+.\build\Release\spd.exe --json --backend fixture --fixture .\fixtures\ddr4-udimm-32gb.bad-crc.sample.json
+.\build\Release\spd.exe --json --backend fixture --fixture .\fixtures\unknown-spd-type.sample.json
+.\build\Release\spd.exe --json --backend fixture --fixture .\fixtures\invalid-hex.sample.json
 ```
 
-The fixture backend currently passes through worker-payload-shaped JSON. It exists to validate Core/UI integration with parsed SPD fields before unsafe raw SMBus access is available. To make the WPF page show fixture-backed SPD fields, set `HWSCOPE_SPD_FIXTURE` to an absolute fixture path before launching the app.
+The fixture backend supports two development formats:
 
-## Real Reader Roadmap
+- Worker-payload-shaped JSON, kept for UI/Core integration fixtures.
+- Raw `bytesHex` JSON, parsed by the native SPD parser before emitting the worker payload. The DDR4 first-pass parser emits identity, organization, voltage, JEDEC timing, CRC status and SHA-256 raw metadata.
 
-Real SPD support is split into two tracks:
+To make the WPF page show fixture-backed SPD fields, set `HWSCOPE_SPD_FIXTURE` to an absolute fixture path before launching the app.
 
-- A fixture/offline SPD bytes parser that can parse DDR4/DDR5 samples without hardware access.
-- A Windows raw reader backend that attempts SMBus/SPD EEPROM access only when a supported, safe path is available.
+Fixture selection for development:
 
-The parser should land first. It should add `--backend fixture --fixture <path>`, checksum/CRC validation, DDR4/DDR5 detection, identity fields, organization fields, voltages, and JEDEC timing profiles. The default `--backend auto` can keep returning `notImplemented` until a Windows reader backend is safe enough to enable.
+```powershell
+$env:HWSCOPE_SPD_FIXTURE = "C:\path\to\ddr4-udimm-32gb.raw.sample.json"
+```
+
+## Current Scope
+
+Active work:
+
+- Fixture/offline SPD byte parsing.
+- DDR4/DDR5 field decoding, CRC/checksum validation and profile extraction.
+- Core/UI integration through schema-versioned JSON.
+
+Parked work:
+
+- Windows SMBus controller probing and chipset adapters.
+- Real SPD EEPROM / DDR5 SPD Hub acquisition.
+- Kernel driver packaging, signing and hardware compatibility testing.
+
+The default `auto` backend returns `notImplemented`. Hardware acquisition will only resume after a separately reviewed, signed and constrained driver plan exists.
 
 See [`../../docs/memory-spd-detail-implementation-plan.md`](../../docs/memory-spd-detail-implementation-plan.md) for the full Stage 3A/3B development plan.

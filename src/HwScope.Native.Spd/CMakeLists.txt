@@ -13,3 +13,7 @@ if (MSVC)
 else()
     target_compile_options(spd PRIVATE -O3 -Wall -Wextra -pedantic)
 endif()
+
+if (WIN32)
+    target_link_libraries(spd PRIVATE bcrypt)
+endif()

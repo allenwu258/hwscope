@@ -27,9 +27,9 @@ public partial class App : Application
         TaskScheduler.UnobservedTaskException += OnUnobservedTaskException;
 
         var elevation = EnsureAdministrator(e.Args);
-        if (elevation != ElevationResult.CurrentProcessIsElevated)
+        if (elevation == ElevationResult.ElevationStarted)
         {
-            Shutdown(elevation == ElevationResult.ElevationStarted ? 0 : 1);
+            Shutdown(0);
             return;
         }
 
@@ -50,7 +50,7 @@ public partial class App : Application
     {
         CurrentProcessIsElevated,
         ElevationStarted,
-        Failed
+        ContinueWithoutElevation
     }
 
     private static ElevationResult EnsureAdministrator(IReadOnlyList<string> args)
@@ -69,18 +69,22 @@ public partial class App : Application
                 Verb = "runas",
                 Arguments = string.Join(' ', args.Select(QuoteArgument))
             });
+            if (process is null)
+            {
+                throw new InvalidOperationException("未能启动管理员权限进程。");
+            }
 
             return ElevationResult.ElevationStarted;
         }
         catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or InvalidOperationException)
         {
-            WriteCrashLog("ElevationRequired", ex);
+            WriteCrashLog("ElevationUnavailable", ex);
             MessageBox.Show(
-                "HwScope 需要管理员权限才能读取底层硬件信息。未获得管理员权限，程序将退出。",
-                "需要管理员权限",
+                "未获得管理员权限。HwScope 将继续以普通权限运行，但部分底层硬件信息可能缺失或不可用。",
+                "部分硬件信息可能缺失",
                 MessageBoxButton.OK,
-                MessageBoxImage.Error);
-            return ElevationResult.Failed;
+                MessageBoxImage.Warning);
+            return ElevationResult.ContinueWithoutElevation;
         }
     }
 

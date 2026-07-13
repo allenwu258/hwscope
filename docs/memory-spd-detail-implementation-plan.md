@@ -939,14 +939,86 @@ Implemented behavior:
 - SPD module data, when matched by serial, part number + locator, locator, or the single-module case, can override module identity fields and populate timing profiles.
 - Missing worker, timeout, parse failure, permission failure and platform-blocked states are non-fatal.
 
-## Stage 3A/3B Real SPD Reading And Parsing Plan
+## Stage 3A/3B SPD Parsing And Hardware Reading Plan
 
 真实 SPD 支持要拆成两条相互解耦的工程线：
 
 - **SPD bytes parser**：给定一段 raw SPD bytes，稳定解析 DDR4/DDR5 字段、校验和、module identity、organization、voltages 和 timing profiles。这个部分必须能用 fixture 离线测试，不依赖当前机器能否读取 SMBus。
 - **Raw SPD reader**：在 Windows 上尽力枚举 SMBus/SPD EEPROM 并读取 bytes。这个部分是平台敏感、权限敏感和硬件敏感的，应作为可替换 backend，并且失败不影响 WMI/SMBIOS 页面。
 
-第一批真实开发不要直接把 SMBus 读取和 DDR 解析写在一起。先让 `spd.exe` 能通过 fixture/导入 bytes 输出真实解析结果，再逐步接入 Windows raw reader。这样可以在没有可读 SPD 的笔记本、LPDDR/onboard memory、OEM BIOS 屏蔽平台上继续推进解析和 UI 合并。
+当前只推进 parser 线。Windows raw reader、运行态内存控制器时序、DIMM/SPD Hub 温度和 PMIC telemetry 都需要受控内核驱动或等价厂商接口，现阶段统一搁置。`spd.exe --json` 默认返回 `notImplemented`，页面显示 `SPD 读取暂未实现`；fixture/offline parser 继续用于开发、回归和 UI 集成。
+
+### Current Status
+
+| Workstream | Status | Notes |
+| --- | --- | --- |
+| WMI/SMBIOS memory page | Active | No custom kernel driver required. |
+| Fixture/offline SPD parser | Active | DDR4 first pass, CRC/SHA-256 and negative fixtures are available. |
+| DDR5 offline parser | Active / incomplete | Payload fixture works; raw SPD Hub byte parser remains. |
+| Windows SMBus probe | Removed | It did not provide SPD bytes and only served the parked driver path. |
+| Real SPD EEPROM/SPD Hub acquisition | Parked | Requires a signed, constrained kernel driver and chipset-specific adapters. |
+| Runtime memory controller timings | Parked | Generic implementation requires MSR/SMN/PCI/MMIO access. |
+| DIMM/SPD Hub/PMIC telemetry | Parked | Requires SMBus access or a supported vendor interface. |
+
+The application still requests UAC elevation at startup for future hardware capabilities. If elevation is declined or unavailable, HwScope shows a closable warning and continues with standard-user permissions.
+
+### Technology Research And Framework Decision
+
+SPD support has two very different technical layers:
+
+- **EEPROM / SPD Hub byte acquisition**：从 SMBus / I2C / DDR5 SPD Hub 读取 raw bytes。
+- **SPD byte parsing**：给定一段 bytes，按 DDR4 / DDR5 SPD layout 做校验、解码和 JSON 输出。
+
+这两层必须分开实现。读取层是平台、权限和驱动敏感的；解析层是纯 bytes 处理，应当能在没有真实硬件访问的机器上用 fixture 稳定测试。
+
+External references and what they imply:
+
+| Reference | Useful For | Engineering Implication |
+| --- | --- | --- |
+| Linux `ee1004` driver | DDR4 SPD EEPROM addressing, 256-byte page selection and conservative SMBus block reads | DDR4 读取不是简单一次性读 512 bytes；需要受控 page select / block read。 |
+| `i2c-tools decode-dimms` | Mature SPD decoding behavior and CLI workflow | Good behavioral reference, but GPL code should not be copied into this MIT project. |
+| Microsoft SPB / KMDF documentation | Windows I2C/SPB driver model | Windows has a driver model for I2C/SPB, but not a universal user-mode DIMM SPD API. |
+| DDR5 SPD Hub datasheets / vendor docs | DDR5 SPD Hub NVM and I2C/I3C access model | DDR5 should be treated as SPD Hub/NVM, not just legacy EEPROM. |
+| WinRing0 / generic IO drivers | Fast experimental port/MMIO access | Not suitable as a bundled default because vulnerable-driver/security/signing risk is high. |
+
+Chosen framework split:
+
+1. **Parser framework**
+   - Implement in `HwScope.Native.Spd` C++17.
+   - Keep it dependency-light and byte-array-first.
+   - Public shape:
+
+     ```cpp
+     ParseResult parse_spd(std::span<const std::uint8_t> bytes);
+     ```
+
+   - Parser owns DDR generation detection, bounds checks, checksum/CRC validation, field extraction and diagnostics.
+   - Fixture/offline input must use the same parser path that real raw reader output will use.
+
+2. **Hardware reader framework (parked)**
+   - No Windows SMBus reader or probe backend remains in the current worker.
+   - Future work must start as a separately reviewed driver project, preferably a signed KMDF driver that exposes only bounded SPD read IOCTLs.
+   - Do not silently install, load or depend on third-party generic IO drivers.
+
+3. **Windows raw access policy**
+   - Administrator elevation is necessary but not sufficient.
+   - SetupAPI / WMI can enumerate controllers but cannot read SPD EEPROM bytes.
+   - Ordinary user-mode code should not perform arbitrary port/MMIO access.
+   - If a driver is introduced, it must be explicit, release-signed, read-only by default and limited to SPD-safe SMBus/I2C operations.
+
+4. **Security and privacy policy**
+   - Never write SPD EEPROM in the normal product path.
+   - DDR4 page select or DDR5 hub pointer writes, if needed, must be narrowly whitelisted and documented as read-transaction setup.
+   - `raw.bytes` must not be emitted by default because SPD can contain serial number, part number and manufacturing information.
+   - Public fixtures must be synthetic, sanitized or explicitly approved.
+
+The active development path is:
+
+```text
+raw fixture bytes -> parse_spd(...) -> schema-versioned JSON -> Core provider -> Memory / SPD page
+```
+
+Hardware acquisition stays parked until the driver re-entry criteria below are satisfied.
 
 ### Goals
 
@@ -1040,17 +1112,14 @@ Add development and diagnostics options:
 ```powershell
 spd.exe --json --backend auto
 spd.exe --json --backend fixture --fixture .\fixtures\ddr5-so-dimm-32gb.json
-spd.exe --json --dump-raw
-spd.exe --json --probe-only
 ```
 
 Backends:
 
 | Backend | Purpose | Expected Status |
 | --- | --- | --- |
-| `auto` | default production path, tries safe native readers | `ok`, `platformBlocked`, `accessDenied`, `unsupportedMemoryType`, `notImplemented` |
+| `auto` | default production path; hardware acquisition is parked | `notImplemented` |
 | `fixture` | parser development and regression tests | `ok`, `parseFailed`, `checksumFailed` |
-| `windows-smbus` | Windows raw SMBus/SPD reader | `ok`, `platformBlocked`, `accessDenied`, `failed` |
 
 Initial schema can remain `schemaVersion: 1` if new fields are optional. Bump schema only when existing field meaning changes.
 
@@ -1178,53 +1247,22 @@ Manufacturer ID decoding:
 - Implement a local JEDEC manufacturer table file or generated header only after deciding the data source and license constraints.
 - Until then, return hex manufacturer IDs and let UI show `未识别` or `ID xxxx` rather than guessing names.
 
-### Raw Reader Implementation Plan
+### Raw Reader Re-entry Plan (Parked)
 
-Windows does not expose a stable universal user-mode API for raw SPD EEPROM reads. Treat raw access as optional backend work.
+Windows does not expose a stable universal user-mode API for raw SPD EEPROM reads. The previous SetupAPI probe could enumerate controller names but could not acquire SPD bytes, so it has been removed from the current worker.
 
-Reader interface:
+Driver-dependent work may resume only when all of these are available:
 
-```cpp
-class ISpdReader {
-public:
-    virtual ~ISpdReader() = default;
-    virtual ReaderResult collect() = 0;
-};
-```
+1. A separately owned KMDF driver project and versioned IOCTL contract.
+2. A release signing and installation/update/uninstall plan.
+3. One explicitly supported SMBus controller family and documented PCI IDs.
+4. At least two physical validation platforms plus blocked/unsupported cases.
+5. Read-only command allowlists, bounded timeouts and controller-level locking.
+6. A security and compatibility review covering firmware/ACPI/controller contention.
 
-Reader result:
+After re-entry, the native worker may restore a replaceable reader interface and consume raw images from that driver. The parser and JSON contract should remain independent of the driver implementation.
 
-```cpp
-struct ReaderResult {
-    SpdStatus status;
-    std::string backend;
-    std::vector<RawSpdImage> images;
-    std::vector<std::string> diagnostics;
-};
-```
-
-Backends by phase:
-
-1. **Fixture reader**
-   - Reads JSON fixture files containing locator, source and hex/base64 SPD bytes.
-   - Used for unit/regression tests and parser development.
-   - This is the first backend to implement.
-
-2. **Windows probe reader**
-   - Enumerates candidate SMBus controllers and reports diagnostics only.
-   - Does not read hardware yet.
-   - Helps collect chipset/vendor/device IDs and platform-blocked cases.
-
-3. **Windows SMBus reader**
-   - Attempts raw reads only when a supported controller path exists.
-   - Must clearly report when admin/driver/platform access is missing.
-   - Must guard every IO operation; failures return structured diagnostics.
-
-4. **Optional privileged backend**
-   - If a driver is required, it must be explicit, signed for release, and disabled by default during development.
-   - Do not silently install or load third-party drivers.
-
-SMBus reader acceptance rules:
+Future SMBus reader acceptance rules:
 
 - No bluescreen-prone direct IO in ordinary GUI process.
 - No hidden elevation prompt from the worker.
@@ -1327,8 +1365,12 @@ If SPD status is `notImplemented`, `workerMissing`, `platformBlocked`, `accessDe
 Native tests:
 
 - `spd.exe --json --backend fixture --fixture fixtures\ddr5-sodimm-32gb.sample.json`
-- `spd.exe --json --backend fixture --fixture fixtures\ddr4-udimm-8gb.sample.json`
+- `spd.exe --json --backend fixture --fixture fixtures\ddr4-udimm-32gb.raw.sample.json`
+- `spd.exe --json --backend fixture --fixture fixtures\ddr4-udimm-32gb.bad-crc.sample.json`
+- `spd.exe --json --backend fixture --fixture fixtures\unknown-spd-type.sample.json`
+- `spd.exe --json --backend fixture --fixture fixtures\invalid-hex.sample.json`
 - Invalid fixture path returns non-zero with clear stderr.
+- Invalid raw hex fixture returns `parseFailed` JSON.
 - Bad checksum fixture returns `checksumFailed`.
 - Unknown DDR type returns `unsupportedMemoryType`.
 
@@ -1391,13 +1433,13 @@ If fixture backend exists:
    - Extend `SpdMemoryModule`, parser and collector.
    - Fill UI placeholders from fixture-backed SPD data.
 
-6. **Windows probe backend**
-   - Enumerate candidate controllers where possible.
-   - Report diagnostics and platform restrictions without reading hardware.
+6. **Windows probe/backend work (parked)**
+   - The temporary SetupAPI probe has been removed because it could not acquire SPD bytes.
+   - Resume only together with the separately reviewed driver workstream.
 
-7. **Windows SMBus backend**
-   - Implement one supported controller family behind explicit capability checks.
-   - Keep failure structured and bounded.
+7. **Windows SMBus driver/backend (parked)**
+   - Requires a signed, constrained driver and one explicitly supported controller family.
+   - Not part of the current parser/UI delivery scope.
 
 8. **XMP/EXPO and advanced DDR5**
    - Add extension parsers after JEDEC base parser stabilizes.
@@ -1412,7 +1454,14 @@ Stage 3 parser is done when:
 - Bad checksum, unsupported type and malformed bytes are covered by tests/probes.
 - WMI fallback remains unchanged when SPD fails.
 
-Stage 3 raw reader is done when:
+Current parser progress:
+
+- DDR4 raw `bytesHex` fixture path is implemented for a first-pass UDIMM/SO-DIMM parser.
+- DDR4 parser emits module identity, part number, serial number, manufacturing date, revision, organization, nominal voltages, one JEDEC timing row, raw byte count, CRC status and SHA-256.
+- Negative raw fixtures cover `checksumFailed`, `unsupportedMemoryType` and `parseFailed`.
+- DDR5 still uses worker-payload fixture data until the DDR5 SPD Hub byte layout parser is implemented.
+
+Future raw reader re-entry is done when:
 
 - `spd.exe --json --backend auto` can return `ok` with real SPD bytes on at least one supported Windows DDR4/DDR5 platform.
 - Platform blocked and access denied cases are distinguishable.

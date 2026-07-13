@@ -145,9 +145,9 @@ Stage 1 允许以下字段显示为占位：
 - 识别混插：容量、速度、厂商、料号不一致时给出诊断提示。
 - 从模块数量和总容量构建拓扑摘要，但明确标注是否只是 SMBIOS/WMI 视角。
 
-### Stage 3: Raw SPD Reader
+### Stage 3A: Offline SPD Parser (Active)
 
-第三阶段接入原始 SPD 读取。可以采用 native worker 进程，类似内存跑分 worker 和未来 CPUID worker。
+当前阶段只接入 fixture/offline raw SPD bytes 解析，通过 native worker 输出 schema-versioned JSON。页面可用合成或脱敏样本验证字段和时序表，不访问本机 SMBus。
 
 目标字段：
 
@@ -169,9 +169,13 @@ Stage 1 允许以下字段显示为占位：
 HwScope.Native.Spd/spd.exe --json
 ```
 
-输出应为 schema-versioned JSON。缺少 SMBus 权限、被 BIOS/平台屏蔽、笔记本 LPDDR 无可读 SPD 等情况必须是非致命状态。
+默认运行输出 `notImplemented`，页面显示 `SPD 读取暂未实现`；fixture 模式可以返回真实解析结果，失败不影响 WMI/SMBIOS 页面。
 
-### Stage 4: Memory Controller / Live Timing Provider
+### Stage 3B: Raw SPD Hardware Reader (Parked)
+
+Windows 本机 SPD EEPROM / DDR5 SPD Hub 获取需要受控内核驱动、芯片组适配、签名发布和真实硬件矩阵。本阶段暂时搁置，当前代码不包含 SMBus probe 或硬件 reader backend。
+
+### Stage 4: Memory Controller / Live Timing Provider (Parked)
 
 第四阶段接入运行态内存控制器信息。
 
@@ -184,9 +188,9 @@ HwScope.Native.Spd/spd.exe --json
 - DRAM:FSB 或 memory controller ratio。
 - DDR5 MCLK / UCLK / FCLK 类平台相关字段。
 
-这可能需要 native CPUID/MSR/PCI config/厂商平台 provider。所有字段必须标注平台限制。
+通用实现需要 MSR/SMN/PCI config/MMIO 或厂商平台接口，通常涉及内核驱动。本阶段暂时搁置，所有字段继续保留清晰占位。
 
-### Stage 5: Sensor And Stability Context
+### Stage 5: Sensor And Stability Context (Partially Parked)
 
 第五阶段扩展：
 
@@ -195,6 +199,8 @@ HwScope.Native.Spd/spd.exe --json
 - ECC error counters。
 - 内存训练状态、MRC/AGESA 相关信息。
 - 与内存跑分结果、压力测试结果关联。
+
+其中 DIMM/SPD Hub 温度、PMIC telemetry 和底层训练状态依赖 SMBus/平台寄存器，随驱动 workstream 一并搁置；不依赖驱动的报告关联可独立推进。
 
 ## Information Architecture
 
@@ -866,11 +872,11 @@ Windows WMI 没有返回 Win32_PhysicalMemory 数据。可以刷新重试。
 SPD 不可用：
 
 ```text
-SPD 读取尚未接入
-当前页面显示 Windows/SMBIOS 提供的模块信息；JEDEC/XMP/EXPO 时序需要后续 SPD provider。
+SPD 读取暂未实现
+当前页面显示 Windows/SMBIOS 提供的模块信息；可使用 fixture/offline parser 验证 SPD 字段。
 ```
 
-平台屏蔽：
+未来恢复硬件 reader 后的平台屏蔽状态：
 
 ```text
 SPD 读取被平台屏蔽
@@ -903,7 +909,7 @@ Stage 1：
 - Refresh 触发全局 inventory refresh。
 - Copy/Save 输出文本报告。
 - WMI/SMBIOS/占位字段有来源标记。
-- 没有 SPD provider 时，JEDEC/XMP/EXPO 区域清楚显示 `待接入 SPD 读取`。
+- 没有 fixture SPD 数据时，JEDEC/XMP/EXPO 区域清楚显示 `待接入 SPD 读取`，页面状态显示 `SPD 读取暂未实现`。
 - `dotnet build` 通过。
 
 Stage 2：
@@ -912,17 +918,16 @@ Stage 2：
 - 页面显示 Manufacturer、PartNumber、SerialNumber、BankLabel、DeviceLocator、FormFactor、DataWidth、TotalWidth、电压字段。
 - 混插提示可见。
 
-Stage 3：
+Stage 3A：
 
 - Native SPD worker 输出 schema-versioned JSON。
 - SPD 失败不影响页面显示 WMI-backed 字段。
-- JEDEC timing table 有真实 profile。
-- DDR5 电压/组织/feature bits 由 SPD 填充。
+- Fixture/offline bytes 可以填充 JEDEC timing、组织、电压和 feature fields。
 
-Stage 4：
+Stage 3B / Stage 4：
 
-- 当前频率和当前 primary timings 由真实运行态 provider 填充。
-- CPU-Z Memory 页核心字段不再是占位。
+- 真实硬件 SPD 获取和运行态时序 provider 暂时搁置。
+- 重启条件是有独立受审查的内核驱动、签名方案和硬件验证矩阵。
 
 ## Recommended Implementation Sequence
 
@@ -932,8 +937,8 @@ Stage 4：
 4. 接入主窗口导航，把 `硬件 -> 内存` 改到 `memory-detail`。
 5. 更新 README / architecture docs。
 6. 设计 native SPD worker contract，不急着实现底层读取。
-7. 接入 SPD timing profiles 和 DDR5 组织字段。
-8. 后续再接运行态 timing provider。
+7. 继续完善 offline SPD timing profiles 和 DDR5 raw parser。
+8. 将硬件 reader、运行态 timing 和 telemetry 保留为 parked driver workstream。
 
 ## Risks And Mitigations
 
@@ -954,7 +959,7 @@ Stage 4：
 缓解：
 
 - SPD provider 是可选增强，不作为页面可用性的前提。
-- 失败结构化，UI 显示平台/权限限制。
+- 当前默认显示 `SPD 读取暂未实现`；未来恢复硬件 reader 后再启用平台/权限状态。
 
 ### DDR Generational Complexity
 

@@ -14,7 +14,7 @@ HwScope 是一个 Windows 本地硬件工具箱项目，目标是在一个程序
 - CLI 硬件摘要输出，支持文本、JSON 和复制到剪贴板。
 - 独立内存跑分窗口，界面参考 AIDA64 Cache & Memory Benchmark。
 - C++ native 内存跑分 worker，当前测量 Memory/L1/L2/L3 Read / Write / Copy / Latency，并支持 topology-aware 多线程 Memory Read / Write / Copy。
-- C++ native SPD worker 骨架，输出 schema-versioned JSON；当前返回非致命 `notImplemented` 状态，后续接入 raw SMBus/SPD 读取。
+- C++ native SPD parser worker，支持 schema-versioned JSON、fixture/raw bytes 解析、CRC 和 SHA-256；本机 SPD 硬件读取暂未实现。
 - JSON 驱动的主题配置，支持跟随系统、浅色、深色和 Mica 开关。
 - 应用图标资源已接入 `HwScope.App`，用于窗口、任务栏和可执行文件图标。
 
@@ -59,7 +59,7 @@ GUI：
 dotnet run --project .\src\HwScope.App\HwScope.App.csproj
 ```
 
-GUI 启动时会先显示硬件预加载窗口，建立共享硬件信息库。加载成功后自动进入主窗口；如果预加载失败，窗口会提供重试或继续进入应用的选择。
+GUI 启动时会申请管理员权限，为后续底层硬件能力预留运行条件。用户取消或提权失败时会显示可关闭提示，并继续以普通权限运行；部分底层硬件信息可能缺失。随后应用显示硬件预加载窗口并建立共享硬件信息库。
 
 CLI 硬件摘要：
 
@@ -124,7 +124,7 @@ GUI 中可以通过左侧导航 `硬件 -> 内存` 或顶部快捷工具栏 `内
 - 字段级来源标记：`WMI`、`推导`、`待接入`。
 - 复制和保存 `.txt` 内存 / SPD 报告。
 
-当前 JEDEC / XMP / EXPO 时序、DRAM 制造商、生产周次/年份、rank / bank 组织、DDR5 feature bits 和当前运行态 CL/tRCD/tRP/tRAS 仍是占位；后续会通过 raw SPD reader 和内存控制器 provider 补齐。
+当前 JEDEC / XMP / EXPO 时序、DRAM 制造商、生产周次/年份、rank / bank 组织、DDR5 feature bits 和当前运行态 CL/tRCD/tRP/tRAS 在没有 fixture 数据时仍是占位。离线 parser 继续开发；真实 SPD 获取和运行态内存控制器读取因需要内核驱动而暂时搁置。
 
 开发期可以先构建 SPD worker 骨架：
 
@@ -138,7 +138,14 @@ GUI 中可以通过左侧导航 `硬件 -> 内存` 或顶部快捷工具栏 `内
 src\HwScope.Native.Spd\build\Release\spd.exe
 ```
 
-当前 worker 已提供 `spd.exe --json` 协议，但尚未读取 raw SPD bytes；它会返回非致命 `notImplemented` 状态，页面继续显示 WMI/SMBIOS 字段和明确占位。
+当前 worker 已提供 `spd.exe --json` 协议和离线 SPD parser。默认运行返回 `notImplemented`，页面显示 `SPD 读取暂未实现`；fixture 模式仍可把解析结果接入 Core/UI。Windows SMBus probe、真实 SPD EEPROM/SPD Hub 读取、运行态内存控制器时序和 DIMM/PMIC telemetry 已移出当前开发范围，等待单独的受控内核驱动方案。
+
+开发期可用 fixture 验证页面上的 SPD 字段填充：
+
+```powershell
+$env:HWSCOPE_SPD_FIXTURE = "C:\Users\Trivedi\projects\hwscope\src\HwScope.Native.Spd\fixtures\ddr5-sodimm-32gb.sample.json"
+dotnet run --project .\src\HwScope.App\HwScope.App.csproj
+```
 
 详细设计见：
 
@@ -228,7 +235,7 @@ src\HwScope.App\Themes\Json\dark.json
 - CPU 详情页的拓扑/缓存来自 Windows OS topology，不等于完整 CPUID；feature flags 仍等待 native CPUID worker 完整接入。
 - CPU topology Visual Map 当前使用 nested domain layout，tree/radial 布局和 PNG/JSON 导出仍在后续阶段。
 - CPU code name、工艺、TDP 和部分指令集仍可能来自本地型号映射，页面会标注来源。
-- 内存 / SPD 详情页当前是 WMI/SMBIOS-backed；raw SPD profiles、XMP/EXPO、DDR5 组织字段和当前运行态时序仍等待后续 provider。
+- 内存 / SPD 详情页当前以 WMI/SMBIOS 为基础；fixture-backed SPD 已可填充部分字段。真实 raw SPD、运行态时序和 DIMM/PMIC telemetry 因依赖内核驱动暂时搁置。
 - 内存跑分结果目前不应直接对标 AIDA64，kernel、copy accounting、NUMA 和 cache row 仍在演进。
 - native worker 不会由 `dotnet build` 自动编译；需要先运行 native 构建脚本生成 Release 产物。
 
