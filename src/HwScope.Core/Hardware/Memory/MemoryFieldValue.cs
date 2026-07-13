@@ -13,7 +13,7 @@ public sealed record MemoryFieldValue<T>(
 public static class MemoryField
 {
     public const string UnknownText = "未识别";
-    public const string PendingSpdText = "待接入 SPD 读取";
+    public const string PendingSpdText = "SPD 读取暂未实现";
     public const string PendingControllerText = "待接入内存控制器读取";
 
     public static MemoryFieldValue<string> Text(

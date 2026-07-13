@@ -1,9 +1,0 @@
-{
-  "locator": "DIMM Unknown",
-  "source": "synthetic-unsupported-fixture",
-  "memoryType": "Unsupported",
-  "bytesHex": "2311ff00000000000000000000000000",
-  "expected": {
-    "status": "unsupportedMemoryType"
-  }
-}

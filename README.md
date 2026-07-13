@@ -14,7 +14,6 @@ HwScope 是一个 Windows 本地硬件工具箱项目，目标是在一个程序
 - CLI 硬件摘要输出，支持文本、JSON 和复制到剪贴板。
 - 独立内存跑分窗口，界面参考 AIDA64 Cache & Memory Benchmark。
 - C++ native 内存跑分 worker，当前测量 Memory/L1/L2/L3 Read / Write / Copy / Latency，并支持 topology-aware 多线程 Memory Read / Write / Copy。
-- C++ native SPD parser worker，支持 schema-versioned JSON、fixture/raw bytes 解析、CRC 和 SHA-256；本机 SPD 硬件读取暂未实现。
 - JSON 驱动的主题配置，支持跟随系统、浅色、深色和 Mica 开关。
 - 应用图标资源已接入 `HwScope.App`，用于窗口、任务栏和可执行文件图标。
 
@@ -34,9 +33,6 @@ src/
 
   HwScope.Native.MemoryBench/
     C++ 内存跑分 worker，输出 JSON / progress JSON 给 HwScope.Core 解析，CSV 仅保留为手动兼容格式
-
-  HwScope.Native.Spd/
-    C++ SPD worker 骨架，输出 spd.exe --json 协议给 HwScope.Core 解析
 
 docs/
   project-architecture.md
@@ -124,28 +120,9 @@ GUI 中可以通过左侧导航 `硬件 -> 内存` 或顶部快捷工具栏 `内
 - 字段级来源标记：`WMI`、`推导`、`待接入`。
 - 复制和保存 `.txt` 内存 / SPD 报告。
 
-当前 JEDEC / XMP / EXPO 时序、DRAM 制造商、生产周次/年份、rank / bank 组织、DDR5 feature bits 和当前运行态 CL/tRCD/tRP/tRAS 在没有 fixture 数据时仍是占位。离线 parser 继续开发；真实 SPD 获取和运行态内存控制器读取因需要内核驱动而暂时搁置。
+当前没有 SPD 读取或解析实现。JEDEC / XMP / EXPO 时序、DRAM 制造商、生产周次/年份、rank / bank 组织和 DDR5 feature bits 固定显示 `SPD 读取暂未实现`；当前运行态 CL/tRCD/tRP/tRAS 仍显示内存控制器读取占位。此前的 native worker、离线 parser、fixture 和 Core JSON provider 已移除。
 
-开发期可以先构建 SPD worker 骨架：
-
-```powershell
-.\src\HwScope.Native.Spd\scripts\build-msvc.ps1
-```
-
-输出位置：
-
-```text
-src\HwScope.Native.Spd\build\Release\spd.exe
-```
-
-当前 worker 已提供 `spd.exe --json` 协议和离线 SPD parser。默认运行返回 `notImplemented`，页面显示 `SPD 读取暂未实现`；fixture 模式仍可把解析结果接入 Core/UI。Windows SMBus probe、真实 SPD EEPROM/SPD Hub 读取、运行态内存控制器时序和 DIMM/PMIC telemetry 已移出当前开发范围，等待单独的受控内核驱动方案。
-
-开发期可用 fixture 验证页面上的 SPD 字段填充：
-
-```powershell
-$env:HWSCOPE_SPD_FIXTURE = "C:\Users\Trivedi\projects\hwscope\src\HwScope.Native.Spd\fixtures\ddr5-sodimm-32gb.sample.json"
-dotnet run --project .\src\HwScope.App\HwScope.App.csproj
-```
+真实 SPD EEPROM/SPD Hub 读取和运行态内存控制器访问通常需要受控内核驱动或经过验证的厂商接口。该工作流当前处于搁置状态，未来重启前必须先确定驱动安全模型、平台支持矩阵、签名/分发方式和故障隔离策略。
 
 详细设计见：
 
@@ -235,7 +212,7 @@ src\HwScope.App\Themes\Json\dark.json
 - CPU 详情页的拓扑/缓存来自 Windows OS topology，不等于完整 CPUID；feature flags 仍等待 native CPUID worker 完整接入。
 - CPU topology Visual Map 当前使用 nested domain layout，tree/radial 布局和 PNG/JSON 导出仍在后续阶段。
 - CPU code name、工艺、TDP 和部分指令集仍可能来自本地型号映射，页面会标注来源。
-- 内存 / SPD 详情页当前以 WMI/SMBIOS 为基础；fixture-backed SPD 已可填充部分字段。真实 raw SPD、运行态时序和 DIMM/PMIC telemetry 因依赖内核驱动暂时搁置。
+- 内存 / SPD 详情页当前仅使用 WMI/SMBIOS；SPD 读取与解析代码已移除，页面固定显示 `SPD 读取暂未实现`。raw SPD、运行态时序和 DIMM/PMIC telemetry 等驱动相关能力暂时搁置。
 - 内存跑分结果目前不应直接对标 AIDA64，kernel、copy accounting、NUMA 和 cache row 仍在演进。
 - native worker 不会由 `dotnet build` 自动编译；需要先运行 native 构建脚本生成 Release 产物。
 

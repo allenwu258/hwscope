@@ -2,7 +2,13 @@
 
 本文档是 `memory-spd-detail-page-design.md` 的工程落地方案。目标是在现有 HwScope 架构下，用共享 hardware inventory 先做出一个真正可用的内存 / SPD 详情页，同时为后续 raw SPD reader、运行态内存控制器时序和传感器数据留出稳定扩展点。
 
-## Current Baseline
+## Current Status
+
+Milestones 1-7 的 WMI/SMBIOS-backed 页面已经完成。当前代码包含内存详情领域模型、collector、formatter、WPF 页面、导航、复制/保存和共享 inventory 集成。
+
+SPD 数据链路当前明确处于搁置状态：仓库不包含 SPD native 模块、EEPROM bytes reader、离线 parser、fixture、Core provider 或 JSON payload 解析。页面和文本报告固定显示 `SPD 读取暂未实现`。运行态内存控制器时序同样尚未实现。
+
+## Baseline At Plan Creation
 
 当前项目已有能力：
 
@@ -56,18 +62,18 @@ HwScope.Core
     MemoryDetailCollector.cs
     MemoryDetailReportFormatter.cs
 
-Future:
-  HwScope.Native.Spd/spd.exe
-  HwScope.Core.Hardware.Memory.NativeSpdProcessProvider
-  HwScope.Core.Hardware.Memory.MemoryControllerTimingProvider
+Parked future work:
+  controlled kernel driver or verified vendor interface
+  SPD bytes parser and application integration, redesigned after driver review
+  memory controller timing provider
 ```
 
 设计原则：
 
 - 页面不直接查询 WMI；只消费 `App.HardwarePreload`。
 - Core 模型提供 display text 和 source metadata，UI 不负责解释字节、MHz、电压或 unavailable 状态。
-- WMI/SMBIOS-backed 页面必须在没有 raw SPD worker 时仍然有用。
-- SPD 和运行态 timing 是后续 provider，不阻塞第一版页面。
+- WMI/SMBIOS-backed 页面不依赖任何 SPD 组件。
+- SPD 和运行态 timing 工作流保持搁置，不阻塞当前页面。
 - 不复用 CPU detail 的类型，以免 memory domain 被 CPU domain 绑死；但可以复用其设计模式。
 
 ## Milestone 1: Inventory Enrichment
@@ -185,7 +191,6 @@ public enum MemoryDataSource
     Unknown,
     Wmi,
     Smbios,
-    Spd,
     MemoryController,
     Computed,
     Mapping,
@@ -198,7 +203,6 @@ Use source labels:
 ```text
 WMI
 SMBIOS
-SPD
 控制器
 推导
 映射
@@ -225,7 +229,7 @@ Helper class:
 public static class MemoryField
 {
     public const string UnknownText = "未识别";
-    public const string PendingSpdText = "待接入 SPD 读取";
+    public const string PendingSpdText = "SPD 读取暂未实现";
     public const string PendingControllerText = "待接入内存控制器读取";
 
     public static MemoryFieldValue<string> Text(string? value, MemoryDataSource source, string unavailable = UnknownText, bool isEstimated = false, string? note = null);
@@ -495,7 +499,7 @@ Add notes when:
 - modules have mixed configured speed;
 - modules have mixed memory type;
 - modules have mixed manufacturer or part number;
-- SPD provider is not available yet;
+- SPD reading and parsing are not implemented;
 - current timing provider is not available yet.
 
 Examples:
@@ -546,7 +550,7 @@ Module 1
 ...
 
 Timing Profiles
-  待接入 SPD 读取
+  SPD 读取暂未实现
 
 Notes
   - ...
@@ -673,7 +677,7 @@ MinHeight 92
 
 First implementation can render:
 
-- if no real profiles: one quiet row/card saying `待接入 SPD 读取`;
+- one quiet row/card saying `SPD 读取暂未实现`;
 - later: table rows.
 
 Do not fake JEDEC values from configured speed.
@@ -685,7 +689,6 @@ Use the same label style as CPU:
 ```text
 WMI
 SMBIOS
-SPD
 控制器
 推导
 映射
@@ -760,7 +763,7 @@ Update README:
 
 - Add Memory/SPD detail page to feature list.
 - Add navigation note.
-- Add limitation: SPD raw profiles pending until native SPD reader.
+- Add limitation: SPD reading and parsing are not implemented and driver-dependent work is parked.
 
 Update architecture:
 
@@ -840,633 +843,30 @@ Stage 2 is complete when:
 
 Stage 2 is intentionally close to Stage 1. It may be delivered in the same implementation if scope remains manageable.
 
-## Stage 3 Native SPD Reader Plan
+## Stage 3 SPD Reader And Parser (Parked)
 
-The first UI change now has the Core boundary in place. The native worker project scaffold is available and the app can consume a schema-versioned `spd.exe --json` worker when present. The scaffold returns a structured non-fatal status until raw SMBus/SPD access is implemented.
+当前不实现、不构建、不分发 SPD reader/parser/provider。曾经存在的 native worker、离线 DDR4 parser、fixture、JSON protocol 和 Core process provider 已从仓库移除；它们不再是当前架构的一部分，也不应被文档或 UI 描述为可用能力。
 
-### Project Shape
+### Re-entry Preconditions
 
-```text
-src/HwScope.Native.Spd/
-  CMakeLists.txt
-  README.md
-  scripts/build-msvc.ps1
-  src/main.cpp
-```
+恢复该阶段前必须完成：
 
-### CLI Contract
+- 选择受控内核驱动或经过验证的厂商接口，禁止以不受控的用户态端口/物理内存访问替代。
+- 定义芯片组、DDR4/DDR5、DIMM/SPD Hub 和 OEM 平台支持矩阵。
+- 定义驱动签名、安装、升级、卸载和回滚策略。
+- 对 SMBus 超时、总线锁死、并发访问和系统休眠/恢复建立故障隔离。
+- 明确最小权限、IOCTL 输入验证、访问白名单和安全审计要求。
+- 明确 SPD dump 中序列号、生产信息等数据的隐私与脱敏策略。
 
-```powershell
-spd.exe --json
-```
+### Re-entry Architecture
 
-Output:
+前置条件满足后，按以下顺序重新设计，不复用已移除接口作为既定约束：
 
-```json
-{
-  "schemaVersion": 1,
-  "status": "ok",
-  "modules": [
-    {
-      "locator": "DIMM 0",
-      "type": "DDR5",
-      "moduleType": "SO-DIMM",
-      "capacityBytes": 34359738368,
-      "manufacturer": "Micron Technology",
-      "dramManufacturer": "Micron",
-      "partNumber": "CT32G56C46S5.M16D1",
-      "serialNumber": "EB235139",
-      "manufacturingWeek": 4,
-      "manufacturingYear": 2025,
-      "timingProfiles": [
-        {
-          "name": "JEDEC #9",
-          "frequencyMHz": 2800,
-          "casLatency": 46,
-          "trcd": 45,
-          "trp": 45,
-          "tras": 90,
-          "trc": 135,
-          "voltageMv": 1100
-        }
-      ]
-    }
-  ],
-  "diagnostics": []
-}
-```
-
-Failure example:
-
-```json
-{
-  "schemaVersion": 1,
-  "status": "platformBlocked",
-  "modules": [],
-  "diagnostics": [
-    "SMBus/SPD access is blocked by firmware or unavailable on this platform."
-  ]
-}
-```
-
-### Core Provider
-
-```text
-src/HwScope.Core/Hardware/Memory/ISpdProvider.cs
-src/HwScope.Core/Hardware/Memory/NativeSpdProcessProvider.cs
-src/HwScope.Core/Hardware/Memory/SpdProviderResult.cs
-src/HwScope.Core/Hardware/Memory/NullSpdProvider.cs
-```
-
-API:
-
-```csharp
-public interface ISpdProvider
-{
-    SpdProviderResult TryCollect();
-}
-```
-
-Missing worker is expected during development and should produce notes, not exceptions through the page.
-
-Implemented behavior:
-
-- `MemoryDetailCollector` depends on `ISpdProvider` and uses `NativeSpdProcessProvider` by default.
-- `NativeSpdProcessProvider` searches only relative worker locations under the app/base build tree.
-- `src/HwScope.Native.Spd` builds a minimal `spd.exe --json` worker that returns `notImplemented` with diagnostics rather than fake module data.
-- Timing fields such as `casLatency`, `trcd`, `trp`, `tras`, and `trc` may be JSON numbers or strings.
-- Worker status values are mapped into `SpdProviderStatus` and shown through report notes and the summary chip.
-- SPD module data, when matched by serial, part number + locator, locator, or the single-module case, can override module identity fields and populate timing profiles.
-- Missing worker, timeout, parse failure, permission failure and platform-blocked states are non-fatal.
-
-## Stage 3A/3B SPD Parsing And Hardware Reading Plan
-
-真实 SPD 支持要拆成两条相互解耦的工程线：
-
-- **SPD bytes parser**：给定一段 raw SPD bytes，稳定解析 DDR4/DDR5 字段、校验和、module identity、organization、voltages 和 timing profiles。这个部分必须能用 fixture 离线测试，不依赖当前机器能否读取 SMBus。
-- **Raw SPD reader**：在 Windows 上尽力枚举 SMBus/SPD EEPROM 并读取 bytes。这个部分是平台敏感、权限敏感和硬件敏感的，应作为可替换 backend，并且失败不影响 WMI/SMBIOS 页面。
-
-当前只推进 parser 线。Windows raw reader、运行态内存控制器时序、DIMM/SPD Hub 温度和 PMIC telemetry 都需要受控内核驱动或等价厂商接口，现阶段统一搁置。`spd.exe --json` 默认返回 `notImplemented`，页面显示 `SPD 读取暂未实现`；fixture/offline parser 继续用于开发、回归和 UI 集成。
-
-### Current Status
-
-| Workstream | Status | Notes |
-| --- | --- | --- |
-| WMI/SMBIOS memory page | Active | No custom kernel driver required. |
-| Fixture/offline SPD parser | Active | DDR4 first pass, CRC/SHA-256 and negative fixtures are available. |
-| DDR5 offline parser | Active / incomplete | Payload fixture works; raw SPD Hub byte parser remains. |
-| Windows SMBus probe | Removed | It did not provide SPD bytes and only served the parked driver path. |
-| Real SPD EEPROM/SPD Hub acquisition | Parked | Requires a signed, constrained kernel driver and chipset-specific adapters. |
-| Runtime memory controller timings | Parked | Generic implementation requires MSR/SMN/PCI/MMIO access. |
-| DIMM/SPD Hub/PMIC telemetry | Parked | Requires SMBus access or a supported vendor interface. |
-
-The application still requests UAC elevation at startup for future hardware capabilities. If elevation is declined or unavailable, HwScope shows a closable warning and continues with standard-user permissions.
-
-### Technology Research And Framework Decision
-
-SPD support has two very different technical layers:
-
-- **EEPROM / SPD Hub byte acquisition**：从 SMBus / I2C / DDR5 SPD Hub 读取 raw bytes。
-- **SPD byte parsing**：给定一段 bytes，按 DDR4 / DDR5 SPD layout 做校验、解码和 JSON 输出。
-
-这两层必须分开实现。读取层是平台、权限和驱动敏感的；解析层是纯 bytes 处理，应当能在没有真实硬件访问的机器上用 fixture 稳定测试。
-
-External references and what they imply:
-
-| Reference | Useful For | Engineering Implication |
-| --- | --- | --- |
-| Linux `ee1004` driver | DDR4 SPD EEPROM addressing, 256-byte page selection and conservative SMBus block reads | DDR4 读取不是简单一次性读 512 bytes；需要受控 page select / block read。 |
-| `i2c-tools decode-dimms` | Mature SPD decoding behavior and CLI workflow | Good behavioral reference, but GPL code should not be copied into this MIT project. |
-| Microsoft SPB / KMDF documentation | Windows I2C/SPB driver model | Windows has a driver model for I2C/SPB, but not a universal user-mode DIMM SPD API. |
-| DDR5 SPD Hub datasheets / vendor docs | DDR5 SPD Hub NVM and I2C/I3C access model | DDR5 should be treated as SPD Hub/NVM, not just legacy EEPROM. |
-| WinRing0 / generic IO drivers | Fast experimental port/MMIO access | Not suitable as a bundled default because vulnerable-driver/security/signing risk is high. |
-
-Chosen framework split:
-
-1. **Parser framework**
-   - Implement in `HwScope.Native.Spd` C++17.
-   - Keep it dependency-light and byte-array-first.
-   - Public shape:
-
-     ```cpp
-     ParseResult parse_spd(std::span<const std::uint8_t> bytes);
-     ```
-
-   - Parser owns DDR generation detection, bounds checks, checksum/CRC validation, field extraction and diagnostics.
-   - Fixture/offline input must use the same parser path that real raw reader output will use.
-
-2. **Hardware reader framework (parked)**
-   - No Windows SMBus reader or probe backend remains in the current worker.
-   - Future work must start as a separately reviewed driver project, preferably a signed KMDF driver that exposes only bounded SPD read IOCTLs.
-   - Do not silently install, load or depend on third-party generic IO drivers.
-
-3. **Windows raw access policy**
-   - Administrator elevation is necessary but not sufficient.
-   - SetupAPI / WMI can enumerate controllers but cannot read SPD EEPROM bytes.
-   - Ordinary user-mode code should not perform arbitrary port/MMIO access.
-   - If a driver is introduced, it must be explicit, release-signed, read-only by default and limited to SPD-safe SMBus/I2C operations.
-
-4. **Security and privacy policy**
-   - Never write SPD EEPROM in the normal product path.
-   - DDR4 page select or DDR5 hub pointer writes, if needed, must be narrowly whitelisted and documented as read-transaction setup.
-   - `raw.bytes` must not be emitted by default because SPD can contain serial number, part number and manufacturing information.
-   - Public fixtures must be synthetic, sanitized or explicitly approved.
-
-The active development path is:
-
-```text
-raw fixture bytes -> parse_spd(...) -> schema-versioned JSON -> Core provider -> Memory / SPD page
-```
-
-Hardware acquisition stays parked until the driver re-entry criteria below are satisfied.
-
-### Goals
-
-- `spd.exe --json` 能输出 schema-versioned raw access status、模块列表、diagnostics 和解析后的 SPD 字段。
-- 支持 fixture/offline 输入，便于开发、测试、回归和第三方样本排查。
-- 先支持 DDR5 UDIMM/SO-DIMM 和 DDR4 UDIMM/SO-DIMM 的关键字段；RDIMM/LRDIMM、LPDDR、CAMM 和厂商私有扩展作为后续增强。
-- Raw reader 失败必须结构化：权限不足、平台屏蔽、未实现、unsupported memory type、checksum failed、parse failed。
-- 页面始终保留 WMI/SMBIOS-backed fallback，SPD 只覆盖明确匹配且校验可信的字段。
-
-### Non-Goals For First Real Reader
-
-- 不内置未签名 kernel driver。
-- 不承诺读取所有芯片组、所有 OEM BIOS 或 LPDDR/onboard memory。
-- 不把 SPD 静态 profile 当作当前运行态时序。
-- 不解析所有厂商私有 bytes。
-- 不在 UI 上显示未验证的 raw bytes 为事实字段。
-
-### Native Worker Architecture
-
-`src/HwScope.Native.Spd/src/main.cpp` 应拆分为小型模块，避免单文件膨胀：
-
-```text
-src/HwScope.Native.Spd/
-  src/
-    main.cpp
-    cli_options.h/.cpp
-    json_writer.h/.cpp
-    spd_result.h
-    spd_bytes.h
-    spd_checksum.h/.cpp
-    spd_parser.h/.cpp
-    spd_parser_ddr4.h/.cpp
-    spd_parser_ddr5.h/.cpp
-    spd_reader.h
-    spd_reader_fixture.h/.cpp
-    spd_reader_windows_smbus.h/.cpp
-```
-
-Core types:
-
-```cpp
-enum class SpdStatus {
-    Ok,
-    NotImplemented,
-    WorkerMissing,
-    AccessDenied,
-    PlatformBlocked,
-    UnsupportedMemoryType,
-    ChecksumFailed,
-    ParseFailed,
-    Timeout,
-    Failed
-};
-
-struct RawSpdImage {
-    std::string locator;
-    std::string source;
-    std::vector<std::uint8_t> bytes;
-    bool checksum_ok;
-    std::vector<std::string> diagnostics;
-};
-
-struct ParsedSpdModule {
-    std::string locator;
-    std::string type;
-    std::string module_type;
-    std::uint64_t capacity_bytes;
-    std::string manufacturer;
-    std::string dram_manufacturer;
-    std::string part_number;
-    std::string serial_number;
-    int manufacturing_week;
-    int manufacturing_year;
-    std::string revision;
-    std::vector<ParsedTimingProfile> timing_profiles;
-    std::vector<ParsedFeature> features;
-    std::vector<std::string> diagnostics;
-};
-```
-
-### CLI Contract Evolution
-
-Keep the current base command:
-
-```powershell
-spd.exe --json
-```
-
-Add development and diagnostics options:
-
-```powershell
-spd.exe --json --backend auto
-spd.exe --json --backend fixture --fixture .\fixtures\ddr5-so-dimm-32gb.json
-```
-
-Backends:
-
-| Backend | Purpose | Expected Status |
-| --- | --- | --- |
-| `auto` | default production path; hardware acquisition is parked | `notImplemented` |
-| `fixture` | parser development and regression tests | `ok`, `parseFailed`, `checksumFailed` |
-
-Initial schema can remain `schemaVersion: 1` if new fields are optional. Bump schema only when existing field meaning changes.
-
-Recommended output shape:
-
-```json
-{
-  "schemaVersion": 1,
-  "workerVersion": "0.2.0",
-  "status": "ok",
-  "backend": "fixture",
-  "modules": [
-    {
-      "locator": "DIMM 0",
-      "type": "DDR5",
-      "moduleType": "SO-DIMM",
-      "capacityBytes": 34359738368,
-      "manufacturer": "Micron Technology",
-      "dramManufacturer": "Micron",
-      "partNumber": "CT32G56C46S5.M16D1",
-      "serialNumber": "EB235139",
-      "manufacturingWeek": 4,
-      "manufacturingYear": 2025,
-      "revision": "1.0",
-      "organization": {
-        "rankCount": 2,
-        "deviceWidthBits": 16,
-        "busWidthBits": 64,
-        "dieCount": null,
-        "bankGroups": 8,
-        "banksPerGroup": 4
-      },
-      "voltages": {
-        "vddMv": 1100,
-        "vddqMv": 1100,
-        "vppMv": 1800
-      },
-      "timingProfiles": [
-        {
-          "name": "JEDEC #9",
-          "kind": "jedec",
-          "frequencyMHz": 2800,
-          "effectiveRateMTps": 5600,
-          "casLatency": 46,
-          "trcd": 45,
-          "trp": 45,
-          "tras": 90,
-          "trc": 135,
-          "voltageMv": 1100
-        }
-      ],
-      "raw": {
-        "byteCount": 512,
-        "checksumOk": true,
-        "crcOk": true,
-        "sha256": "..."
-      },
-      "diagnostics": []
-    }
-  ],
-  "diagnostics": []
-}
-```
-
-`raw.bytes` should not be emitted by default. If `--dump-raw` is passed, include hex/base64 raw bytes for diagnostics and bug reports. The GUI should not display raw dumps in the normal page.
-
-### Parser Implementation Plan
-
-Parser should be byte-array first:
-
-```cpp
-ParseResult parse_spd(std::span<const std::uint8_t> bytes);
-```
-
-Detection:
-
-- Validate minimum length before reading offsets.
-- Detect memory technology from SPD header bytes.
-- Route to DDR4 or DDR5 parser.
-- Unknown or LPDDR types return `unsupportedMemoryType` with diagnostics, not crash.
-
-Validation:
-
-- Validate checksum/CRC blocks applicable to the detected SPD generation.
-- Parser may return partial fields with `checksumOk=false`, but final worker status should be `checksumFailed` if no trustworthy module can be produced.
-- Never use bytes outside validated bounds.
-
-DDR4 first-pass fields:
-
-- SPD revision.
-- DRAM device type.
-- Module type.
-- Module nominal voltage.
-- SDRAM density / bank addressing / package type.
-- Module organization: rank count, device width, bus width.
-- Module manufacturer ID and module manufacturing location/date.
-- Serial number and part number.
-- JEDEC timing profiles sufficient for table display.
-
-DDR5 first-pass fields:
-
-- SPD revision.
-- Base module type.
-- SDRAM density / IO width / bank groups / banks.
-- Module organization: ranks, data width, bus width.
-- Module nominal voltages: VDD, VDDQ, VPP where encoded.
-- Module manufacturer, DRAM manufacturer where available, serial, part number, manufacturing date.
-- JEDEC timing profiles sufficient for table display.
-- DDR5 feature flags that are already present in UI placeholders: write temperature sense, bounded fault, BL32, non-standard timings.
-
-XMP / EXPO:
-
-- Do not make XMP/EXPO part of the first parser merge unless the base JEDEC parser is stable.
-- Add extension parser hooks:
-
-```cpp
-std::vector<ParsedTimingProfile> parse_xmp_profiles(...);
-std::vector<ParsedTimingProfile> parse_expo_profiles(...);
-```
-
-- Profiles must be labeled `kind: "xmp"` or `kind: "expo"` and must include diagnostics if partially parsed.
-
-Manufacturer ID decoding:
-
-- Implement a local JEDEC manufacturer table file or generated header only after deciding the data source and license constraints.
-- Until then, return hex manufacturer IDs and let UI show `未识别` or `ID xxxx` rather than guessing names.
-
-### Raw Reader Re-entry Plan (Parked)
-
-Windows does not expose a stable universal user-mode API for raw SPD EEPROM reads. The previous SetupAPI probe could enumerate controller names but could not acquire SPD bytes, so it has been removed from the current worker.
-
-Driver-dependent work may resume only when all of these are available:
-
-1. A separately owned KMDF driver project and versioned IOCTL contract.
-2. A release signing and installation/update/uninstall plan.
-3. One explicitly supported SMBus controller family and documented PCI IDs.
-4. At least two physical validation platforms plus blocked/unsupported cases.
-5. Read-only command allowlists, bounded timeouts and controller-level locking.
-6. A security and compatibility review covering firmware/ACPI/controller contention.
-
-After re-entry, the native worker may restore a replaceable reader interface and consume raw images from that driver. The parser and JSON contract should remain independent of the driver implementation.
-
-Future SMBus reader acceptance rules:
-
-- No bluescreen-prone direct IO in ordinary GUI process.
-- No hidden elevation prompt from the worker.
-- No raw reads unless backend can identify a supported controller.
-- No infinite retries; worker timeout remains bounded by Core.
-- LPDDR/onboard memory without SPD EEPROM should return `unsupportedMemoryType` or `platformBlocked`.
-
-### Fixture Format
-
-Store fixtures under:
-
-```text
-src/HwScope.Native.Spd/fixtures/
-  ddr4-udimm-8gb.sample.json
-  ddr5-sodimm-32gb.sample.json
-```
-
-Fixture JSON:
-
-```json
-{
-  "locator": "DIMM 0",
-  "source": "fixture",
-  "memoryType": "DDR5",
-  "bytesHex": "2310...",
-  "expected": {
-    "type": "DDR5",
-    "moduleType": "SO-DIMM",
-    "capacityBytes": 34359738368,
-    "partNumber": "CT32G56C46S5.M16D1"
-  }
-}
-```
-
-Do not commit user-private raw SPD dumps without review. SPD dumps can contain serial numbers and manufacturing details. Public fixtures should be synthetic, vendor-sanitized, or explicitly approved.
-
-### Core Integration Plan
-
-Current Core result types should be extended conservatively:
-
-```text
-SpdMemoryModule
-  Organization
-  Voltages
-  Raw
-  Diagnostics
-
-SpdTimingProfile
-  Kind
-  EffectiveRateMTps
-```
-
-`NativeSpdProcessProvider` should:
-
-- Parse optional new fields without requiring them.
-- Keep accepting current minimal scaffold output.
-- Map `notImplemented` separately from `platformBlocked`.
-- Treat unknown fields as forward-compatible.
-- Avoid throwing through `MemoryDetailPage`; convert parse errors to `ParseFailed`.
-
-`MemoryDetailCollector` should:
-
-- Only override WMI fields when SPD module matching is strong.
-- Keep WMI slot/locator as the display anchor unless SPD locator matches.
-- Add module-level diagnostics for checksum failure, partial parse or weak matching.
-- Fill organization and voltage fields from SPD only when available.
-- Replace pending timing row with real JEDEC/XMP/EXPO rows when parsed.
-
-Matching priority remains:
-
-1. Serial number.
-2. Part number + locator.
-3. Locator.
-4. Single WMI module + single SPD module.
-
-No multi-module index fallback.
-
-### UI Integration Plan
-
-When real SPD data is present:
-
-- Summary chip: `SPD 已读取`.
-- Timing Profiles table:
-  - `Kind` may be shown in the profile name: `JEDEC #9`, `XMP #1`, `EXPO #1`.
-  - Source badge remains `SPD`.
-- Module identity:
-  - DRAM manufacturer, production date and revision should move from placeholder to SPD.
-- Module organization:
-  - Rank count, device width, bus width, bank group/bank counts should move from placeholder to SPD.
-- Voltages/features:
-  - VDD/VDDQ/VPP and DDR5 feature bits should move from placeholder to SPD.
-- Notes:
-  - Show checksum/CRC status.
-  - Show backend diagnostics only in data notes, not as blocking errors.
-
-If SPD status is `notImplemented`, `workerMissing`, `platformBlocked`, `accessDenied`, `unsupportedMemoryType`, `checksumFailed` or `parseFailed`, the page remains usable with WMI-backed fields.
-
-### Testing And Verification
-
-Native tests:
-
-- `spd.exe --json --backend fixture --fixture fixtures\ddr5-sodimm-32gb.sample.json`
-- `spd.exe --json --backend fixture --fixture fixtures\ddr4-udimm-32gb.raw.sample.json`
-- `spd.exe --json --backend fixture --fixture fixtures\ddr4-udimm-32gb.bad-crc.sample.json`
-- `spd.exe --json --backend fixture --fixture fixtures\unknown-spd-type.sample.json`
-- `spd.exe --json --backend fixture --fixture fixtures\invalid-hex.sample.json`
-- Invalid fixture path returns non-zero with clear stderr.
-- Invalid raw hex fixture returns `parseFailed` JSON.
-- Bad checksum fixture returns `checksumFailed`.
-- Unknown DDR type returns `unsupportedMemoryType`.
-
-Core tests or probe commands:
-
-- Provider parses numeric and string timing fields.
-- Provider parses optional organization/voltage/raw sections.
-- Provider maps `notImplemented`, `platformBlocked`, `accessDenied`, `checksumFailed` and `parseFailed`.
-- Collector keeps WMI fallback when SPD has no modules.
-- Collector does not cross-assign SPD modules in multi-module systems.
-
-Manual hardware matrix:
-
-| Platform | Expected |
-| --- | --- |
-| DDR5 SO-DIMM laptop with readable SPD | `ok`, real JEDEC profiles |
-| DDR4 desktop DIMM | `ok`, DDR4 identity and JEDEC profiles |
-| LPDDR/onboard laptop | `unsupportedMemoryType` or `platformBlocked` |
-| OEM BIOS blocks SMBus | `platformBlocked` |
-| Non-admin where backend requires privilege | `accessDenied` |
-| No worker built | `workerMissing` |
-
-Required validation before merging a real reader:
-
-```powershell
-.\src\HwScope.Native.Spd\scripts\build-msvc.ps1
-.\src\HwScope.Native.Spd\build\Release\spd.exe --json
-dotnet build
-dotnet run --project .\src\HwScope.Cli\HwScope.Cli.csproj -- --json
-```
-
-If fixture backend exists:
-
-```powershell
-.\src\HwScope.Native.Spd\build\Release\spd.exe --json --backend fixture --fixture .\src\HwScope.Native.Spd\fixtures\ddr5-sodimm-32gb.sample.json
-```
-
-### Implementation Milestones
-
-1. **Parser scaffold**
-   - Split native worker files.
-   - Add CLI options and JSON writer.
-   - Add fixture backend and raw bytes model.
-   - Keep current `notImplemented` default for `--backend auto`.
-
-2. **Checksum and detection**
-   - Implement safe byte access helpers.
-   - Detect DDR4/DDR5/unsupported.
-   - Validate checksum/CRC enough to gate trust.
-
-3. **DDR5 parser first pass**
-   - Parse identity, module type, capacity, organization, voltages and JEDEC timing profiles.
-   - Add synthetic/sanitized DDR5 fixture.
-
-4. **DDR4 parser first pass**
-   - Parse identity, module type, capacity, organization, voltages and JEDEC timing profiles.
-   - Add synthetic/sanitized DDR4 fixture.
-
-5. **Core JSON expansion**
-   - Extend `SpdMemoryModule`, parser and collector.
-   - Fill UI placeholders from fixture-backed SPD data.
-
-6. **Windows probe/backend work (parked)**
-   - The temporary SetupAPI probe has been removed because it could not acquire SPD bytes.
-   - Resume only together with the separately reviewed driver workstream.
-
-7. **Windows SMBus driver/backend (parked)**
-   - Requires a signed, constrained driver and one explicitly supported controller family.
-   - Not part of the current parser/UI delivery scope.
-
-8. **XMP/EXPO and advanced DDR5**
-   - Add extension parsers after JEDEC base parser stabilizes.
-   - Add UI row grouping if profile count grows.
-
-### Stage 3 Definition Of Done
-
-Stage 3 parser is done when:
-
-- Fixture backend can parse at least one DDR4 and one DDR5 sample.
-- Core can render real SPD identity, organization, voltage and JEDEC timing rows from fixture data.
-- Bad checksum, unsupported type and malformed bytes are covered by tests/probes.
-- WMI fallback remains unchanged when SPD fails.
-
-Current parser progress:
-
-- DDR4 raw `bytesHex` fixture path is implemented for a first-pass UDIMM/SO-DIMM parser.
-- DDR4 parser emits module identity, part number, serial number, manufacturing date, revision, organization, nominal voltages, one JEDEC timing row, raw byte count, CRC status and SHA-256.
-- Negative raw fixtures cover `checksumFailed`, `unsupportedMemoryType` and `parseFailed`.
-- DDR5 still uses worker-payload fixture data until the DDR5 SPD Hub byte layout parser is implemented.
-
-Future raw reader re-entry is done when:
-
-- `spd.exe --json --backend auto` can return `ok` with real SPD bytes on at least one supported Windows DDR4/DDR5 platform.
-- Platform blocked and access denied cases are distinguishable.
-- Worker cannot hang the GUI beyond Core timeout.
-- No privileged/driver behavior happens implicitly.
+1. 内核读取层只负责受控读取原始 bytes 和返回结构化错误。
+2. 用户态纯 bytes parser 独立于硬件访问，并以合成/脱敏样本测试 DDR4、DDR5、CRC 和边界条件。
+3. Core 负责将版本化结果映射到 memory domain；采集失败不得影响 WMI-backed 页面。
+4. UI 仅展示已验证字段、来源和错误状态，不把配置速率当作运行态时序。
+5. 完成驱动与 parser 的平台矩阵测试后，再替换当前 `SPD 读取暂未实现` 占位。
 
 ## Risks And Mitigations
 
@@ -1515,4 +915,4 @@ Risk: Raw SPD access is platform-sensitive and could derail the page.
 Mitigation:
 
 - Ship WMI-backed page first.
-- Treat SPD provider as a future optional data source.
+- Keep the SPD workstream parked until the controlled driver and platform support plan is approved.

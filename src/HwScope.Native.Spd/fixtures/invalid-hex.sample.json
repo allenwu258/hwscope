@@ -1,9 +1,0 @@
-{
-  "locator": "DIMM Invalid Hex",
-  "source": "synthetic-invalid-fixture",
-  "memoryType": "Invalid",
-  "bytesHex": "23110c0",
-  "expected": {
-    "status": "parseFailed"
-  }
-}

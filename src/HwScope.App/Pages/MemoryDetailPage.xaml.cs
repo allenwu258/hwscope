@@ -217,7 +217,7 @@ public partial class MemoryDetailPage : UserControl
         AddChip(chips, report.Summary.TotalCapacity);
         AddChip(chips, report.Summary.Layout);
         AddChip(chips, report.Summary.ConfiguredSpeed);
-        chips.Add(report.SpdAccess.DisplayText);
+        chips.Add(MemoryField.PendingSpdText);
         return chips;
     }
 
@@ -363,7 +363,6 @@ public partial class MemoryDetailPage : UserControl
         {
             MemoryDataSource.Wmi => "WMI",
             MemoryDataSource.Smbios => "SMBIOS",
-            MemoryDataSource.Spd => "SPD",
             MemoryDataSource.MemoryController => "控制器",
             MemoryDataSource.Computed => "推导",
             MemoryDataSource.Mapping => "映射",
@@ -380,7 +379,6 @@ public partial class MemoryDetailPage : UserControl
         {
             MemoryDataSource.Wmi => "来自 Windows WMI。",
             MemoryDataSource.Smbios => "来自 SMBIOS。",
-            MemoryDataSource.Spd => "来自 SPD。",
             MemoryDataSource.MemoryController => "来自内存控制器运行态读取。",
             MemoryDataSource.Computed => "由已采集字段推导。",
             MemoryDataSource.Mapping => "来自本地映射。",

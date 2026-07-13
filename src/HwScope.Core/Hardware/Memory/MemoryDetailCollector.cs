@@ -1,4 +1,3 @@
-using System.Globalization;
 using System.Text.RegularExpressions;
 using HwScope.Core.Hardware.Inventory;
 
@@ -6,19 +5,6 @@ namespace HwScope.Core.Hardware.Memory;
 
 public sealed class MemoryDetailCollector
 {
-    private readonly ISpdProvider _spdProvider;
-    private readonly object _spdProviderLock = new();
-
-    public MemoryDetailCollector()
-        : this(new NativeSpdProcessProvider())
-    {
-    }
-
-    public MemoryDetailCollector(ISpdProvider spdProvider)
-    {
-        _spdProvider = spdProvider;
-    }
-
     public MemoryDetailReport Collect()
     {
         return CreateReport(new HardwareInventoryCollector().Collect());
@@ -27,19 +13,13 @@ public sealed class MemoryDetailCollector
     public MemoryDetailReport CreateReport(HardwareInventorySnapshot snapshot)
     {
         var modules = snapshot.MemoryModules;
-        SpdProviderResult spdResult;
-        lock (_spdProviderLock)
-        {
-            spdResult = _spdProvider.TryCollect();
-        }
-        var notes = BuildNotes(snapshot, spdResult);
+        var notes = BuildNotes(snapshot);
 
         return new MemoryDetailReport(
             BuildSummary(modules),
             BuildRuntime(modules),
-            modules.Select((module, index) => BuildModule(module, index, FindSpdModule(module, modules.Count, spdResult.Modules), spdResult.Modules.Count > 0)).ToList(),
+            modules.Select(BuildModule).ToList(),
             notes,
-            BuildSpdAccessInfo(spdResult),
             snapshot.GeneratedAt);
     }
 
@@ -78,7 +58,7 @@ public sealed class MemoryDetailCollector
                 MemoryField.Placeholder<string>(MemoryField.PendingControllerText)));
     }
 
-    private static MemoryModuleDetail BuildModule(MemoryModuleSnapshot module, int index, SpdMemoryModule? spdModule, bool hasSpdModules)
+    private static MemoryModuleDetail BuildModule(MemoryModuleSnapshot module, int index)
     {
         var memoryType = MemoryTypeFormatter.FormatMemoryType(module.SmbiosMemoryType, module.MemoryType);
         var formFactor = MemoryTypeFormatter.FormatFormFactor(module.FormFactor);
@@ -95,65 +75,45 @@ public sealed class MemoryDetailCollector
             Identity: new MemoryModuleIdentity(
                 Slot: MemoryField.Text(slot, MemoryDataSource.Wmi),
                 DisplayName: MemoryField.Text(FirstUseful(displayName, $"{capacity} {memoryType}"), MemoryDataSource.Wmi),
-                Capacity: spdModule?.CapacityBytes > 0 ? MemoryField.Bytes(spdModule.CapacityBytes, MemoryDataSource.Spd) : MemoryField.Bytes(module.Capacity, MemoryDataSource.Wmi),
-                ModuleType: SpdOrWmi(spdModule?.ModuleType, formFactor),
-                MemoryType: SpdOrWmi(spdModule?.MemoryType, memoryType),
+                Capacity: MemoryField.Bytes(module.Capacity, MemoryDataSource.Wmi),
+                ModuleType: MemoryField.Text(formFactor, MemoryDataSource.Wmi),
+                MemoryType: MemoryField.Text(memoryType, MemoryDataSource.Wmi),
                 MaxBandwidth: MemoryField.Text(maxBandwidth, MemoryDataSource.Wmi),
-                Manufacturer: SpdOrWmi(spdModule?.Manufacturer, manufacturer),
-                DramManufacturer: SpdOrPlaceholder(spdModule?.DramManufacturer),
-                PartNumber: SpdOrWmi(spdModule?.PartNumber, partNumber),
-                SerialNumber: SpdOrWmi(spdModule?.SerialNumber, module.SerialNumber),
-                ManufacturingDate: FormatManufacturingDate(spdModule),
-                Revision: SpdOrPlaceholder(spdModule?.Revision)),
+                Manufacturer: MemoryField.Text(manufacturer, MemoryDataSource.Wmi),
+                DramManufacturer: MemoryField.Placeholder<string>(MemoryField.PendingSpdText),
+                PartNumber: MemoryField.Text(partNumber, MemoryDataSource.Wmi),
+                SerialNumber: MemoryField.Text(module.SerialNumber, MemoryDataSource.Wmi),
+                ManufacturingDate: MemoryField.Placeholder<string>(MemoryField.PendingSpdText),
+                Revision: MemoryField.Placeholder<string>(MemoryField.PendingSpdText)),
             Organization: new MemoryModuleOrganization(
                 RankMix: MemoryField.Placeholder<string>(MemoryField.PendingSpdText),
-                RankCount: SpdNumberOrPlaceholder(spdModule?.Organization.RankCount),
-                BankGroupCount: SpdNumberOrPlaceholder(spdModule?.Organization.BankGroupCount),
-                BanksPerGroup: SpdNumberOrPlaceholder(spdModule?.Organization.BanksPerGroup),
+                RankCount: MemoryField.Placeholder<int>(MemoryField.PendingSpdText),
+                BankGroupCount: MemoryField.Placeholder<int>(MemoryField.PendingSpdText),
+                BanksPerGroup: MemoryField.Placeholder<int>(MemoryField.PendingSpdText),
                 RowAddressBits: MemoryField.Placeholder<int>(MemoryField.PendingSpdText),
                 ColumnAddressBits: MemoryField.Placeholder<int>(MemoryField.PendingSpdText),
-                DeviceWidth: SpdBitsOrPlaceholder(spdModule?.Organization.DeviceWidthBits),
-                BusWidth: SpdBitsOrWmi(spdModule?.Organization.BusWidthBits, module.TotalWidth > 0 ? module.TotalWidth : module.DataWidth),
-                DataWidth: SpdBitsOrWmi(spdModule?.Organization.DataWidthBits, module.DataWidth),
-                TotalWidth: SpdBitsOrWmi(spdModule?.Organization.TotalWidthBits, module.TotalWidth),
+                DeviceWidth: MemoryField.Placeholder<string>(MemoryField.PendingSpdText),
+                BusWidth: FormatBits(module.TotalWidth > 0 ? module.TotalWidth : module.DataWidth, MemoryDataSource.Wmi),
+                DataWidth: FormatBits(module.DataWidth, MemoryDataSource.Wmi),
+                TotalWidth: FormatBits(module.TotalWidth, MemoryDataSource.Wmi),
                 Ecc: FormatEcc(module),
                 OnDieEcc: MemoryField.Placeholder<string>(MemoryField.PendingSpdText)),
             Voltages: new MemoryModuleVoltages(
                 ConfiguredVoltage: MemoryField.Millivolts(module.ConfiguredVoltage, MemoryDataSource.Wmi),
                 MinVoltage: MemoryField.Millivolts(module.MinVoltage, MemoryDataSource.Wmi),
                 MaxVoltage: MemoryField.Millivolts(module.MaxVoltage, MemoryDataSource.Wmi),
-                Vdd: SpdMillivoltsOrPlaceholder(spdModule?.Voltages.VddMv),
-                Vddq: SpdMillivoltsOrPlaceholder(spdModule?.Voltages.VddqMv),
-                Vpp: SpdMillivoltsOrPlaceholder(spdModule?.Voltages.VppMv)),
-            TimingProfiles: BuildTimingProfiles(spdModule),
-            Features: BuildFeatures(spdModule),
-            Notes: BuildModuleNotes(module, spdModule, hasSpdModules));
-    }
-
-    private static IReadOnlyList<MemoryTimingProfile> BuildTimingProfiles(SpdMemoryModule? spdModule)
-    {
-        if (spdModule?.TimingProfiles.Count > 0)
-        {
-            return spdModule.TimingProfiles.Select(ToTimingProfile).ToList();
-        }
-
-        return [CreatePendingTimingProfile()];
-    }
-
-    private static MemoryTimingProfile ToTimingProfile(SpdTimingProfile profile)
-    {
-        var name = FirstUseful(profile.Name, profile.Kind, "SPD Profile");
-        return new MemoryTimingProfile(
-            name,
-            profile.FrequencyMHz > 0 ? MemoryField.Text($"{profile.FrequencyMHz:0.#} MHz", MemoryDataSource.Spd) : MemoryField.Placeholder<string>(MemoryField.PendingSpdText),
-            profile.EffectiveRateMTps > 0 ? MemoryField.MegaTransfers(profile.EffectiveRateMTps, MemoryDataSource.Spd) : MemoryField.Placeholder<string>(MemoryField.PendingSpdText),
-            SpdOrPlaceholder(profile.CasLatency),
-            SpdOrPlaceholder(profile.Trcd),
-            SpdOrPlaceholder(profile.Trp),
-            SpdOrPlaceholder(profile.Tras),
-            SpdOrPlaceholder(profile.Trc),
-            profile.VoltageMv > 0 ? MemoryField.Millivolts(profile.VoltageMv, MemoryDataSource.Spd) : MemoryField.Placeholder<string>(MemoryField.PendingSpdText),
-            MemoryDataSource.Spd);
+                Vdd: MemoryField.Placeholder<string>(MemoryField.PendingSpdText),
+                Vddq: MemoryField.Placeholder<string>(MemoryField.PendingSpdText),
+                Vpp: MemoryField.Placeholder<string>(MemoryField.PendingSpdText)),
+            TimingProfiles: [CreatePendingTimingProfile()],
+            Features:
+            [
+                new MemoryModuleFeature("Write Temperature Sense", MemoryField.Placeholder<string>(MemoryField.PendingSpdText), MemoryDataSource.Placeholder),
+                new MemoryModuleFeature("Bounded Fault", MemoryField.Placeholder<string>(MemoryField.PendingSpdText), MemoryDataSource.Placeholder),
+                new MemoryModuleFeature("BL32", MemoryField.Placeholder<string>(MemoryField.PendingSpdText), MemoryDataSource.Placeholder),
+                new MemoryModuleFeature("Non-Standard Core Timings", MemoryField.Placeholder<string>(MemoryField.PendingSpdText), MemoryDataSource.Placeholder)
+            ],
+            Notes: BuildModuleNotes(module));
     }
 
     private static MemoryTimingProfile CreatePendingTimingProfile()
@@ -171,34 +131,14 @@ public sealed class MemoryDetailCollector
             MemoryDataSource.Placeholder);
     }
 
-    private static IReadOnlyList<MemoryModuleFeature> BuildFeatures(SpdMemoryModule? spdModule)
-    {
-        if (spdModule?.Features.Count > 0)
-        {
-            return spdModule.Features
-                .Where(feature => IsUseful(feature.Name))
-                .Select(feature => new MemoryModuleFeature(feature.Name, SpdOrPlaceholder(feature.Value), MemoryDataSource.Spd))
-                .ToList();
-        }
-
-        return
-        [
-            new MemoryModuleFeature("Write Temperature Sense", MemoryField.Placeholder<string>(MemoryField.PendingSpdText), MemoryDataSource.Placeholder),
-            new MemoryModuleFeature("Bounded Fault", MemoryField.Placeholder<string>(MemoryField.PendingSpdText), MemoryDataSource.Placeholder),
-            new MemoryModuleFeature("BL32", MemoryField.Placeholder<string>(MemoryField.PendingSpdText), MemoryDataSource.Placeholder),
-            new MemoryModuleFeature("Non-Standard Core Timings", MemoryField.Placeholder<string>(MemoryField.PendingSpdText), MemoryDataSource.Placeholder)
-        ];
-    }
-
-    private static IReadOnlyList<MemoryDataNote> BuildNotes(HardwareInventorySnapshot snapshot, SpdProviderResult spdResult)
+    private static IReadOnlyList<MemoryDataNote> BuildNotes(HardwareInventorySnapshot snapshot)
     {
         var notes = new List<MemoryDataNote>
         {
             new("内存模块信息来自 Windows Win32_PhysicalMemory / SMBIOS，字段质量取决于主板固件。", MemoryDataSource.Wmi),
+            new("JEDEC/XMP/EXPO 时序需要后续 SPD 读取器；当前版本不会伪造这些字段。", MemoryDataSource.Placeholder),
             new("当前频率、通道模式和 CL/tRCD/tRP/tRAS 需要后续内存控制器读取器。", MemoryDataSource.Placeholder)
         };
-        notes.Add(new MemoryDataNote(FormatSpdStatusNote(spdResult), SpdStatusSource(spdResult.Status)));
-        notes.AddRange(spdResult.Diagnostics.Select(diagnostic => new MemoryDataNote(diagnostic, SpdStatusSource(spdResult.Status))));
 
         var memoryStep = snapshot.Diagnostics.Steps.FirstOrDefault(step => step.Name == "memory");
         if (memoryStep is not null && memoryStep.Status != HardwareInventoryStepStatus.Success)
@@ -221,7 +161,7 @@ public sealed class MemoryDetailCollector
         return notes;
     }
 
-    private static IReadOnlyList<MemoryDataNote> BuildModuleNotes(MemoryModuleSnapshot module, SpdMemoryModule? spdModule, bool hasSpdModules)
+    private static IReadOnlyList<MemoryDataNote> BuildModuleNotes(MemoryModuleSnapshot module)
     {
         var missing = new List<string>();
         if (!IsUseful(module.Manufacturer))
@@ -239,158 +179,12 @@ public sealed class MemoryDetailCollector
             missing.Add("SerialNumber");
         }
 
-        var notes = new List<MemoryDataNote>();
-        if (missing.Count > 0)
+        if (missing.Count == 0)
         {
-            notes.Add(new MemoryDataNote($"该模块 WMI 缺失字段：{string.Join(", ", missing)}。", MemoryDataSource.Wmi));
+            return [];
         }
 
-        if (hasSpdModules && spdModule is null)
-        {
-            notes.Add(new MemoryDataNote("未匹配到该模块的 SPD 数据。", MemoryDataSource.Placeholder));
-        }
-
-        if (spdModule is not null)
-        {
-            if (spdModule.Raw.ByteCount > 0)
-            {
-                var checksum = spdModule.Raw.ChecksumOk switch
-                {
-                    true => "校验通过",
-                    false => "校验失败",
-                    _ => "校验状态未知"
-                };
-                notes.Add(new MemoryDataNote($"SPD raw bytes：{spdModule.Raw.ByteCount} bytes，{checksum}。", MemoryDataSource.Spd));
-            }
-
-            notes.AddRange(spdModule.Diagnostics
-                .Where(IsUseful)
-                .Select(diagnostic => new MemoryDataNote(diagnostic, MemoryDataSource.Spd)));
-        }
-
-        return notes;
-    }
-
-    private static MemorySpdAccessInfo BuildSpdAccessInfo(SpdProviderResult result)
-    {
-        return new MemorySpdAccessInfo(
-            result.Status,
-            FormatSpdStatus(result.Status),
-            result.Diagnostics);
-    }
-
-    private static SpdMemoryModule? FindSpdModule(MemoryModuleSnapshot module, int moduleCount, IReadOnlyList<SpdMemoryModule> spdModules)
-    {
-        if (spdModules.Count == 0)
-        {
-            return null;
-        }
-
-        var partNumber = CleanName(module.PartNumber);
-        var serialNumber = CleanName(module.SerialNumber);
-        var locator = CleanName(FirstUseful(module.DeviceLocator, module.BankLabel));
-
-        return spdModules.FirstOrDefault(candidate => SameUseful(candidate.SerialNumber, serialNumber))
-            ?? spdModules.FirstOrDefault(candidate => SameUseful(candidate.PartNumber, partNumber) && SameUseful(candidate.Locator, locator))
-            ?? spdModules.FirstOrDefault(candidate => SameUseful(candidate.Locator, locator))
-            ?? (moduleCount == 1 && spdModules.Count == 1 ? spdModules[0] : null);
-    }
-
-    private static MemoryFieldValue<string> SpdOrWmi(string? spdValue, string? wmiValue)
-    {
-        return IsUseful(spdValue)
-            ? MemoryField.Text(spdValue, MemoryDataSource.Spd)
-            : MemoryField.Text(wmiValue, MemoryDataSource.Wmi);
-    }
-
-    private static MemoryFieldValue<string> SpdOrPlaceholder(string? value)
-    {
-        return IsUseful(value)
-            ? MemoryField.Text(value, MemoryDataSource.Spd)
-            : MemoryField.Placeholder<string>(MemoryField.PendingSpdText);
-    }
-
-    private static MemoryFieldValue<int> SpdNumberOrPlaceholder(int? value)
-    {
-        return value is > 0
-            ? MemoryField.Number(value, MemoryDataSource.Spd)
-            : MemoryField.Placeholder<int>(MemoryField.PendingSpdText);
-    }
-
-    private static MemoryFieldValue<string> SpdBitsOrPlaceholder(int? bits)
-    {
-        return bits is > 0
-            ? MemoryField.Text($"{bits} bit", MemoryDataSource.Spd)
-            : MemoryField.Placeholder<string>(MemoryField.PendingSpdText);
-    }
-
-    private static MemoryFieldValue<string> SpdBitsOrWmi(int? spdBits, uint wmiBits)
-    {
-        return spdBits is > 0
-            ? MemoryField.Text($"{spdBits} bit", MemoryDataSource.Spd)
-            : FormatBits(wmiBits, MemoryDataSource.Wmi);
-    }
-
-    private static MemoryFieldValue<string> SpdMillivoltsOrPlaceholder(uint? millivolts)
-    {
-        return millivolts is > 0
-            ? MemoryField.Millivolts(millivolts.Value, MemoryDataSource.Spd)
-            : MemoryField.Placeholder<string>(MemoryField.PendingSpdText);
-    }
-
-    private static MemoryFieldValue<string> FormatManufacturingDate(SpdMemoryModule? spdModule)
-    {
-        if (spdModule is null || spdModule.ManufacturingYear <= 0)
-        {
-            return MemoryField.Placeholder<string>(MemoryField.PendingSpdText);
-        }
-
-        var weekText = spdModule.ManufacturingWeek > 0
-            ? $"Week {spdModule.ManufacturingWeek:D2} / {spdModule.ManufacturingYear}"
-            : spdModule.ManufacturingYear.ToString(CultureInfo.InvariantCulture);
-        return MemoryField.Text(weekText, MemoryDataSource.Spd);
-    }
-
-    private static string FormatSpdStatusNote(SpdProviderResult result)
-    {
-        return result.Status switch
-        {
-            SpdProviderStatus.Ok when result.Modules.Count > 0 => $"SPD provider 已读取 {result.Modules.Count} 个模块。",
-            SpdProviderStatus.Ok => "SPD provider 已运行，但没有返回模块。",
-            SpdProviderStatus.WorkerMissing => "SPD 读取尚未接入：未找到 native SPD worker。",
-            SpdProviderStatus.NotConfigured => "SPD provider 尚未配置。",
-            SpdProviderStatus.AccessDenied => "SPD 读取权限不足。",
-            SpdProviderStatus.PlatformBlocked => "SPD 读取被平台或固件屏蔽。",
-            SpdProviderStatus.NotImplemented => "SPD 读取暂未实现。",
-            SpdProviderStatus.UnsupportedMemoryType => "当前内存类型暂不支持 SPD 读取。",
-            SpdProviderStatus.ChecksumFailed => "SPD 数据校验失败。",
-            SpdProviderStatus.ParseFailed => "SPD provider 输出解析失败。",
-            SpdProviderStatus.Timeout => "SPD provider 执行超时。",
-            _ => "SPD provider 执行失败。"
-        };
-    }
-
-    private static string FormatSpdStatus(SpdProviderStatus status)
-    {
-        return status switch
-        {
-            SpdProviderStatus.Ok => "SPD 已读取",
-            SpdProviderStatus.WorkerMissing => "SPD 待接入",
-            SpdProviderStatus.NotConfigured => "SPD 未配置",
-            SpdProviderStatus.AccessDenied => "SPD 权限不足",
-            SpdProviderStatus.PlatformBlocked => "SPD 平台屏蔽",
-            SpdProviderStatus.NotImplemented => "SPD 读取暂未实现",
-            SpdProviderStatus.UnsupportedMemoryType => "SPD 不支持",
-            SpdProviderStatus.ChecksumFailed => "SPD 校验失败",
-            SpdProviderStatus.ParseFailed => "SPD 解析失败",
-            SpdProviderStatus.Timeout => "SPD 超时",
-            _ => "SPD 失败"
-        };
-    }
-
-    private static MemoryDataSource SpdStatusSource(SpdProviderStatus status)
-    {
-        return status == SpdProviderStatus.Ok ? MemoryDataSource.Spd : MemoryDataSource.Placeholder;
+        return [new MemoryDataNote($"该模块 WMI 缺失字段：{string.Join(", ", missing)}。", MemoryDataSource.Wmi)];
     }
 
     private static void AddMismatchNote(List<MemoryDataNote> notes, IEnumerable<string> values, string message)
@@ -529,12 +323,5 @@ public sealed class MemoryDetailCollector
             && !trimmed.Equals("System Product Name", StringComparison.OrdinalIgnoreCase)
             && !trimmed.Equals("System manufacturer", StringComparison.OrdinalIgnoreCase)
             && !trimmed.Equals("00000000", StringComparison.OrdinalIgnoreCase);
-    }
-
-    private static bool SameUseful(string? left, string? right)
-    {
-        var cleanLeft = CleanName(left);
-        var cleanRight = CleanName(right);
-        return IsUseful(cleanLeft) && IsUseful(cleanRight) && cleanLeft.Equals(cleanRight, StringComparison.OrdinalIgnoreCase);
     }
 }

@@ -25,7 +25,7 @@
 
 - 不实现完整 AIDA64/HWiNFO 硬件树，只做主窗口导航里的内存详情页。
 - 不把内存跑分结果嵌入这个页面；跑分仍保留独立窗口。
-- 不把无法读取的 SPD 字段伪造成事实。采不到时显示 `未识别`、`待接入 SPD 读取` 或 `不支持`。
+- 不把无法读取的 SPD 字段伪造成事实。当前统一显示 `SPD 读取暂未实现`。
 - 不做内存稳定性测试、温度传感器、PMIC 实时遥测。
 - 不在第一版承诺读取所有厂商私有 SPD 扩展字段。
 - 不直接依赖截图中的某一台机器字段值；截图用于信息结构参考。
@@ -41,7 +41,7 @@ CPU-Z 的 `内存` 页强调运行态信息：
 - 优点是非常适合“一眼确认现在跑在什么频率和时序”。
 - 不足是字段解释少，不能看每根模块 SPD 细节。
 
-HwScope 应吸收这部分作为页面顶部的 `运行态概览`，但要给来源标记：很多运行态时序不能从普通 WMI 拿到，第一版只能显示占位或来自 future native/SPD provider。
+HwScope 应吸收这部分作为页面顶部的 `运行态概览`，但要给来源标记：很多运行态时序不能从普通 WMI 拿到，当前只能显示占位；未来数据源需在平台访问方案确定后重新设计。
 
 ### CPU-Z SPD Page
 
@@ -145,9 +145,9 @@ Stage 1 允许以下字段显示为占位：
 - 识别混插：容量、速度、厂商、料号不一致时给出诊断提示。
 - 从模块数量和总容量构建拓扑摘要，但明确标注是否只是 SMBIOS/WMI 视角。
 
-### Stage 3A: Offline SPD Parser (Active)
+### Stage 3: Raw SPD Reader (Parked)
 
-当前阶段只接入 fixture/offline raw SPD bytes 解析，通过 native worker 输出 schema-versioned JSON。页面可用合成或脱敏样本验证字段和时序表，不访问本机 SMBus。
+第三阶段已搁置。当前仓库不包含 SPD EEPROM bytes reader、离线 parser、fixture、native worker 或应用层 SPD JSON provider；页面只保留明确的 `SPD 读取暂未实现` 状态。未来不得在没有受控内核驱动或经过验证的厂商接口时恢复硬件读取。
 
 目标字段：
 
@@ -163,19 +163,9 @@ Stage 1 允许以下字段显示为占位：
 - DDR5 feature bits：Write Temperature Sense、Bounded Fault、BL32 等。
 - Raw SPD bytes and checksum status。
 
-推荐 worker 形态：
+重启该阶段的前置条件：定义驱动安全模型和最小权限边界、支持的芯片组/内存代际矩阵、驱动签名与更新策略、超时和总线故障隔离、原始数据隐私策略。满足这些条件后，再重新设计内核读取层、用户态协议、纯 bytes parser 和测试样本；旧实现不作为既定接口。
 
-```text
-HwScope.Native.Spd/spd.exe --json
-```
-
-默认运行输出 `notImplemented`，页面显示 `SPD 读取暂未实现`；fixture 模式可以返回真实解析结果，失败不影响 WMI/SMBIOS 页面。
-
-### Stage 3B: Raw SPD Hardware Reader (Parked)
-
-Windows 本机 SPD EEPROM / DDR5 SPD Hub 获取需要受控内核驱动、芯片组适配、签名发布和真实硬件矩阵。本阶段暂时搁置，当前代码不包含 SMBus probe 或硬件 reader backend。
-
-### Stage 4: Memory Controller / Live Timing Provider (Parked)
+### Stage 4: Memory Controller / Live Timing Provider
 
 第四阶段接入运行态内存控制器信息。
 
@@ -188,9 +178,9 @@ Windows 本机 SPD EEPROM / DDR5 SPD Hub 获取需要受控内核驱动、芯片
 - DRAM:FSB 或 memory controller ratio。
 - DDR5 MCLK / UCLK / FCLK 类平台相关字段。
 
-通用实现需要 MSR/SMN/PCI config/MMIO 或厂商平台接口，通常涉及内核驱动。本阶段暂时搁置，所有字段继续保留清晰占位。
+这可能需要 native CPUID/MSR/PCI config/厂商平台 provider。所有字段必须标注平台限制。
 
-### Stage 5: Sensor And Stability Context (Partially Parked)
+### Stage 5: Sensor And Stability Context
 
 第五阶段扩展：
 
@@ -199,8 +189,6 @@ Windows 本机 SPD EEPROM / DDR5 SPD Hub 获取需要受控内核驱动、芯片
 - ECC error counters。
 - 内存训练状态、MRC/AGESA 相关信息。
 - 与内存跑分结果、压力测试结果关联。
-
-其中 DIMM/SPD Hub 温度、PMIC telemetry 和底层训练状态依赖 SMBus/平台寄存器，随驱动 workstream 一并搁置；不依赖驱动的报告关联可独立推进。
 
 ## Information Architecture
 
@@ -249,7 +237,7 @@ Memory / SPD Detail Page
   - `64 GB`
   - `2 x 32 GB`
   - `5600 MT/s`
-  - `SPD 待接入` or `SPD 已读取`
+  - `SPD 读取暂未实现`
 
 动作：
 
@@ -353,7 +341,7 @@ Micron CT32G56C46S5.M16D1
 - ECC / Error Correction。
 - On-die ECC, if available。
 
-第一版可先显示 WMI 的 `DataWidth` / `TotalWidth`，其余标记为 `待接入 SPD 读取`。
+当前显示 WMI 的 `DataWidth` / `TotalWidth`，其余标记为 `SPD 读取暂未实现`。
 
 ### Voltages And Features
 
@@ -414,8 +402,8 @@ Micron CT32G56C46S5.M16D1
 
 说明字段：
 
-- 数据源：WMI/SMBIOS、SPD、推导、待接入。
-- SPD 读取状态：未接入、读取失败、平台屏蔽、权限不足、校验失败。
+- 当前数据源：WMI/SMBIOS、推导、待接入。
+- SPD 读取状态固定为：`SPD 读取暂未实现`。
 - 混插提示。
 - 速度/时序解释：WMI speed 不一定等于当前运行态频率。
 - 刷新时间。
@@ -430,7 +418,7 @@ Micron CT32G56C46S5.M16D1
 ----------------------------------------------------------------
 内存 / SPD                                      [Refresh][Copy][Save]
 64 GB DDR5 · 2 modules · DDR5-5600
-[DDR5] [64 GB] [2 x 32 GB] [5600 MT/s] [SPD 待接入]
+[DDR5] [64 GB] [2 x 32 GB] [5600 MT/s] [SPD 读取暂未实现]
 
 ----------------------------------------------------------------
 | 运行态概览                                                   |
@@ -445,7 +433,7 @@ Micron CT32G56C46S5.M16D1
 | Slot             Channel A DIMM 0   | Rank Count      待接入   |
 | Part Number      CT32G56C46S5...    | Data Width      64 bit   |
 | Serial           EB235139           | Total Width     64 bit   |
-| Week/Year        待接入 SPD         | Bank Groups     待接入   |
+| Week/Year        SPD 未实现         | Bank Groups     未实现   |
 
 ----------------------------------------------------------------
 | Timing Profiles                                               |
@@ -489,7 +477,7 @@ Micron CT32G56C46S5.M16D1
 
 - `未识别`：已尝试读取但不可用。
 - `不支持`：硬件/API 明确不支持。
-- `待接入 SPD 读取`：需要 raw SPD provider。
+- `SPD 读取暂未实现`：当前仓库没有 SPD reader/parser/provider。
 - `待接入内存控制器读取`：需要运行态 controller provider。
 - `推导值`：来自容量/速度等字段推算。
 
@@ -632,7 +620,6 @@ public enum MemoryDataSource
     Unknown,
     Wmi,
     Smbios,
-    Spd,
     MemoryController,
     Computed,
     Mapping,
@@ -729,35 +716,11 @@ FROM Win32_PhysicalMemory
 - data/total width。
 - voltage fields, if WMI returns。
 
-### Stage 3 SPD Provider
+### Stage 3 SPD Integration (Parked)
 
-推荐独立 provider：
+当前没有 SPD provider 或 worker 查找路径。Core collector 只消费共享 WMI/SMBIOS snapshot，UI 和文本报告固定显示 `SPD 读取暂未实现`。
 
-```csharp
-public interface ISpdProvider
-{
-    SpdProviderResult TryCollect();
-}
-```
-
-Native worker 查找路径参考 memory benchmark：
-
-```text
-AppContext.BaseDirectory\spd.exe
-AppContext.BaseDirectory\native\spd.exe
-src\HwScope.Native.Spd\build\Release\spd.exe
-```
-
-不要使用用户机器绝对路径。
-
-失败类型要结构化：
-
-- WorkerMissing。
-- AccessDenied。
-- PlatformBlocked。
-- UnsupportedMemoryType。
-- ChecksumFailed。
-- ParseFailed。
+未来若恢复，读取层、bytes parser 和 UI integration 必须分层，硬件读取失败不得影响 WMI-backed 页面；具体 API 和进程边界在驱动方案确定后重新评审，不沿用已移除实现的契约。
 
 ## UI Implementation Plan
 
@@ -869,18 +832,11 @@ Grid
 Windows WMI 没有返回 Win32_PhysicalMemory 数据。可以刷新重试。
 ```
 
-SPD 不可用：
+SPD 当前状态：
 
 ```text
 SPD 读取暂未实现
-当前页面显示 Windows/SMBIOS 提供的模块信息；可使用 fixture/offline parser 验证 SPD 字段。
-```
-
-未来恢复硬件 reader 后的平台屏蔽状态：
-
-```text
-SPD 读取被平台屏蔽
-某些笔记本、OEM BIOS 或权限策略会阻止 SMBus/SPD 读取。
+当前页面仅显示 Windows/SMBIOS 提供的模块信息；仓库中没有 SPD 读取或解析实现。
 ```
 
 ## Diagnostics
@@ -894,7 +850,7 @@ SPD 读取被平台屏蔽
   - configured speed mismatch。
   - memory type mismatch。
   - manufacturer/part number mismatch。
-- SPD provider 状态。
+- 固定 SPD 未实现状态。
 - 运行态 timing provider 状态。
 
 不要把混插提示做成错误；它只是诊断信息。
@@ -909,7 +865,7 @@ Stage 1：
 - Refresh 触发全局 inventory refresh。
 - Copy/Save 输出文本报告。
 - WMI/SMBIOS/占位字段有来源标记。
-- 没有 fixture SPD 数据时，JEDEC/XMP/EXPO 区域清楚显示 `待接入 SPD 读取`，页面状态显示 `SPD 读取暂未实现`。
+- JEDEC/XMP/EXPO 区域清楚显示 `SPD 读取暂未实现`。
 - `dotnet build` 通过。
 
 Stage 2：
@@ -918,16 +874,16 @@ Stage 2：
 - 页面显示 Manufacturer、PartNumber、SerialNumber、BankLabel、DeviceLocator、FormFactor、DataWidth、TotalWidth、电压字段。
 - 混插提示可见。
 
-Stage 3A：
+Stage 3（Parked）：
 
-- Native SPD worker 输出 schema-versioned JSON。
-- SPD 失败不影响页面显示 WMI-backed 字段。
-- Fixture/offline bytes 可以填充 JEDEC timing、组织、电压和 feature fields。
+- 当前不实现、不构建、不分发 SPD reader/parser/provider。
+- WMI-backed 页面不依赖任何 SPD 组件。
+- 重启前完成内核驱动安全与支持矩阵评审。
 
-Stage 3B / Stage 4：
+Stage 4：
 
-- 真实硬件 SPD 获取和运行态时序 provider 暂时搁置。
-- 重启条件是有独立受审查的内核驱动、签名方案和硬件验证矩阵。
+- 当前频率和当前 primary timings 由真实运行态 provider 填充。
+- CPU-Z Memory 页核心字段不再是占位。
 
 ## Recommended Implementation Sequence
 
@@ -936,9 +892,9 @@ Stage 3B / Stage 4：
 3. 新增 `MemoryDetailPage`，先使用 WMI/SMBIOS 字段和清晰占位。
 4. 接入主窗口导航，把 `硬件 -> 内存` 改到 `memory-detail`。
 5. 更新 README / architecture docs。
-6. 设计 native SPD worker contract，不急着实现底层读取。
-7. 继续完善 offline SPD timing profiles 和 DDR5 raw parser。
-8. 将硬件 reader、运行态 timing 和 telemetry 保留为 parked driver workstream。
+6. 保持 SPD reader/parser/provider 搁置，页面显示明确未实现状态。
+7. 未来先完成内核驱动方案评审，再重新设计 SPD 数据链路。
+8. 运行态 timing provider 同样等待平台访问方案。
 
 ## Risks And Mitigations
 
@@ -958,8 +914,8 @@ Stage 3B / Stage 4：
 
 缓解：
 
-- SPD provider 是可选增强，不作为页面可用性的前提。
-- 当前默认显示 `SPD 读取暂未实现`；未来恢复硬件 reader 后再启用平台/权限状态。
+- WMI-backed 页面不依赖 SPD 能力。
+- 保持该工作流搁置，直至受控驱动和平台支持方案通过评审。
 
 ### DDR Generational Complexity
 

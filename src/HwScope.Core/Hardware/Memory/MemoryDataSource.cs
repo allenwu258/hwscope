@@ -5,7 +5,6 @@ public enum MemoryDataSource
     Unknown,
     Wmi,
     Smbios,
-    Spd,
     MemoryController,
     Computed,
     Mapping,
