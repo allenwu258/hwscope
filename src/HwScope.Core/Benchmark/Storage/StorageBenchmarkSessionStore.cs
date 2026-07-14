@@ -9,6 +9,8 @@ public sealed record StorageBenchmarkOrphan(
     string TestFilePath,
     long PlannedFileSizeBytes,
     DateTimeOffset CreatedAt,
+    ulong VolumeSerialNumber,
+    string FileId,
     string ManifestPath);
 
 public sealed class StorageBenchmarkSessionStore
@@ -35,7 +37,9 @@ public sealed class StorageBenchmarkSessionStore
             plan.Target.TestDirectory,
             plan.TestFilePath,
             plan.Options.FileSizeBytes,
-            plan.CreatedAt);
+            plan.CreatedAt,
+            null,
+            null);
         var path = GetManifestPath(plan.SessionId);
         using var stream = new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.Read);
         JsonSerializer.Serialize(stream, manifest, _jsonOptions);
@@ -49,6 +53,54 @@ public sealed class StorageBenchmarkSessionStore
         }
 
         TryDeleteManifest(GetManifestPath(plan.SessionId));
+    }
+
+    internal void RecordFileIdentity(StorageBenchmarkPlan plan, ulong volumeSerialNumber, string fileId)
+    {
+        if (!StorageBenchmarkFileIdentityQuery.IsValidFileId(fileId))
+        {
+            throw new FormatException("worker 返回的 file ID 无效。");
+        }
+
+        var manifestPath = GetManifestPath(plan.SessionId);
+        SessionManifest manifest;
+        using (var readStream = File.OpenRead(manifestPath))
+        {
+            manifest = JsonSerializer.Deserialize<SessionManifest>(readStream, _jsonOptions)
+                ?? throw new FormatException("无法读取 storage benchmark session manifest。");
+        }
+        if (!string.Equals(manifest.CreatedBy, "HwScope.StorageBenchmark", StringComparison.Ordinal)
+            || !string.Equals(manifest.SessionId, plan.SessionId, StringComparison.Ordinal)
+            || !string.Equals(Path.GetFullPath(manifest.TestFilePath), Path.GetFullPath(plan.TestFilePath), StringComparison.OrdinalIgnoreCase))
+        {
+            throw new FormatException("storage benchmark session manifest 与当前计划不匹配。");
+        }
+
+        var updated = manifest with
+        {
+            VolumeSerialNumber = volumeSerialNumber,
+            FileId = fileId.ToLowerInvariant()
+        };
+        var temporaryPath = manifestPath + ".tmp";
+        try
+        {
+            using (var writeStream = new FileStream(temporaryPath, FileMode.Create, FileAccess.Write, FileShare.None))
+            {
+                JsonSerializer.Serialize(writeStream, updated, _jsonOptions);
+                writeStream.Flush(flushToDisk: true);
+            }
+            File.Move(temporaryPath, manifestPath, overwrite: true);
+        }
+        finally
+        {
+            TryDeleteManifest(temporaryPath);
+        }
+    }
+
+    internal void CaptureFileIdentity(StorageBenchmarkPlan plan)
+    {
+        var identity = StorageBenchmarkFileIdentityQuery.Query(plan.TestFilePath);
+        RecordFileIdentity(plan, identity.VolumeSerialNumber, identity.FileId);
     }
 
     public IReadOnlyList<StorageBenchmarkOrphan> FindOrphans()
@@ -91,7 +143,7 @@ public sealed class StorageBenchmarkSessionStore
         {
             if (!TryValidate(
                     new SessionManifest("HwScope.StorageBenchmark", orphan.SessionId, orphan.TargetRoot, orphan.TestDirectory,
-                        orphan.TestFilePath, orphan.PlannedFileSizeBytes, orphan.CreatedAt),
+                        orphan.TestFilePath, orphan.PlannedFileSizeBytes, orphan.CreatedAt, orphan.VolumeSerialNumber, orphan.FileId),
                     orphan.ManifestPath,
                     out var validated))
             {
@@ -110,6 +162,13 @@ public sealed class StorageBenchmarkSessionStore
                 return new StorageBenchmarkCleanupResult(true, false, "fileValidationRejected");
             }
 
+            var identity = StorageBenchmarkFileIdentityQuery.Query(validated.TestFilePath);
+            if (identity.VolumeSerialNumber != validated.VolumeSerialNumber
+                || !string.Equals(identity.FileId, validated.FileId, StringComparison.OrdinalIgnoreCase))
+            {
+                return new StorageBenchmarkCleanupResult(true, false, "fileIdentityRejected");
+            }
+
             info.Delete();
             TryDeleteManifest(validated.ManifestPath);
             return new StorageBenchmarkCleanupResult(true, true, "orphanDeleted");
@@ -125,7 +184,9 @@ public sealed class StorageBenchmarkSessionStore
         orphan = default!;
         if (!string.Equals(manifest.CreatedBy, "HwScope.StorageBenchmark", StringComparison.Ordinal)
             || !Guid.TryParseExact(manifest.SessionId, "N", out _)
-            || manifest.PlannedFileSizeBytes is < StorageBenchmarkPlanner.MinimumFileSizeBytes or > StorageBenchmarkPlanner.MaximumFileSizeBytes)
+            || manifest.PlannedFileSizeBytes is < StorageBenchmarkPlanner.MinimumFileSizeBytes or > StorageBenchmarkPlanner.MaximumFileSizeBytes
+            || manifest.VolumeSerialNumber is null
+            || !StorageBenchmarkFileIdentityQuery.IsValidFileId(manifest.FileId))
         {
             return false;
         }
@@ -150,6 +211,8 @@ public sealed class StorageBenchmarkSessionStore
             fullFilePath,
             manifest.PlannedFileSizeBytes,
             manifest.CreatedAt,
+            manifest.VolumeSerialNumber.Value,
+            manifest.FileId!,
             expectedManifest);
         return true;
     }
@@ -177,5 +240,7 @@ public sealed class StorageBenchmarkSessionStore
         string TestDirectory,
         string TestFilePath,
         long PlannedFileSizeBytes,
-        DateTimeOffset CreatedAt);
+        DateTimeOffset CreatedAt,
+        ulong? VolumeSerialNumber,
+        string? FileId);
 }

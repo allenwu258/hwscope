@@ -17,6 +17,7 @@ public sealed class StorageBenchmarkSessionStoreTests : IDisposable
         var store = new StorageBenchmarkSessionStore(manifests);
         store.Create(plan);
         File.WriteAllBytes(plan.TestFilePath, new byte[4096]);
+        store.CaptureFileIdentity(plan);
         var unrelated = Path.Combine(sessions, "user-data.bin");
         File.WriteAllText(unrelated, "keep");
 
@@ -42,11 +43,36 @@ public sealed class StorageBenchmarkSessionStoreTests : IDisposable
         {
             stream.SetLength(plan.Options.FileSizeBytes + 1);
         }
+        store.CaptureFileIdentity(plan);
 
         var cleanup = store.TryCleanup(Assert.Single(store.FindOrphans()));
 
         Assert.False(cleanup.Deleted);
         Assert.Equal("fileValidationRejected", cleanup.Status);
+        Assert.True(File.Exists(plan.TestFilePath));
+    }
+
+    [Fact]
+    public void RejectsReplacementFileWithTheSamePathAndSize()
+    {
+        var manifests = Path.Combine(_root, "manifests");
+        var sessions = Path.Combine(_root, "sessions");
+        Directory.CreateDirectory(sessions);
+        var plan = CreatePlan(Guid.NewGuid().ToString("N"), sessions);
+        var store = new StorageBenchmarkSessionStore(manifests);
+        store.Create(plan);
+        File.WriteAllBytes(plan.TestFilePath, new byte[4096]);
+        store.CaptureFileIdentity(plan);
+        var orphan = Assert.Single(store.FindOrphans());
+
+        File.Delete(plan.TestFilePath);
+        var replacement = Path.Combine(sessions, "replacement.tmp");
+        File.WriteAllBytes(replacement, new byte[4096]);
+        File.Move(replacement, plan.TestFilePath);
+        var cleanup = store.TryCleanup(orphan);
+
+        Assert.False(cleanup.Deleted);
+        Assert.Equal("fileIdentityRejected", cleanup.Status);
         Assert.True(File.Exists(plan.TestFilePath));
     }
 

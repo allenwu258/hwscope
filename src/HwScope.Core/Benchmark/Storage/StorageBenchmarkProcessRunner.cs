@@ -104,9 +104,9 @@ public sealed class StorageBenchmarkProcessRunner : IStorageBenchmarkRunner
                 throw new InvalidOperationException($"存储跑分失败，worker 退出码 {process.ExitCode}：{FormatBriefError(error)}。清理状态：{cleanup.Status}。诊断日志：{logPath}");
             }
 
-            if (capture.Result is null || !capture.Completed)
+            if (capture.Result is null || !capture.Completed || !capture.IdentityCaptured)
             {
-                throw new FormatException("存储跑分协议缺少完整 result/completed 事件。");
+                throw new FormatException("存储跑分协议缺少完整 file_created/result/completed 事件。");
             }
 
             ValidateWorkerResult(capture.Result, plan);
@@ -246,7 +246,7 @@ public sealed class StorageBenchmarkProcessRunner : IStorageBenchmarkRunner
         await process.WaitForExitAsync(CancellationToken.None).ConfigureAwait(false);
     }
 
-    private static async Task<OutputCapture> ReadOutputAsync(
+    private async Task<OutputCapture> ReadOutputAsync(
         StreamReader reader,
         StorageBenchmarkPlan plan,
         IProgress<StorageBenchmarkProgress>? progress)
@@ -254,6 +254,7 @@ public sealed class StorageBenchmarkProcessRunner : IStorageBenchmarkRunner
         var lines = new List<string>();
         StorageWorkerResult? result = null;
         var completed = false;
+        var identityCaptured = false;
         long lastSequence = 0;
         while (await reader.ReadLineAsync(CancellationToken.None).ConfigureAwait(false) is { } line)
         {
@@ -277,6 +278,19 @@ public sealed class StorageBenchmarkProcessRunner : IStorageBenchmarkRunner
                 throw new FormatException("存储跑分 progress protocol/version/session/sequence 无效。");
             }
             lastSequence = sequence;
+            if (type == "file_created")
+            {
+                if (identityCaptured)
+                {
+                    throw new FormatException("worker 重复报告 file_created 事件。");
+                }
+
+                var volumeSerialNumber = root.GetProperty("volume_serial_number").GetUInt64();
+                var fileId = root.GetProperty("file_id").GetString()
+                    ?? throw new FormatException("file_created 事件缺少 file ID。");
+                _sessionStore.RecordFileIdentity(plan, volumeSerialNumber, fileId);
+                identityCaptured = true;
+            }
             if (type == "completed")
             {
                 completed = true;
@@ -286,7 +300,7 @@ public sealed class StorageBenchmarkProcessRunner : IStorageBenchmarkRunner
             progress?.Report(update);
         }
 
-        return new OutputCapture(string.Join(Environment.NewLine, lines), result, completed);
+        return new OutputCapture(string.Join(Environment.NewLine, lines), result, completed, identityCaptured);
     }
 
     internal static StorageBenchmarkProgress ParseProgressLine(string line)
@@ -668,7 +682,7 @@ public sealed class StorageBenchmarkProcessRunner : IStorageBenchmarkRunner
     private static string FormatBriefError(string error) =>
         string.IsNullOrWhiteSpace(error) ? "无 stderr 输出" : error.Trim();
 
-    private sealed record OutputCapture(string Text, StorageWorkerResult? Result, bool Completed);
+    private sealed record OutputCapture(string Text, StorageWorkerResult? Result, bool Completed, bool IdentityCaptured);
 
     private sealed class VolumeLockLease(FileStream stream) : IDisposable
     {

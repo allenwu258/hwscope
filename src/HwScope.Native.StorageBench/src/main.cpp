@@ -14,6 +14,7 @@
 #include <limits>
 #include <memory>
 #include <numeric>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -30,6 +31,7 @@ constexpr std::uint64_t kPatternPoolBytes = 64ULL * kMiB;
 constexpr DWORD kCancelPollMs = 250;
 
 std::atomic_bool g_cancel_requested = false;
+std::atomic<std::uint64_t> g_sequence = 0;
 
 struct Handle {
     HANDLE value = INVALID_HANDLE_VALUE;
@@ -361,6 +363,33 @@ void validate_opened_volume(HANDLE file, const Options& options) {
     }
 }
 
+FILE_ID_INFO query_file_identity(HANDLE file) {
+    FILE_ID_INFO identity{};
+    if (!GetFileInformationByHandleEx(file, FileIdInfo, &identity, sizeof(identity))) {
+        throw_last_error("GetFileInformationByHandleEx(FileIdInfo)");
+    }
+    return identity;
+}
+
+std::string format_file_id(const FILE_ID_128& file_id) {
+    std::uint64_t low = 0;
+    std::uint64_t high = 0;
+    static_assert(sizeof(file_id.Identifier) == sizeof(low) + sizeof(high));
+    std::memcpy(&low, file_id.Identifier, sizeof(low));
+    std::memcpy(&high, file_id.Identifier + sizeof(low), sizeof(high));
+    std::ostringstream stream;
+    stream << std::hex << std::setfill('0') << std::setw(16) << high << std::setw(16) << low;
+    return stream.str();
+}
+
+void emit_file_created(const Options& options, const FILE_ID_INFO& identity) {
+    if (!options.progress_json) return;
+    std::cout << "{\"type\":\"file_created\",\"protocol_version\":" << kProtocolVersion
+              << ",\"session_id\":\"" << options.session_id << "\",\"sequence\":" << ++g_sequence
+              << ",\"phase\":\"preparing\",\"volume_serial_number\":" << identity.VolumeSerialNumber
+              << ",\"file_id\":\"" << format_file_id(identity.FileId) << "\"}\n" << std::flush;
+}
+
 double percentile_sorted(const std::vector<double>& sorted, double percentile) {
     if (sorted.empty()) return 0;
     const auto position = percentile * static_cast<double>(sorted.size() - 1);
@@ -399,8 +428,6 @@ Aggregate calculate_aggregate(std::vector<double> values) {
     result.cv = result.mean == 0 ? 0 : result.stddev / result.mean;
     return result;
 }
-
-std::atomic<std::uint64_t> g_sequence = 0;
 
 void emit_started(const Options& options) {
     if (!options.progress_json) return;
@@ -458,6 +485,7 @@ std::uint64_t prepare_file(const Options& options) {
     Handle file(CreateFileW(options.path.c_str(), GENERIC_READ | GENERIC_WRITE, 0, nullptr, CREATE_NEW, flags, nullptr));
     if (!file) throw_last_error("CreateFile(CREATE_NEW)");
     validate_opened_volume(file.value, options);
+    emit_file_created(options, query_file_identity(file.value));
 
     LARGE_INTEGER size;
     size.QuadPart = static_cast<LONGLONG>(options.file_size_bytes);
