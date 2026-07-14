@@ -12,6 +12,11 @@
     "HwScopeMutedTextColor": "#B8B8B8",
     "HwScopeIconColor": "#D6D6D6",
     "HwScopeIconBackplateColor": "#303030",
-    "HwScopeActiveViewColor": "#333333"
+    "HwScopeActiveViewColor": "#333333",
+    "HwScopeStatusGoodColor": "#6CCB9F",
+    "HwScopeStatusCautionColor": "#F0C36A",
+    "HwScopeStatusCriticalColor": "#FF8A80",
+    "HwScopeStatusUnknownColor": "#B8B8B8",
+    "HwScopeStatusInfoColor": "#75B9F2"
   }
 }

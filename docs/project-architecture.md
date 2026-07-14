@@ -29,6 +29,9 @@ src/HwScope.Core
 
 src/HwScope.Native.MemoryBench
   native C++ memory benchmark worker
+
+src/HwScope.Core.Tests
+  Core parser, formatter and health evaluation tests
 ```
 
 ## HwScope.App
@@ -52,11 +55,17 @@ src/HwScope.Native.MemoryBench
 - `Pages/MemoryDetailPage.xaml`
   内存 / SPD 详情页，展示运行态概览、模块选择、WMI/SMBIOS 模块详情、位宽/电压字段和后续 SPD/时序占位。
 
+- `Pages/StorageDetailPage.xaml`
+  存储设备详情页，按物理磁盘展示身份、总线、健康、温度、寿命、协议属性和卷/分区。
+
 - `MemoryBenchmarkWindow.xaml`
   独立内存跑分窗口，参考 AIDA64 的独立 benchmark window。
 
 - `Services/HardwarePreloadService.cs`
   App 级共享硬件 inventory 服务，序列化预加载和刷新请求，持有当前 `HardwareInventorySnapshot`，并向页面和窗口发布进度与新快照事件。
+
+- `Services/StorageDetailService.cs`
+  按稳定物理设备 ID 缓存动态 storage report，合并同设备并发读取，并限制底层 protocol query 并发。SMART/temperature 不进入长期 preload snapshot。
 
 - `Configuration/`
   JSON 配置模型和 `%LOCALAPPDATA%\HwScope\settings.json` 读写。
@@ -89,6 +98,12 @@ GUI 依赖 `WPF-UI`，当前版本为 `4.3.0`。
 
 - `HwScope.Core.Hardware.Memory`
   内存 / SPD 详情领域模型、WMI/SMBIOS-backed 报告构建、内存类型/形态格式化和文本报告格式化。当前没有 native SPD worker、SPD JSON provider 或 SPD bytes parser；SPD-only 字段统一显示 `SPD 读取暂未实现`。
+
+- `HwScope.Core.Hardware.Storage`
+  存储详情领域模型、物理设备 identity、分区/卷映射、NVMe/ATA parser、健康判定、provider aggregation 和文本报告格式化。
+
+- `HwScope.Core.Windows.Storage`
+  只读 Windows storage handle/IOCTL 边界，包含 descriptor/alignment/TRIM query、NVMe protocol-specific health query 和 ATA SMART query。所有 buffer offset/length 在进入领域层前校验。
 
 - `HwScope.Core.Benchmark`
   定义内存跑分结果、选项、runner 抽象和 native worker 进程调用。

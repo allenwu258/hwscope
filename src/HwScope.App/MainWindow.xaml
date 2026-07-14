@@ -212,7 +212,7 @@
                                                    Icon="{ui:SymbolIcon Desktop20}"
                                                    Click="NavigationItem_Click" />
                             <ui:NavigationViewItem Content="存储设备"
-                                                   Tag="summary"
+                                                   Tag="storage-detail"
                                                    Icon="{ui:SymbolIcon HardDrive20}"
                                                    Click="NavigationItem_Click" />
                             <ui:NavigationViewItem Content="网络设备"

@@ -98,5 +98,68 @@ internal static class Wmi
             return 0;
         }
     }
-}
 
+    public static int? GetNullableInt(ManagementBaseObject? obj, string propertyName)
+    {
+        var value = GetRawValue(obj, propertyName);
+        return value switch
+        {
+            int number => number,
+            uint number when number <= int.MaxValue => (int)number,
+            short number => number,
+            ushort number => number,
+            long number when number is >= int.MinValue and <= int.MaxValue => (int)number,
+            ulong number when number <= int.MaxValue => (int)number,
+            string text when int.TryParse(text, out var parsed) => parsed,
+            _ => null
+        };
+    }
+
+    public static uint? GetNullableUInt(ManagementBaseObject? obj, string propertyName)
+    {
+        var value = GetRawValue(obj, propertyName);
+        return value switch
+        {
+            uint number => number,
+            int number when number >= 0 => (uint)number,
+            ushort number => number,
+            short number when number >= 0 => (uint)number,
+            ulong number when number <= uint.MaxValue => (uint)number,
+            long number when number is >= 0 and <= uint.MaxValue => (uint)number,
+            string text when uint.TryParse(text, out var parsed) => parsed,
+            _ => null
+        };
+    }
+
+    public static bool? GetNullableBool(ManagementBaseObject? obj, string propertyName)
+    {
+        var value = GetRawValue(obj, propertyName);
+        return value switch
+        {
+            bool boolean => boolean,
+            string text when bool.TryParse(text, out var parsed) => parsed,
+            byte number => number != 0,
+            int number => number != 0,
+            uint number => number != 0,
+            _ => null
+        };
+    }
+
+    private static object? GetRawValue(ManagementBaseObject? obj, string propertyName)
+    {
+        if (obj is null)
+        {
+            return null;
+        }
+
+        try
+        {
+            var value = obj[propertyName];
+            return value is null or DBNull ? null : value;
+        }
+        catch (ManagementException)
+        {
+            return null;
+        }
+    }
+}

@@ -136,7 +136,12 @@ public sealed class ThemeDefinitionStore
                     ["HwScopeMutedTextColor"] = "#B8B8B8",
                     ["HwScopeIconColor"] = "#D6D6D6",
                     ["HwScopeIconBackplateColor"] = "#303030",
-                    ["HwScopeActiveViewColor"] = "#333333"
+                    ["HwScopeActiveViewColor"] = "#333333",
+                    ["HwScopeStatusGoodColor"] = "#6CCB9F",
+                    ["HwScopeStatusCautionColor"] = "#F0C36A",
+                    ["HwScopeStatusCriticalColor"] = "#FF8A80",
+                    ["HwScopeStatusUnknownColor"] = "#B8B8B8",
+                    ["HwScopeStatusInfoColor"] = "#75B9F2"
                 }
             }
             : new ThemeDefinition
@@ -155,7 +160,12 @@ public sealed class ThemeDefinitionStore
                     ["HwScopeMutedTextColor"] = "#626262",
                     ["HwScopeIconColor"] = "#3F4752",
                     ["HwScopeIconBackplateColor"] = "#F3F4F6",
-                    ["HwScopeActiveViewColor"] = "#EDEDED"
+                    ["HwScopeActiveViewColor"] = "#EDEDED",
+                    ["HwScopeStatusGoodColor"] = "#18794E",
+                    ["HwScopeStatusCautionColor"] = "#8A5A00",
+                    ["HwScopeStatusCriticalColor"] = "#C42B1C",
+                    ["HwScopeStatusUnknownColor"] = "#626262",
+                    ["HwScopeStatusInfoColor"] = "#0067C0"
                 }
             };
     }
