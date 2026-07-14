@@ -26,6 +26,7 @@ namespace {
 constexpr int kProtocolVersion = 1;
 constexpr std::string_view kWorkerVersion = "0.1.0";
 constexpr std::uint64_t kMiB = 1024ULL * 1024ULL;
+constexpr std::uint64_t kPatternPoolBytes = 64ULL * kMiB;
 constexpr DWORD kCancelPollMs = 250;
 
 std::atomic_bool g_cancel_requested = false;
@@ -515,15 +516,24 @@ bool choose_write(Operation operation, std::uint64_t operation_index, std::uint6
     return permuted >= read_operations;
 }
 
+const std::uint8_t* choose_write_buffer(const AlignedBuffer& pattern_pool, std::uint64_t pattern_pool_bytes,
+                                        const Workload& workload, std::uint64_t operation_index, std::uint64_t seed) {
+    const auto pool_blocks = pattern_pool_bytes / workload.block_size;
+    if (pool_blocks == 0) throw std::runtime_error("write pattern pool is smaller than workload block size");
+    constexpr std::uint64_t stride = 0x9e3779b97f4a7c15ULL;
+    const auto block = (operation_index * stride + seed) % pool_blocks;
+    return pattern_pool.data + block * workload.block_size;
+}
+
 Sample run_sample(HANDLE file, HANDLE completion_port, const Options& options, const Workload& workload,
-                  Operation operation, int sample_index, std::uint64_t seed, Counters& counters, bool report_progress) {
+                  Operation operation, int sample_index, std::uint64_t seed, Counters& counters, bool report_progress,
+                  const AlignedBuffer& pattern_pool, std::uint64_t pattern_pool_bytes) {
     const auto total_operations = options.file_size_bytes / workload.block_size;
     const auto total_blocks = total_operations;
     std::vector<std::unique_ptr<IoSlot>> slots;
     slots.reserve(static_cast<std::size_t>(workload.queue_depth));
     for (int i = 0; i < workload.queue_depth; ++i) {
         slots.push_back(std::make_unique<IoSlot>(workload.block_size, static_cast<std::size_t>(options.alignment_bytes)));
-        fill_pattern(slots.back()->buffer.data, workload.block_size, seed ^ static_cast<std::uint64_t>(i + 1));
     }
 
     struct OutstandingIoGuard {
@@ -560,16 +570,17 @@ Sample run_sample(HANDLE file, HANDLE completion_port, const Options& options, c
         slot.overlapped.Offset = static_cast<DWORD>(offset & 0xffffffffULL);
         slot.overlapped.OffsetHigh = static_cast<DWORD>(offset >> 32);
         slot.write = choose_write(operation, operation_index, total_operations, options.mix_read_percent, seed);
+        const std::uint8_t* write_buffer = nullptr;
         if (slot.write) {
             if (counters.bytes_write_submitted > options.write_budget_bytes - workload.block_size) {
                 throw std::runtime_error("write budget exceeded before I/O submission");
             }
             counters.bytes_write_submitted += workload.block_size;
-            std::memcpy(slot.buffer.data, &operation_index, std::min<std::size_t>(sizeof(operation_index), workload.block_size));
+            write_buffer = choose_write_buffer(pattern_pool, pattern_pool_bytes, workload, operation_index, seed);
         }
         QueryPerformanceCounter(&slot.submitted);
         const BOOL started = slot.write
-            ? WriteFile(file, slot.buffer.data, workload.block_size, nullptr, &slot.overlapped)
+            ? WriteFile(file, write_buffer, workload.block_size, nullptr, &slot.overlapped)
             : ReadFile(file, slot.buffer.data, workload.block_size, nullptr, &slot.overlapped);
         if (!started && GetLastError() != ERROR_IO_PENDING) throw_last_error(slot.write ? "WriteFile" : "ReadFile");
     };
@@ -675,16 +686,18 @@ Sample run_sample(HANDLE file, HANDLE completion_port, const Options& options, c
 }
 
 Metric run_metric(HANDLE file, HANDLE completion_port, const Options& options, const Workload& workload,
-                  Operation operation, std::uint64_t seed, Counters& counters) {
+                  Operation operation, std::uint64_t seed, Counters& counters,
+                  const AlignedBuffer& pattern_pool, std::uint64_t pattern_pool_bytes) {
     emit_workload(options, "workload_started", workload, operation);
     Metric metric;
     for (int warmup = 0; warmup < options.warmup_passes; ++warmup) {
-        (void)run_sample(file, completion_port, options, workload, operation, 0, seed ^ 0xfeed0000ULL, counters, false);
+        (void)run_sample(file, completion_port, options, workload, operation, 0, seed ^ 0xfeed0000ULL, counters, false,
+            pattern_pool, pattern_pool_bytes);
         if (operation != Operation::read && !FlushFileBuffers(file)) throw_last_error("FlushFileBuffers(warmup)");
     }
     for (int run = 1; run <= options.runs; ++run) {
         auto sample = run_sample(file, completion_port, options, workload, operation, run,
-            seed ^ static_cast<std::uint64_t>(run), counters, true);
+            seed ^ static_cast<std::uint64_t>(run), counters, true, pattern_pool, pattern_pool_bytes);
         if (operation != Operation::read && !FlushFileBuffers(file)) throw_last_error("FlushFileBuffers(sample)");
         metric.logical_bytes_read += sample.bytes_read;
         metric.logical_bytes_written += sample.bytes_written;
@@ -734,6 +747,10 @@ std::vector<RowResult> run_benchmark(const Options& options, Counters& counters)
     Handle completion(CreateIoCompletionPort(file.value, nullptr, 0, 0));
     if (!completion) throw_last_error("CreateIoCompletionPort");
 
+    const auto pattern_pool_bytes = (std::min)(options.file_size_bytes, kPatternPoolBytes);
+    AlignedBuffer pattern_pool(static_cast<std::size_t>(pattern_pool_bytes), static_cast<std::size_t>(options.alignment_bytes));
+    fill_pattern(pattern_pool.data, static_cast<std::size_t>(pattern_pool_bytes), 0x4452495645444154ULL);
+
     std::vector<RowResult> rows;
     std::uint64_t seed = 0x485753434F5045ULL;
     for (const auto& workload_id : options.workloads) {
@@ -744,7 +761,8 @@ std::vector<RowResult> run_benchmark(const Options& options, Counters& counters)
             throw std::invalid_argument("workload block size does not satisfy file size/alignment");
         }
         for (const auto operation : operations_for(options.columns)) {
-            auto metric = run_metric(file.value, completion.value, options, row.workload, operation, seed++, counters);
+            auto metric = run_metric(file.value, completion.value, options, row.workload, operation, seed++, counters,
+                pattern_pool, pattern_pool_bytes);
             if (operation == Operation::read) {
                 row.has_read = true;
                 row.read = std::move(metric);
