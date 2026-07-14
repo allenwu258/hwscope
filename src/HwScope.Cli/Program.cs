@@ -7,6 +7,8 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using HwScope.Core.Benchmark;
 using HwScope.Core.Hardware;
+using HwScope.Core.Hardware.Inventory;
+using HwScope.Core.Hardware.Storage;
 
 if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
 {
@@ -31,6 +33,41 @@ var jsonOptions = new JsonSerializerOptions
 
 try
 {
+    if (options.StorageMode)
+    {
+        var inventory = new HardwareInventoryCollector().Collect();
+        var devices = inventory.DiskDrives.Select(StorageDeviceDescriptor.FromSnapshot).OrderBy(device => device.PhysicalDriveNumber ?? int.MaxValue).ToList();
+        if (options.StorageDisk is null)
+        {
+            Console.WriteLine("Storage Devices");
+            Console.WriteLine("---------------");
+            foreach (var device in devices)
+            {
+                var bus = StorageDeviceBusProbe.Query(device);
+                Console.WriteLine($"Disk {device.PhysicalDriveNumber?.ToString() ?? "?"}: {device.Model} · {StorageField.FormatDecimalBytes(device.CapacityBytes)} · {bus.DisplayText}");
+            }
+
+            if (devices.Count == 0)
+            {
+                Console.WriteLine("No physical storage devices were returned by Windows.");
+            }
+            return 0;
+        }
+
+        var selected = devices.FirstOrDefault(device => device.PhysicalDriveNumber == options.StorageDisk);
+        if (selected is null)
+        {
+            Console.Error.WriteLine($"未找到物理磁盘 {options.StorageDisk}。");
+            return 3;
+        }
+
+        var storageReport = await new StorageDetailCollector().CollectAsync(selected);
+        Console.WriteLine(options.Json
+            ? JsonSerializer.Serialize(storageReport, jsonOptions)
+            : StorageDetailReportFormatter.Format(storageReport));
+        return storageReport.Health.Status == StorageHealthStatus.Critical ? 4 : 0;
+    }
+
     if (options.MemoryBenchmark)
     {
         var result = await new MemoryBenchmarkProcessRunner().RunAsync(new MemoryBenchmarkOptions());
@@ -187,15 +224,30 @@ static string FormatProcessor(MemoryBenchmarkProcessorPlacement? processor)
     return $"group {processor.Group}/cpu {processor.ProcessorNumber}{core}{numa}{efficiency}";
 }
 
-internal sealed record CliOptions(bool Json, bool Copy, bool MemoryBenchmark, bool ShowHelp)
+internal sealed record CliOptions(bool Json, bool Copy, bool MemoryBenchmark, bool StorageMode, int? StorageDisk, bool ShowHelp)
 {
     public static CliOptions Parse(string[] args)
     {
         var normalized = args.Select(a => a.Trim().ToLowerInvariant()).ToHashSet();
+        var storageMode = normalized.Contains("storage");
+        int? storageDisk = null;
+        for (var index = 0; index < args.Length - 1; index++)
+        {
+            if (args[index].Equals("--disk", StringComparison.OrdinalIgnoreCase)
+                && int.TryParse(args[index + 1], NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed)
+                && parsed >= 0)
+            {
+                storageDisk = parsed;
+                break;
+            }
+        }
+
         return new CliOptions(
             Json: normalized.Contains("--json"),
             Copy: normalized.Contains("--copy"),
             MemoryBenchmark: normalized.Contains("benchmark") && normalized.Contains("memory"),
+            StorageMode: storageMode,
+            StorageDisk: storageDisk,
             ShowHelp: normalized.Contains("-h") || normalized.Contains("--help") || normalized.Contains("/?"));
     }
 }
@@ -239,6 +291,10 @@ internal static class CliHelp
       --copy       将默认文本摘要复制到剪贴板
       benchmark memory
                    运行内存跑分
+      storage list
+                   列出物理存储设备
+      storage --disk N [--json]
+                   读取指定物理磁盘的详情和健康数据
       -h, --help   显示帮助
 
     示例：
@@ -246,5 +302,7 @@ internal static class CliHelp
       dotnet run --project src/HwScope.Cli -- --json
       dotnet run --project src/HwScope.Cli -- --copy
       dotnet run --project src/HwScope.Cli -- benchmark memory
+      dotnet run --project src/HwScope.Cli -- storage list
+      dotnet run --project src/HwScope.Cli -- storage --disk 0
     """;
 }

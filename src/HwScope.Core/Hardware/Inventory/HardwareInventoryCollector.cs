@@ -55,7 +55,12 @@ public sealed class HardwareInventoryCollector
 
         var monitors = CollectStep(steps, progress, CollectionStepNames[5], totalSteps, ref completedSteps, CollectMonitors);
 
-        var diskDrives = CollectStep(steps, progress, CollectionStepNames[6], totalSteps, ref completedSteps, () => Wmi.Query("SELECT Model, Size, MediaType, InterfaceType FROM Win32_DiskDrive")
+        var diskDrives = CollectStep(steps, progress, CollectionStepNames[6], totalSteps, ref completedSteps, () => Wmi.Query("""
+            SELECT Index, DeviceID, PNPDeviceID, Model, FirmwareRevision, SerialNumber,
+                   Size, MediaType, InterfaceType, BytesPerSector, Partitions,
+                   SCSIBus, SCSIPort, SCSITargetId, SCSILogicalUnit
+            FROM Win32_DiskDrive
+            """)
             .Select(ToDiskDrive)
             .ToList());
 
@@ -256,10 +261,21 @@ public sealed class HardwareInventoryCollector
     private static DiskDriveSnapshot ToDiskDrive(ManagementObject obj)
     {
         return new DiskDriveSnapshot(
+            Wmi.GetNullableInt(obj, "Index"),
+            Wmi.GetString(obj, "DeviceID"),
+            Wmi.GetString(obj, "PNPDeviceID"),
             Wmi.GetString(obj, "Model"),
+            Wmi.GetString(obj, "FirmwareRevision"),
+            Wmi.GetString(obj, "SerialNumber"),
             Wmi.GetULong(obj, "Size"),
             Wmi.GetString(obj, "MediaType"),
-            Wmi.GetString(obj, "InterfaceType"));
+            Wmi.GetString(obj, "InterfaceType"),
+            Wmi.GetNullableUInt(obj, "BytesPerSector"),
+            Wmi.GetNullableInt(obj, "Partitions"),
+            Wmi.GetNullableInt(obj, "SCSIBus"),
+            Wmi.GetNullableInt(obj, "SCSIPort"),
+            Wmi.GetNullableInt(obj, "SCSITargetId"),
+            Wmi.GetNullableInt(obj, "SCSILogicalUnit"));
     }
 
     private static AudioDeviceSnapshot ToAudioDevice(ManagementObject obj)

@@ -8,6 +8,7 @@ HwScope 是一个 Windows 本地硬件工具箱项目，目标是在一个程序
 - 首页硬件配置摘要，支持卡片视图和列表视图。
 - CPU 详情页，展示身份、规格、频率、拓扑、缓存、核心映射、指令集和平台上下文。
 - 内存 / SPD 详情页，展示运行态概览、模块选择、WMI/SMBIOS 模块详情、位宽/电压字段和后续 SPD/时序占位。
+- 存储设备详情页，按物理磁盘展示身份、固件、序列号、总线、扇区、卷/分区、健康状态、温度、寿命和 SMART / Health 属性。
 - 启动期硬件预加载窗口，先建立共享硬件信息库，再由概览页、CPU 页和内存跑分窗口复用同一份快照。
 - Windows `GetLogicalProcessorInformationEx` 拓扑采集，提供真实 package/core/thread、CPU group、NUMA、缓存共享和 core-to-logical-processor mapping。
 - CPU topology Inspect 窗口，包含 raw report 和绘制版 Visual Map。
@@ -23,13 +24,16 @@ HwScope 是一个 Windows 本地硬件工具箱项目，目标是在一个程序
 HwScope.sln
 src/
   HwScope.App/
-    WPF GUI 入口，启动预加载窗口、主窗口、应用图标资源、硬件摘要页、CPU 详情页、内存 / SPD 详情页、主题系统、内存跑分窗口
+    WPF GUI 入口，启动预加载窗口、主窗口、应用图标资源、硬件摘要页、CPU/内存/存储详情页、主题系统、内存跑分窗口
 
   HwScope.Cli/
     命令行入口，复用 HwScope.Core 的硬件采集和跑分能力
 
   HwScope.Core/
-    硬件采集、共享硬件 inventory 快照、CPU 详情模型、Windows topology API、格式化、benchmark runner 抽象和 native worker 调用
+    硬件采集、共享 hardware inventory、CPU/内存/存储领域模型、Windows topology/storage API、格式化、benchmark runner 和 native worker 调用
+
+  HwScope.Core.Tests/
+    Core 单元测试，当前覆盖 NVMe/ATA parser、overall/健康判定、storage descriptor 边界、soft timeout、字段来源合并、bus 格式化和报告格式化
 
   HwScope.Native.MemoryBench/
     C++ 内存跑分 worker，输出 JSON / progress JSON 给 HwScope.Core 解析，CSV 仅保留为手动兼容格式
@@ -45,6 +49,8 @@ docs/
   memory-cache-benchmark-implementation-plan.md
   memory-spd-detail-page-design.md
   memory-spd-detail-implementation-plan.md
+  storage-detail-page-design.md
+  storage-detail-implementation-plan.md
 ```
 
 ## 运行
@@ -56,6 +62,8 @@ dotnet run --project .\src\HwScope.App\HwScope.App.csproj
 ```
 
 GUI 启动时会申请管理员权限，为后续底层硬件能力预留运行条件。用户取消或提权失败时会显示可关闭提示，并继续以普通权限运行；部分底层硬件信息可能缺失。随后应用显示硬件预加载窗口并建立共享硬件信息库。
+
+本地 WPF 开发和 UI Automation 可以在启动进程前设置 `HWSCOPE_SKIP_ELEVATION=1` 跳过 UAC。该开关只用于开发验证，不代表普通权限下所有底层硬件能力都可用，也不应写入生产环境的全局配置。
 
 CLI 硬件摘要：
 
@@ -128,6 +136,37 @@ GUI 中可以通过左侧导航 `硬件 -> 内存` 或顶部快捷工具栏 `内
 
 - [docs/memory-spd-detail-page-design.md](docs/memory-spd-detail-page-design.md)
 - [docs/memory-spd-detail-implementation-plan.md](docs/memory-spd-detail-implementation-plan.md)
+
+## 存储设备详情页
+
+GUI 中可以通过左侧导航 `硬件 -> 存储设备` 打开独立详情页。页面以物理磁盘为选择单位，不把盘符当成设备身份。
+
+当前已实现：
+
+- 启动 inventory 中扩展物理磁盘编号、设备路径、PnP ID、固件、序列号、扇区和 SCSI 地址字段。
+- Windows Storage API 读取设备 descriptor、真实 bus type、logical/physical sector size 和 TRIM 状态。
+- `MSFT_Partition` / `MSFT_Volume` 物理磁盘、GPT/MBR 分区、无盘符卷和盘符映射；页面按物理分区展示类型、容量、offset、卷信息和可用空间。
+- NVMe 标准 SMART / Health Information log page 0x02 读取。
+- NVMe Critical Warning、综合温度、备用空间、Percentage Used、128-bit 读写/命令/通电/错误计数解析。
+- 基于标准字段的可解释健康状态和剩余寿命；页面同时展示原始值和字段来源。
+- ATA SMART overall status、attributes/threshold parser、sector checksum、保守健康判定和 Windows SMART/ATA pass-through provider。
+- 设备级异步缓存、同设备请求合并、跨设备隔离、5 秒 soft timeout、切换 stale-result guard 和页面重入恢复；支持复制和保存 `.txt` 报告。
+- CLI：
+
+```powershell
+dotnet run --project .\src\HwScope.Cli -- storage list
+dotnet run --project .\src\HwScope.Cli -- storage --disk 0
+dotnet run --project .\src\HwScope.Cli -- storage --disk 0 --json
+```
+
+`storage list` 使用轻量 Windows Storage descriptor 查询真实 bus type，查询不可用时才回退到 WMI `InterfaceType`；它不会触发 NVMe Health 或 ATA SMART 读取。
+
+截至 2026-07-14，Core 共有 33 项测试通过。本机 NVMe 路径已使用真实 Samsung PM9F1 验证。ATA provider 已有 fixture tests，但仍需要在直连 SATA SSD/HDD 上完成硬件矩阵验证。USB bridge、RAID、Storage Spaces 和虚拟磁盘可能只能展示身份/卷信息，并明确显示 health passthrough 不可用。
+
+详细设计见：
+
+- [docs/storage-detail-page-design.md](docs/storage-detail-page-design.md)
+- [docs/storage-detail-implementation-plan.md](docs/storage-detail-implementation-plan.md)
 
 ## 构建
 
@@ -213,6 +252,7 @@ src\HwScope.App\Themes\Json\dark.json
 - CPU topology Visual Map 当前使用 nested domain layout，tree/radial 布局和 PNG/JSON 导出仍在后续阶段。
 - CPU code name、工艺、TDP 和部分指令集仍可能来自本地型号映射，页面会标注来源。
 - 内存 / SPD 详情页当前仅使用 WMI/SMBIOS；SPD 读取与解析代码已移除，页面固定显示 `SPD 读取暂未实现`。raw SPD、运行态时序和 DIMM/PMIC telemetry 等驱动相关能力暂时搁置。
+- 存储详情页的 NVMe 标准 Health 路径已验证；ATA SMART 仍需更多真实 SATA 设备验证。USB/RAID bridge 是否支持协议透传取决于控制器和驱动，不支持时不会被误报为磁盘故障。
 - 内存跑分结果目前不应直接对标 AIDA64，kernel、copy accounting、NUMA 和 cache row 仍在演进。
 - native worker 不会由 `dotnet build` 自动编译；需要先运行 native 构建脚本生成 Release 产物。
 

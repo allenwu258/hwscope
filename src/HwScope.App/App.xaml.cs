@@ -19,6 +19,7 @@ public partial class App : Application
     public static ThemeService ThemeService { get; private set; } = null!;
     public static SingleInstanceWindowManager SingleInstanceWindows { get; private set; } = null!;
     public static HardwarePreloadService HardwarePreload { get; private set; } = null!;
+    public static StorageDetailService StorageDetails { get; private set; } = null!;
 
     protected override void OnStartup(StartupEventArgs e)
     {
@@ -39,6 +40,7 @@ public partial class App : Application
             new ThemeResourceBuilder());
         SingleInstanceWindows = new SingleInstanceWindowManager();
         HardwarePreload = new HardwarePreloadService();
+        StorageDetails = new StorageDetailService(HardwarePreload);
         ThemeService.ApplyCurrentTheme();
 
         base.OnStartup(e);
@@ -55,6 +57,11 @@ public partial class App : Application
 
     private static ElevationResult EnsureAdministrator(IReadOnlyList<string> args)
     {
+        if (Environment.GetEnvironmentVariable("HWSCOPE_SKIP_ELEVATION") == "1")
+        {
+            return ElevationResult.ContinueWithoutElevation;
+        }
+
         if (IsAdministrator())
         {
             return ElevationResult.CurrentProcessIsElevated;

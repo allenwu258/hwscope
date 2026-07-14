@@ -61,7 +61,22 @@ public sealed record VideoControllerSnapshot(string Name, ulong AdapterRam, stri
 
 public sealed record MonitorSnapshot(string FriendlyName, string ManufacturerName, string ProductCodeId, string FallbackName);
 
-public sealed record DiskDriveSnapshot(string Model, ulong Size, string MediaType, string InterfaceType);
+public sealed record DiskDriveSnapshot(
+    int? Index,
+    string DeviceId,
+    string PnpDeviceId,
+    string Model,
+    string FirmwareRevision,
+    string SerialNumber,
+    ulong Size,
+    string MediaType,
+    string InterfaceType,
+    uint? BytesPerSector,
+    int? PartitionCount,
+    int? ScsiBus,
+    int? ScsiPort,
+    int? ScsiTargetId,
+    int? ScsiLogicalUnit);
 
 public sealed record AudioDeviceSnapshot(string Name);
 

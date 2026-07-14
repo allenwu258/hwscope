@@ -13,6 +13,7 @@ public partial class MainWindow : FluentWindow
     private readonly HardwareSummaryPage _hardwareSummaryPage = new();
     private readonly CpuDetailPage _cpuDetailPage = new();
     private readonly MemoryDetailPage _memoryDetailPage = new();
+    private readonly StorageDetailPage _storageDetailPage = new();
     private readonly HardwareCollector _hardwareReportBuilder = new();
     private HardwareReport? _currentReport;
 
@@ -24,6 +25,7 @@ public partial class MainWindow : FluentWindow
         _hardwareSummaryPage.CurrentReportChanged += (_, report) => _currentReport = report;
         _cpuDetailPage.StatusChanged += (_, status) => SetFooterStatus(status);
         _memoryDetailPage.StatusChanged += (_, status) => SetFooterStatus(status);
+        _storageDetailPage.StatusChanged += (_, status) => SetFooterStatus(status);
         App.ThemeService.StatusChanged += (_, status) => SetFooterStatus(status);
         App.HardwarePreload.ProgressChanged += (_, progress) => SetFooterStatus(progress.Message);
         App.HardwarePreload.InventoryChanged += (_, snapshot) => _currentReport = _hardwareReportBuilder.CreateSummary(snapshot);
@@ -67,6 +69,7 @@ public partial class MainWindow : FluentWindow
 
     private void NavigateByTag(string? tag)
     {
+        SummaryNavigationItem.IsActive = string.Equals(tag, "summary", StringComparison.Ordinal);
         switch (tag)
         {
             case "memory-benchmark":
@@ -77,6 +80,9 @@ public partial class MainWindow : FluentWindow
                 break;
             case "memory-detail":
                 ShowMemoryDetail();
+                break;
+            case "storage-detail":
+                ShowStorageDetail();
                 break;
             case "summary":
                 ShowHardwareSummary();
@@ -132,6 +138,7 @@ public partial class MainWindow : FluentWindow
 
     private void ShowHardwareSummary()
     {
+        SummaryNavigationItem.IsActive = true;
         PageHost.Content = _hardwareSummaryPage;
         SetFooterStatus("硬件概览。");
     }
@@ -146,6 +153,12 @@ public partial class MainWindow : FluentWindow
     {
         PageHost.Content = _memoryDetailPage;
         SetFooterStatus("内存 / SPD 详情。");
+    }
+
+    private void ShowStorageDetail()
+    {
+        PageHost.Content = _storageDetailPage;
+        SetFooterStatus("存储设备详情。");
     }
 
     private async Task ShowMemoryBenchmarkAsync()

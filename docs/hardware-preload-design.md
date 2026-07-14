@@ -130,10 +130,18 @@ These should be captured in the shared inventory snapshot:
   - `WmiMonitorID` UserFriendlyName, ManufacturerName, ProductCodeID
   - `Win32_DesktopMonitor` fallback names
 - Disk drives:
+  - Index
+  - DeviceID
+  - PNPDeviceID
   - Model
+  - FirmwareRevision
+  - SerialNumber
   - Size
   - MediaType
   - InterfaceType
+  - BytesPerSector
+  - Partitions
+  - SCSI bus/port/target/LUN
 - Sound devices:
   - Name
 - Network adapters:
@@ -165,6 +173,7 @@ These should not become long-lived preload truth:
 - Battery and AC power state used for benchmark diagnostics.
 - Memory benchmark metrics and samples.
 - Sensor data once added.
+- Storage SMART/NVMe Health, temperature, lifetime and error counters.
 - Any device status where stale values would confuse the user.
 
 Dynamic values may be captured as `InitialSnapshot` fields, but pages must label or refresh them appropriately.
@@ -361,6 +370,16 @@ The memory / SPD detail page builds its report from the preload snapshot.
 - Render total capacity, memory type, configured speed, module tiles and selected module details.
 - Refresh button calls global `RefreshAsync()`, then rebuilds the report.
 - Raw SPD profiles and runtime timings remain provider-backed future data, shown as explicit placeholders rather than inferred values.
+
+### Storage Detail Page
+
+- The preload snapshot supplies the physical disk selector and baseline identity immediately.
+- `StorageDetailService` reads partitions, volumes, Windows storage properties and protocol health on demand for the selected device.
+- NVMe/ATA health data is dynamic and is not treated as long-lived preload truth.
+- Storage page refresh is device-local; it does not rerun CPU, memory, monitor and network inventory just to refresh temperature.
+- Same-device requests share one active task; different devices are isolated and UI waits use a 5-second soft timeout so one blocked driver does not stall every disk.
+- Returning to the page reattaches to the selected device cache or active task instead of leaving stale loading content.
+- An inventory refresh still updates the storage device list and removes stale device caches.
 
 ### Main Window
 
