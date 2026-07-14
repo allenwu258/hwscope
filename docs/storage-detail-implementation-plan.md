@@ -12,36 +12,31 @@
 - 明确的 Unsupported/Unknown/AccessDenied 状态。
 - 可测试的二进制 parser。
 
-ATA SMART、USB bridge 和 RAID 支持在相同架构下继续推进，但不能用伪造数据阻塞第一版 NVMe 交付。
+ATA SMART 首个实现已经落地；USB bridge、RAID 和 Storage Spaces 继续在相同架构下推进，但不能用伪造数据扩展已验证能力边界。
 
 ## Current Implementation Status
 
-已完成：
+截至 2026-07-14，已完成：
 
 - Milestone 0-10 的首个 NVMe 页面交付。
 - enriched inventory、Storage management volume mapping、domain model、provider aggregation 和 Windows native query layer。
 - NVMe Health log 真实读取、parser、health evaluator、UI、CLI、copy/save 和主题状态 token。
 - Milestone 11 的 ATA SMART RETURN STATUS、parser、threshold merge、legacy SMART/ATA pass-through provider 和 fixture tests。
 - Milestone 12 CLI diagnostic entry。
+- P1/P2 收敛：ATA malformed/overall 保守判定、跨设备隔离与 5 秒 soft timeout、物理分区 UI、页面重入恢复、字段级来源和 `storage list` 真实 bus。
 
 验证状态：
 
 - `dotnet build`：通过，0 warning / 0 error。
 - `dotnet test`：33 tests passed。
 - Samsung PM9F1 NVMe：真实读取成功，identity、temperature、remaining life、128-bit counters、partitions/volume 已交叉显示。
-- WPF 页面：使用非管理员开发通道完成首屏和 SMART table 截图验证。
+- WPF 页面：使用非管理员开发通道完成首屏、SMART table、3 个 GPT 分区显示，以及快速切走再返回后的缓存恢复验证。
 - ATA：代码和合成测试完成，真实 SATA SSD/HDD 验证待补。
 - USB/RAID/Storage Spaces：当前按 standard provider best effort 和 Unsupported/Unknown 降级，广覆盖仍待后续硬件矩阵。
 
-## Branch And Baseline
+## Implementation Starting Point (Historical)
 
-开发分支：
-
-```text
-codex/storage-detail-development-plan
-```
-
-当前解决方案：
+本方案建立时，解决方案只有以下项目：
 
 ```text
 HwScope.sln
@@ -50,9 +45,9 @@ HwScope.sln
   HwScope.Core
 ```
 
-native memory benchmark 项目通过 CMake 独立存在，不在 `.sln` 中。当前仓库没有测试项目。
+native memory benchmark 项目通过 CMake 独立存在，不在 `.sln` 中；当时仓库还没有测试项目。当前解决方案已经包含 `HwScope.Core.Tests`，当前能力和验证结果以上方 `Current Implementation Status` 为准。
 
-当前存储实现：
+当时的存储模型只有：
 
 ```csharp
 public sealed record DiskDriveSnapshot(
@@ -69,7 +64,7 @@ SELECT Model, Size, MediaType, InterfaceType
 FROM Win32_DiskDrive
 ```
 
-当前 `硬件 -> 存储设备` 的 navigation tag 是 `summary`。
+当时 `硬件 -> 存储设备` 的 navigation tag 是 `summary`。以上内容仅用于记录方案起点，不描述当前代码。
 
 ## Locked Engineering Decisions
 
@@ -116,7 +111,7 @@ StorageDetailService
 - 查询 descriptor。
 - 查询 alignment/capability。
 - 读取 NVMe identify 和 health log。
-- 读取 ATA SMART attributes/threshold/status，进入对应阶段后。
+- 读取 ATA SMART attributes/threshold/status。
 
 禁止：
 
@@ -1385,12 +1380,11 @@ raw 值：
 
 - copy 当前设备完整 report。
 - save `.txt`。
-- 文件名清理 model 中非法字符。
-- fallback 文件名包含 Disk number 和 timestamp。
+- 当前文件名使用 `HwScope-Storage-Disk{N}-{timestamp}.txt`；磁盘编号不可用时使用 `unknown`。
 
-### Future JSON
+### Future UI JSON
 
-JSON export 不属于首个交付。后续序列化 domain report，不序列化 WPF view records。
+页面工具栏 JSON export 不属于首个交付。CLI 已经通过 `storage --disk N --json` 序列化 Core domain report；未来 UI 导出也应复用 domain report，不序列化 WPF view records。
 
 ## Milestone 11: ATA SMART
 
@@ -1403,7 +1397,7 @@ NVMe 首版完成后接 ATA，不与 NVMe parser 混写。
 ```text
 SMART_GET_VERSION
 SMART_RCV_DRIVE_DATA
-SMART_SEND_DRIVE_COMMAND, only for status when required
+IOCTL_ATA_PASS_THROUGH + ATA_PASS_THROUGH_EX, for RETURN_SMART_STATUS
 ```
 
 结构：
@@ -1414,9 +1408,11 @@ IDEREGS
 SENDCMDINPARAMS
 DRIVERSTATUS
 SENDCMDOUTPARAMS
+ATA_PASS_THROUGH_EX
+CurrentTaskFile
 ```
 
-所有结构大小和 packing 必须与 Windows SDK 对齐，并通过 `Marshal.SizeOf` focused tests 固定预期。
+legacy SMART buffer 使用 SDK 定义的固定 layout；ATA pass-through 根据进程 pointer size 使用 40/48-byte `ATA_PASS_THROUGH_EX` layout，并校验返回 task-file signature。provider 不暴露任意 ATA command 输入。
 
 允许的 SMART feature commands 仅限常量：
 
@@ -1445,7 +1441,7 @@ entry
   reserved 1 byte
 ```
 
-threshold sector 同样按 ID 合并 threshold。ID 0 entry 跳过。
+threshold sector 同样按 ID 合并 threshold。ID 0 entry 跳过。attribute/threshold sector 必须具有非零 revision、有效 512-byte checksum 和至少一个有效 attribute，否则返回 `MalformedResponse`，不得进入 `Good` 判定。
 
 ### Attribute Catalog
 
@@ -1475,23 +1471,29 @@ SMART overall failed -> Critical
 pre-fail current <= valid threshold -> Critical
 pending/uncorrectable/reallocated > 0 -> Caution
 CRC error > 0 -> Caution note, but may indicate cable/link rather than media
-readable and no known issue -> Good
-not supported/pass-through blocked -> Unsupported
+overall passed and no known issue -> Good
+overall unavailable and no known issue -> Unknown
+attribute query unavailable/pass-through blocked -> Unknown or Unsupported, with provider diagnostic
 ```
 
 历史 non-zero counter 不自动升级到 Critical。
 
 ### Tests
 
-- 30-entry normal sector。
-- ID 0 skipped。
-- duplicate ID deterministic handling + diagnostic。
-- threshold merge。
+当前 fixture tests 已覆盖：
+
+- attribute/threshold merge 和 raw little-endian integer。
 - pre-fail threshold crossing。
-- raw little-endian integer helper。
-- temperature layouts supported/unsupported。
-- malformed short buffer。
-- vendor-specific ID remains raw。
+- RETURN STATUS passed/failed signature。
+- overall unavailable -> Unknown。
+- empty/revision、sector checksum 和 malformed short buffer rejection。
+
+仍待补充：
+
+- 完整 30-entry sector 和 duplicate-ID diagnostic。
+- 更多 ATA temperature raw layout。
+- vendor-specific attribute catalog fixture。
+- 直连 SATA SSD/HDD 和 USB/SAT bridge 硬件矩阵。
 
 ## Milestone 12: CLI Diagnostic Entry
 
@@ -1507,11 +1509,13 @@ HwScope.Cli storage --disk 0 --json
 
 行为：
 
-- `list` 只列 baseline identity。
+- `list` 列 baseline identity，并使用轻量 Windows Storage descriptor 查询真实 bus；descriptor 失败时回退 WMI `InterfaceType`，不触发 NVMe Health 或 ATA SMART。
 - `--disk` 读取指定物理设备详情。
 - JSON 使用 Core domain model。
-- 权限/unsupported 返回明确 non-zero exit code 和分类消息。
+- 当前退出码：未找到磁盘为 `3`，健康状态 `Critical` 为 `4`，未处理异常为 `1`，其余成功报告为 `0`；provider 的权限/unsupported 细节保留在 report diagnostics。
 - 不接受 raw device path 或 opcode 参数。
+
+已知 CLI 参数校验缺口：当前传入无法解析的 `--disk` 值会退化为 list 行为并返回 `0`。这属于待修复的参数解析问题，不是受支持语义。
 
 ## Milestone 13: Documentation Updates
 
@@ -1668,7 +1672,7 @@ Render baseline tiles from preload: < 100 ms UI work
 MSFT disk/volume mapping: target < 500 ms
 Direct NVMe health query: target < 500 ms
 Selected-device full first report: target < 1 s
-Soft timeout/status transition: 3 s
+Soft timeout/status transition: 5 s
 Hard isolation requirement review: any reproducible > 5 s driver block
 ```
 
@@ -1695,7 +1699,7 @@ Hard isolation requirement review: any reproducible > 5 s driver block
 
 ## Definition Of Done: ATA Extension
 
-ATA 阶段完成条件：
+ATA 阶段的硬件完成条件如下；由于尚未完成直连 SATA SSD/HDD 验证，当前还不能声明全部满足：
 
 - 直连 SATA SSD/HDD 可以读取 overall status、attributes 和 thresholds。
 - ATA parser/threshold merge 有 fixture tests。

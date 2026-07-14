@@ -377,6 +377,8 @@ The memory / SPD detail page builds its report from the preload snapshot.
 - `StorageDetailService` reads partitions, volumes, Windows storage properties and protocol health on demand for the selected device.
 - NVMe/ATA health data is dynamic and is not treated as long-lived preload truth.
 - Storage page refresh is device-local; it does not rerun CPU, memory, monitor and network inventory just to refresh temperature.
+- Same-device requests share one active task; different devices are isolated and UI waits use a 5-second soft timeout so one blocked driver does not stall every disk.
+- Returning to the page reattaches to the selected device cache or active task instead of leaving stale loading content.
 - An inventory refresh still updates the storage device list and removes stale device caches.
 
 ### Main Window

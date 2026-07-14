@@ -8,29 +8,32 @@
 
 ## Current Implementation Status
 
-首个完整实现已经落地：
+截至 2026-07-14，首个完整实现已经落地：
 
-- 独立 `StorageDetailPage`、`storage-detail` 导航、物理设备 selector、健康概要、详情 section、SMART table 和卷列表。
+- 独立 `StorageDetailPage`、`storage-detail` 导航、物理设备 selector、健康概要、详情 section、SMART table 和物理分区/卷组合列表。
 - enriched `DiskDriveSnapshot`、Windows Storage descriptor/alignment/TRIM 查询和 `MSFT_Partition` / `MSFT_Volume` 映射。
 - NVMe SMART / Health Information log page 0x02 的真实读取、解析、健康判定和 128-bit counter 格式化。
-- ATA SMART attribute/threshold parser、legacy SMART IOCTL provider 和保守健康判定。
-- `StorageDetailService` 的设备级缓存、并发合并和 stale selection 防护。
-- `storage list`、`storage --disk N` 和 JSON CLI 入口。
-- Core tests 覆盖 descriptor/NVMe/ATA parser、health evaluator 和 formatter。
+- ATA SMART RETURN STATUS、attribute/threshold parser、sector checksum、legacy SMART/ATA pass-through provider 和保守健康判定。
+- `StorageDetailService` 的同设备 active-task 合并、跨设备隔离、5 秒 soft timeout、stale selection 防护和页面重入恢复。
+- model/firmware/serial 字段分别保留最终数据来源。
+- `storage list` 使用轻量 descriptor 展示真实 bus；`storage --disk N` 支持文本和 JSON 输出。
+- 33 项 Core tests 覆盖 descriptor/NVMe/ATA parser、overall/health evaluator、soft timeout、字段来源合并、bus formatting 和 formatter。
 
 当前 Samsung PM9F1 NVMe 已完成真实硬件验证。ATA provider 已完成合成 fixture 测试，但仍需直连 SATA SSD/HDD 硬件验证。USB/RAID/Storage Spaces 的协议透传仍是后续覆盖工作。
 
+当前仍未完成 NVMe Identify/controller/namespace 和 PCIe negotiated/max link；同步 IOCTL 只有 UI soft timeout，没有 kernel I/O 硬取消。设备移除后保留最后报告并标记断开、USB/SAT 广覆盖和可终止 worker 隔离仍属于后续工作。
+
 ## Baseline At Design Creation
 
-当前仓库的存储能力仅用于硬件摘要：
+设计建立时，仓库的存储能力仅用于硬件摘要：
 
-- `HardwareInventoryCollector` 查询 `Win32_DiskDrive`。
-- `DiskDriveSnapshot` 当前只有 `Model`、`Size`、`MediaType`、`InterfaceType`。
-- `HardwareCollector.CreateSummary()` 把磁盘格式化为 `型号（容量）` 字符串。
-- 主窗口 `硬件 -> 存储设备` 仍路由到 `summary`。
-- 当前没有物理磁盘选择、固件/序列号、总线链路、卷映射、温度、寿命、通电时间或 SMART/NVMe Health 读取。
+- `HardwareInventoryCollector` 当时只查询基础 `Win32_DiskDrive` 字段。
+- `DiskDriveSnapshot` 当时只有 `Model`、`Size`、`MediaType`、`InterfaceType`。
+- `HardwareCollector.CreateSummary()` 只把磁盘格式化为 `型号（容量）` 字符串。
+- 主窗口 `硬件 -> 存储设备` 当时路由到 `summary`。
+- 当时没有物理磁盘选择、固件/序列号、总线链路、卷映射、温度、寿命、通电时间或 SMART/NVMe Health 读取。
 
-因此，存储详情页需要新增独立领域模型和按协议读取能力，不应继续扩展摘要字符串承担详情语义。
+这一历史基线说明了为什么需要新增独立领域模型和按协议读取能力；它不描述当前实现。
 
 ## Goals
 
@@ -342,7 +345,7 @@ Storage Detail Page
 - Copy：复制当前选中设备的稳定文本报告。
 - Save：保存 `.txt` 报告。
 
-后续可增加 JSON 导出，但不应在第一版放置无功能按钮。
+页面工具栏后续可增加 JSON 导出，但不应放置无功能按钮。CLI 已支持 `storage --disk N --json`。
 
 ## Physical Disk Selector
 
@@ -1013,11 +1016,13 @@ UI 显示简短、可操作的中文说明；完整 Win32 error、IOCTL、device
 - 重新枚举磁盘列表。
 - 自动选择仍存在的设备，但不把另一个磁盘的数据显示在旧标题下。
 
+当前实现已支持重新枚举和自动选择仍存在设备，但尚未保留已移除设备的最后报告或显示独立的 `设备已断开` 状态。
+
 ## Performance And Polling
 
 - 页面首次显示基础 inventory 应接近即时。
 - 选中设备 health 查询目标在 1 秒内完成；超过阈值显示正在读取，但不冻结页面。
-- 单设备默认超时建议 3-5 秒，具体根据 provider 验证。
+- 当前 UI 等待采用 5 秒 soft timeout；超时后恢复交互，但同步 IOCTL 可能继续在后台返回。
 - 第一版不自动轮询。
 - 后续实时模式最短间隔建议 10-30 秒，并默认关闭。
 - 对可能休眠的 HDD，轮询前应尊重“不唤醒休眠磁盘”设置。
@@ -1040,7 +1045,7 @@ UI 显示简短、可操作的中文说明；完整 Win32 error、IOCTL、device
 - 建立物理磁盘、分区和卷映射。
 - 新增 Storage Core 模型、formatter 和 `StorageDetailPage`。
 - 接入 `storage-detail` 导航。
-- 完成设备 selector、基础身份、卷列表、复制和保存。
+- 完成设备 selector、基础身份、物理分区/卷列表、复制和保存。
 - 未读取 health 时明确显示不可用。
 
 ### Milestone 2: Windows Storage Properties
@@ -1072,13 +1077,13 @@ UI 显示简短、可操作的中文说明；完整 Win32 error、IOCTL、device
 
 ## Testing Strategy
 
-当前仓库没有测试工程。存储协议 parser 属于高风险二进制解析，进入 Milestone 3 前应新增：
+设计建立时仓库没有测试工程。当前已经新增：
 
 ```text
 src/HwScope.Core.Tests/
 ```
 
-必须覆盖：
+截至 2026-07-14，共有 33 项 Core tests，已覆盖 descriptor/NVMe/ATA parser、NVMe protocol payload、ATA overall signature/checksum、健康判定、soft timeout、字段来源合并、bus formatting 和 formatter。以下仍是完整测试目标：
 
 - NVMe Health log 正常样本。
 - Critical Warning 各 bit。
@@ -1091,6 +1096,8 @@ src/HwScope.Core.Tests/
 - USB/RAID unsupported result。
 - stable disk ID 和 volume mapping。
 - health evaluator 的 Good/Caution/Critical/Unknown。
+
+当前仍缺 USB/RAID/SAT 实机与 fixture 矩阵、`StorageVolumeMapper` 独立单元测试、设备热拔插自动化测试和 WPF 页面级自动化测试；现有分区显示与页面重入使用本机 UI Automation 做过工作流验证。
 
 不得用真实系统盘写入测试。硬件集成测试只允许只读查询，并与脱敏 fixture 分离。
 
