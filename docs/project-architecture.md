@@ -65,7 +65,7 @@ src/HwScope.Core.Tests
   App 级共享硬件 inventory 服务，序列化预加载和刷新请求，持有当前 `HardwareInventorySnapshot`，并向页面和窗口发布进度与新快照事件。
 
 - `Services/StorageDetailService.cs`
-  按稳定物理设备 ID 缓存动态 storage report，合并同设备并发读取，并限制底层 protocol query 并发。SMART/temperature 不进入长期 preload snapshot。
+  按稳定物理设备 ID 缓存动态 storage report，合并同设备并发读取，并用跨设备隔离和 5 秒软超时避免单个阻塞驱动拖住全部磁盘。SMART/temperature 不进入长期 preload snapshot。
 
 - `Configuration/`
   JSON 配置模型和 `%LOCALAPPDATA%\HwScope\settings.json` 读写。

@@ -1037,7 +1037,8 @@ public static StorageDetailService StorageDetails { get; private set; } = null!;
 - 从 `HardwarePreloadService.Current.DiskDrives` 建立 device descriptor 列表。
 - 按 stable ID 缓存最近成功 report。
 - 合并同一设备并发请求。
-- 不同设备可以独立读取，但第一版限制 protocol query 总并发为 1，避免同时访问多个存储控制器。
+- 同一设备合并为一个 active task；不同设备彼此隔离，避免单个阻塞驱动占住全局 gate 后拖住全部磁盘。
+- UI 等待采用 5 秒 soft timeout；底层同步 IOCTL 可能继续运行并在迟到后更新设备缓存。
 - 记录当前每设备状态和 error。
 - inventory changed 时移除已不存在设备的 cache。
 - 将事件发布回 Dispatcher。

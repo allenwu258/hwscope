@@ -10,20 +10,26 @@ public sealed class StorageDetailService
     private readonly StorageDetailCollector _collector = new();
     private readonly HardwarePreloadService _hardwarePreload;
     private readonly Dispatcher _dispatcher;
-    private readonly SemaphoreSlim _queryGate = new(1, 1);
+    private readonly TimeSpan _queryTimeout;
     private readonly object _sync = new();
     private readonly Dictionary<string, DeviceLoadState> _states = new(StringComparer.Ordinal);
     private IReadOnlyList<StorageDeviceDescriptor> _devices = [];
 
     public StorageDetailService(HardwarePreloadService hardwarePreload)
-        : this(hardwarePreload, Application.Current.Dispatcher)
+        : this(hardwarePreload, Application.Current.Dispatcher, TimeSpan.FromSeconds(5))
     {
     }
 
-    internal StorageDetailService(HardwarePreloadService hardwarePreload, Dispatcher dispatcher)
+    internal StorageDetailService(HardwarePreloadService hardwarePreload, Dispatcher dispatcher, TimeSpan queryTimeout)
     {
+        if (queryTimeout <= TimeSpan.Zero)
+        {
+            throw new ArgumentOutOfRangeException(nameof(queryTimeout));
+        }
+
         _hardwarePreload = hardwarePreload;
         _dispatcher = dispatcher;
+        _queryTimeout = queryTimeout;
         _hardwarePreload.InventoryChanged += HardwarePreload_InventoryChanged;
         if (_hardwarePreload.Current is { } current)
         {
@@ -129,12 +135,20 @@ public sealed class StorageDetailService
             state.Gate.Release();
         }
 
-        return await task.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            return await StorageQueryTimeoutPolicy.WaitAsync(task, _queryTimeout, cancellationToken).ConfigureAwait(false);
+        }
+        catch (TimeoutException ex)
+        {
+            throw new TimeoutException(
+                $"存储设备查询超过 {_queryTimeout.TotalSeconds:0.#} 秒；底层驱动调用可能仍在后台返回。",
+                ex);
+        }
     }
 
     private async Task<StorageDetailReport> LoadAsync(StorageDeviceDescriptor device, DeviceLoadState state)
     {
-        await _queryGate.WaitAsync().ConfigureAwait(false);
         try
         {
             var report = await _collector.CollectAsync(device).ConfigureAwait(false);
@@ -157,7 +171,6 @@ public sealed class StorageDetailService
         }
         finally
         {
-            _queryGate.Release();
             await state.Gate.WaitAsync().ConfigureAwait(false);
             try
             {
