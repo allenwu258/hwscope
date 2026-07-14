@@ -50,11 +50,12 @@ public static class StorageBenchmarkPlanner
                 var operationsPerPass = options.FileSizeBytes / definition.BlockSizeBytes;
                 var totalOperations = checked(operationsPerPass * passes);
                 var totalBytes = checked(totalOperations * definition.BlockSizeBytes);
-                var mixReadOperations = checked(totalOperations * options.MixReadPercent / 100);
+                var mixReadOperationsPerPass = checked(operationsPerPass * options.MixReadPercent / 100);
+                var mixReadBytes = checked(mixReadOperationsPerPass * definition.BlockSizeBytes * passes);
                 var readBytes = operation switch
                 {
                     StorageBenchmarkOperation.Read => totalBytes,
-                    StorageBenchmarkOperation.Mix => checked(mixReadOperations * definition.BlockSizeBytes),
+                    StorageBenchmarkOperation.Mix => mixReadBytes,
                     _ => 0
                 };
                 var writeBytes = operation switch

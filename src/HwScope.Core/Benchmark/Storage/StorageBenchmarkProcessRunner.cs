@@ -342,14 +342,21 @@ public sealed class StorageBenchmarkProcessRunner : IStorageBenchmarkRunner
     private static double? GetDouble(JsonElement root, string name) =>
         root.TryGetProperty(name, out var value) ? value.GetDouble() : null;
 
-    private static void ValidateWorkerResult(StorageWorkerResult result, StorageBenchmarkPlan plan)
+    internal static void ValidateWorkerResult(StorageWorkerResult result, StorageBenchmarkPlan plan)
     {
         if (!string.Equals(result.Type, "result", StringComparison.Ordinal)
             || !string.Equals(result.SessionId, plan.SessionId, StringComparison.Ordinal)
             || result.ProtocolVersion != ExpectedProtocolVersion
-            || result.FileSizeBytes != plan.Options.FileSizeBytes)
+            || result.FileSizeBytes != plan.Options.FileSizeBytes
+            || !string.Equals(result.CacheMode, GetExpectedCacheMode(plan.Options.CacheMode), StringComparison.Ordinal)
+            || !IsFiniteNonNegative(result.ElapsedMs))
         {
             throw new FormatException("存储跑分最终结果与计划不匹配。");
+        }
+
+        if (result.Rows is null)
+        {
+            throw new FormatException("存储跑分结果缺少 workload rows。");
         }
 
         var expectedRows = plan.Workloads.Select(item => item.Id).ToHashSet(StringComparer.OrdinalIgnoreCase);
@@ -358,11 +365,168 @@ public sealed class StorageBenchmarkProcessRunner : IStorageBenchmarkRunner
             throw new FormatException("存储跑分结果 workload 集合与计划不匹配。");
         }
 
-        if (result.LogicalBytesWritten > plan.MaximumWriteBytes)
+        foreach (var workloadGroup in plan.Workloads.GroupBy(item => item.Id, StringComparer.OrdinalIgnoreCase))
         {
-            throw new FormatException("worker 报告的实际写入量超过本次 workload 计划上限。");
+            var row = result.Rows.Single(pair => string.Equals(pair.Key, workloadGroup.Key, StringComparison.OrdinalIgnoreCase)).Value
+                ?? throw new FormatException($"workload {workloadGroup.Key} 的结果为空。");
+            var definition = workloadGroup.First();
+            if (!string.Equals(row.Id, definition.Id, StringComparison.OrdinalIgnoreCase)
+                || !string.Equals(row.DisplayName, definition.DisplayName, StringComparison.Ordinal)
+                || row.BlockSizeBytes != definition.BlockSizeBytes
+                || row.QueueDepth != definition.QueueDepth
+                || row.Threads != definition.Threads)
+            {
+                throw new FormatException($"workload {workloadGroup.Key} 的定义与计划不匹配。");
+            }
+
+            ValidateMetric(row.Read, FindOperation(workloadGroup, StorageBenchmarkOperation.Read), plan.Options);
+            ValidateMetric(row.Write, FindOperation(workloadGroup, StorageBenchmarkOperation.Write), plan.Options);
+            ValidateMetric(row.Mix, FindOperation(workloadGroup, StorageBenchmarkOperation.Mix), plan.Options);
+        }
+
+        if (result.LogicalBytesRead != plan.PlannedReadBytes
+            || result.LogicalBytesWritten != plan.MaximumWriteBytes)
+        {
+            throw new FormatException("worker 报告的总读写字节数与初始化、warmup 和正式 sample 计划不匹配。");
+        }
+
+        ValidateCleanup(result.Cleanup);
+    }
+
+    private static string GetExpectedCacheMode(StorageBenchmarkCacheMode cacheMode) => cacheMode switch
+    {
+        StorageBenchmarkCacheMode.Device => "device",
+        StorageBenchmarkCacheMode.Buffered => "buffered",
+        _ => throw new ArgumentOutOfRangeException(nameof(cacheMode))
+    };
+
+    private static StorageBenchmarkWorkloadPlan? FindOperation(
+        IEnumerable<StorageBenchmarkWorkloadPlan> workloads,
+        StorageBenchmarkOperation operation)
+    {
+        var matches = workloads.Where(item => item.Operation == operation).Take(2).ToList();
+        if (matches.Count > 1)
+        {
+            throw new FormatException($"计划中包含重复的 {operation} workload。");
+        }
+
+        return matches.SingleOrDefault();
+    }
+
+    private static void ValidateMetric(
+        StorageBenchmarkMetricResult? metric,
+        StorageBenchmarkWorkloadPlan? workload,
+        StorageBenchmarkOptions options)
+    {
+        if (workload is null)
+        {
+            if (metric is not null)
+            {
+                throw new FormatException("worker 返回了计划未启用的 operation metric。");
+            }
+            return;
+        }
+
+        if (metric is null || !string.Equals(metric.Unit, "mb_s", StringComparison.Ordinal) || metric.Samples is null)
+        {
+            throw new FormatException($"workload {workload.Id}/{workload.Operation} 缺少有效 metric。");
+        }
+
+        var (expectedReadBytes, expectedWriteBytes) = GetMeasuredBytes(workload, options.MixReadPercent);
+        if (metric.Samples.Count != workload.Samples
+            || metric.LogicalBytesRead != expectedReadBytes
+            || metric.LogicalBytesWritten != expectedWriteBytes)
+        {
+            throw new FormatException($"workload {workload.Id}/{workload.Operation} 的 sample 数或读写字节数与计划不匹配。");
+        }
+
+        for (var index = 0; index < metric.Samples.Count; index++)
+        {
+            var sample = metric.Samples[index];
+            var (sampleReadBytes, sampleWriteBytes) = GetMeasuredBytes(workload with { Samples = 1 }, options.MixReadPercent);
+            if (sample is null
+                || sample.Index != index + 1
+                || sample.BytesRead != sampleReadBytes
+                || sample.BytesWritten != sampleWriteBytes
+                || !IsFiniteNonNegative(sample.ThroughputMBs)
+                || !IsFiniteNonNegative(sample.Iops)
+                || !IsFiniteNonNegative(sample.ElapsedMs))
+            {
+                throw new FormatException($"workload {workload.Id}/{workload.Operation} 的 sample {index + 1} 无效。");
+            }
+            ValidateLatency(sample.Latency, workload);
+        }
+
+        ValidateAggregate(metric.Throughput, workload);
+        ValidateAggregate(metric.Iops, workload);
+        ValidateLatency(metric.Latency, workload);
+    }
+
+    private static (long ReadBytes, long WriteBytes) GetMeasuredBytes(StorageBenchmarkWorkloadPlan workload, int mixReadPercent)
+    {
+        var totalOperations = workload.BytesPerSample / workload.BlockSizeBytes;
+        var totalBytes = checked(workload.BytesPerSample * workload.Samples);
+        return workload.Operation switch
+        {
+            StorageBenchmarkOperation.Read => (totalBytes, 0),
+            StorageBenchmarkOperation.Write => (0, totalBytes),
+            StorageBenchmarkOperation.Mix => GetMixMeasuredBytes(totalOperations, workload.BlockSizeBytes, workload.Samples, mixReadPercent),
+            _ => throw new ArgumentOutOfRangeException(nameof(workload))
+        };
+    }
+
+    private static (long ReadBytes, long WriteBytes) GetMixMeasuredBytes(
+        long operationsPerSample,
+        int blockSizeBytes,
+        int samples,
+        int mixReadPercent)
+    {
+        var readOperationsPerSample = checked(operationsPerSample * mixReadPercent / 100);
+        var readBytes = checked(readOperationsPerSample * blockSizeBytes * samples);
+        var totalBytes = checked(operationsPerSample * blockSizeBytes * samples);
+        return (readBytes, checked(totalBytes - readBytes));
+    }
+
+    private static void ValidateAggregate(StorageBenchmarkAggregate? aggregate, StorageBenchmarkWorkloadPlan workload)
+    {
+        if (aggregate is null
+            || !IsFiniteNonNegative(aggregate.Median)
+            || !IsFiniteNonNegative(aggregate.Min)
+            || !IsFiniteNonNegative(aggregate.Max)
+            || !IsFiniteNonNegative(aggregate.Mean)
+            || !IsFiniteNonNegative(aggregate.StdDev)
+            || !IsFiniteNonNegative(aggregate.Cv))
+        {
+            throw new FormatException($"workload {workload.Id}/{workload.Operation} 的 aggregate 数值无效。");
         }
     }
+
+    private static void ValidateLatency(StorageBenchmarkLatency? latency, StorageBenchmarkWorkloadPlan workload)
+    {
+        if (latency is null
+            || !IsFiniteNonNegative(latency.MeanMicroseconds)
+            || !IsFiniteNonNegative(latency.P50Microseconds)
+            || !IsFiniteNonNegative(latency.P95Microseconds)
+            || !IsFiniteNonNegative(latency.P99Microseconds)
+            || !IsFiniteNonNegative(latency.MaximumMicroseconds))
+        {
+            throw new FormatException($"workload {workload.Id}/{workload.Operation} 的 latency 数值无效。");
+        }
+    }
+
+    private static void ValidateCleanup(StorageBenchmarkCleanupResult? cleanup)
+    {
+        if (cleanup is null
+            || !cleanup.Attempted
+            || cleanup.Deleted && !string.Equals(cleanup.Status, "deleted", StringComparison.Ordinal)
+            || !cleanup.Deleted && !string.Equals(cleanup.Status, "deleteFailed", StringComparison.Ordinal)
+            || !cleanup.Deleted && cleanup.NativeErrorCode is null)
+        {
+            throw new FormatException("worker cleanup 结果字段不一致。");
+        }
+    }
+
+    private static bool IsFiniteNonNegative(double value) => double.IsFinite(value) && value >= 0;
 
     private static StorageBenchmarkResult Enrich(
         StorageWorkerResult worker,

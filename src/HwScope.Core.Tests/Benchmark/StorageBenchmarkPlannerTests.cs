@@ -57,6 +57,26 @@ public sealed class StorageBenchmarkPlannerTests
     }
 
     [Fact]
+    public void MixBudgetUsesTheWorkersPerPassRounding()
+    {
+        const long mib = 1024L * 1024;
+        var options = new StorageBenchmarkOptions
+        {
+            Columns = StorageBenchmarkColumnMode.ReadWriteMix,
+            Runs = 2,
+            WarmupPasses = 1,
+            FileSizeBytes = 64 * mib,
+            MixReadPercent = 70,
+            Workloads = [StorageBenchmarkWorkloads.Sequential1MiBQ1T1]
+        };
+
+        var plan = StorageBenchmarkPlanner.CreatePlan(CreateTarget(), options);
+
+        Assert.Equal(324 * mib, plan.PlannedReadBytes);
+        Assert.Equal(316 * mib, plan.MaximumWriteBytes);
+    }
+
+    [Fact]
     public void PlanRejectsWriteBudgetOverflow()
     {
         var options = new StorageBenchmarkOptions
