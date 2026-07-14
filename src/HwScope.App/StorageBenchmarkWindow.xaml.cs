@@ -262,6 +262,9 @@ public partial class StorageBenchmarkWindow : FluentWindow
         _runCancellation = new CancellationTokenSource();
         _isRunning = true;
         ClearResults();
+        DiagnosticsButton.IsEnabled = false;
+        CopyButton.IsEnabled = false;
+        SaveButton.IsEnabled = false;
         SetRunningState(true);
         StatusText.Text = "正在验证目标卷...";
         OverallProgress.Value = 0;
@@ -288,6 +291,7 @@ public partial class StorageBenchmarkWindow : FluentWindow
         catch (OperationCanceledException)
         {
             StatusText.Text = "已取消；worker 和父进程已完成残留文件检查。";
+            DiagnosticsButton.IsEnabled = File.Exists(Path.Combine(Path.GetTempPath(), "HwScope-storage-benchmark.log"));
         }
         catch (Exception ex)
         {
@@ -372,25 +376,57 @@ public partial class StorageBenchmarkWindow : FluentWindow
         }
 
         HideCellProgress();
-        cell.Progress.Visibility = Visibility.Visible;
-        cell.Progress.Value = (progress.Fraction ?? 0) * 100;
         var definition = StorageBenchmarkWorkloads.GetDefinition(progress.WorkloadId);
         var operation = FormatOperation(progress.Operation.Value);
         if (progress.Type == "sample_completed" && progress.ThroughputMBs is { } throughput)
         {
+            cell.Progress.Visibility = Visibility.Visible;
+            cell.Progress.Value = GetWorkloadFraction(progress) * 100;
             cell.Value.Text = FormatPrimary(throughput, progress.Iops ?? 0);
             cell.Detail.Text = $"第 {progress.SampleIndex}/{progress.SampleCount} 轮 · p95 {FormatLatency(progress.P95Microseconds ?? 0)}";
         }
-        else
+        else if (progress.Type == "workload_progress")
         {
+            cell.Progress.Visibility = Visibility.Visible;
+            cell.Progress.Value = GetWorkloadFraction(progress) * 100;
             cell.Detail.Text = $"正在运行 {progress.SampleIndex}/{progress.SampleCount}";
+        }
+        else if (progress.Type == "workload_started")
+        {
+            cell.Progress.Visibility = Visibility.Visible;
+            cell.Progress.Value = 0;
         }
 
         var planIndex = _activePlan.Workloads.ToList().FindIndex(item =>
             item.Id == progress.WorkloadId && item.Operation == progress.Operation);
-        var overallFraction = (Math.Max(0, planIndex) + (progress.Fraction ?? 0)) / _activePlan.Workloads.Count;
+        var overallFraction = (Math.Max(0, planIndex) + GetWorkloadFraction(progress)) / _activePlan.Workloads.Count;
         OverallProgress.Value = 10 + overallFraction * 87;
-        StatusText.Text = $"正在测试 {definition.DisplayName} {operation} · 第 {progress.SampleIndex ?? 1}/{progress.SampleCount ?? _activePlan.Options.Runs} 轮";
+        StatusText.Text = progress.Type switch
+        {
+            "workload_completed" => $"已完成 {definition.DisplayName} {operation}",
+            "workload_started" => $"正在测试 {definition.DisplayName} {operation}",
+            _ => $"正在测试 {definition.DisplayName} {operation} · 第 {progress.SampleIndex ?? 1}/{progress.SampleCount ?? _activePlan.Options.Runs} 轮"
+        };
+    }
+
+    private static double GetWorkloadFraction(StorageBenchmarkProgress progress)
+    {
+        if (progress.Fraction is { } fraction)
+        {
+            return fraction;
+        }
+
+        if (progress.Type == "workload_completed")
+        {
+            return 1;
+        }
+
+        if (progress.Type == "sample_completed" && progress.SampleIndex is { } index && progress.SampleCount is > 0)
+        {
+            return Math.Clamp((double)index / progress.SampleCount.Value, 0, 1);
+        }
+
+        return 0;
     }
 
     private void RenderResult(StorageBenchmarkResult result)
