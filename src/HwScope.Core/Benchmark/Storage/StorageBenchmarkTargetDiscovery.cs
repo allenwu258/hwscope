@@ -23,7 +23,12 @@ public sealed class StorageBenchmarkTargetDiscovery
                 var letter = NormalizeDriveLetter(drive.Name);
                 var isSystem = string.Equals(letter, systemDrive, StringComparison.OrdinalIgnoreCase);
                 var extents = StorageBenchmarkVolumeExtentQuery.TryQuery(letter);
-                var diskNumber = extents?.DiskNumbers.Count == 1 ? extents.DiskNumbers[0] : (int?)null;
+                var volumeIdentity = StorageBenchmarkVolumeIdentityQuery.TryQuery(drive.RootDirectory.FullName);
+                if (extents is null || extents.DiskNumbers.Count == 0 || volumeIdentity is null)
+                {
+                    continue;
+                }
+                var diskNumber = extents.DiskNumbers.Count == 1 ? extents.DiskNumbers[0] : (int?)null;
                 var device = diskNumber is { } number
                     ? knownDevices?.FirstOrDefault(candidate => candidate.PhysicalDriveNumber == number)
                     : null;
@@ -32,7 +37,7 @@ public sealed class StorageBenchmarkTargetDiscovery
                         ? Path.Combine(localAppData, "HwScope", "StorageBench", "Sessions")
                         : Path.Combine(drive.RootDirectory.FullName, "HwScope-Benchmark");
                 targets.Add(new StorageBenchmarkTarget(
-                    Id: $"{drive.RootDirectory.FullName.ToUpperInvariant()}|{diskNumber?.ToString() ?? "unknown"}",
+                    Id: volumeIdentity.GuidPath.ToUpperInvariant(),
                     RootPath: drive.RootDirectory.FullName,
                     TestDirectory: defaultDirectory,
                     DriveLetter: letter,
@@ -48,7 +53,9 @@ public sealed class StorageBenchmarkTargetDiscovery
                     RequiredAlignmentBytes: checked((int)Math.Max(4096u, device?.BytesPerSector ?? 0u)),
                     IsSystem: isSystem,
                     IsRemovable: drive.DriveType == DriveType.Removable,
-                    IsMultiExtent: extents?.DiskNumbers.Count > 1));
+                    IsMultiExtent: extents.DiskNumbers.Count > 1,
+                    VolumeGuidPath: volumeIdentity.GuidPath,
+                    VolumeSerialNumber: volumeIdentity.SerialNumber));
             }
             catch (IOException)
             {

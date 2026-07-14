@@ -86,6 +86,7 @@ enum class Operation { read, write, mix };
 
 struct Options {
     std::wstring path;
+    std::wstring expected_volume_guid;
     std::string session_id;
     std::uint64_t file_size_bytes = 0;
     std::uint64_t write_budget_bytes = 0;
@@ -214,6 +215,8 @@ Options parse_args(int argc, wchar_t** argv) {
 
         if (arg == L"--path") {
             options.path = require_value(arg);
+        } else if (arg == L"--expected-volume-guid") {
+            options.expected_volume_guid = require_value(arg);
         } else if (arg == L"--session-id") {
             options.session_id = narrow_ascii(std::wstring(require_value(arg)));
         } else if (arg == L"--file-size-bytes") {
@@ -259,8 +262,8 @@ Options parse_args(int argc, wchar_t** argv) {
         }
     }
 
-    if (options.path.empty() || options.session_id.empty()) {
-        throw std::invalid_argument("--path and --session-id are required");
+    if (options.path.empty() || options.session_id.empty() || options.expected_volume_guid.empty()) {
+        throw std::invalid_argument("--path, --session-id, and --expected-volume-guid are required");
     }
     if (options.file_size_bytes < 64 * kMiB || options.file_size_bytes > 8ULL * 1024ULL * kMiB) {
         throw std::invalid_argument("file size must be between 64 MiB and 8 GiB");
@@ -332,6 +335,28 @@ void fill_pattern(std::uint8_t* data, std::size_t bytes, std::uint64_t seed) {
         const auto value = xorshift64(state);
         const auto remaining = std::min(sizeof(value), bytes - offset);
         std::memcpy(data + offset, &value, remaining);
+    }
+}
+
+void validate_opened_volume(HANDLE file, const Options& options) {
+    std::vector<wchar_t> buffer(512);
+    DWORD length = GetFinalPathNameByHandleW(file, buffer.data(), static_cast<DWORD>(buffer.size()), VOLUME_NAME_GUID);
+    if (length == 0) {
+        throw_last_error("GetFinalPathNameByHandleW");
+    }
+    if (length >= buffer.size()) {
+        buffer.resize(static_cast<std::size_t>(length) + 1);
+        length = GetFinalPathNameByHandleW(file, buffer.data(), static_cast<DWORD>(buffer.size()), VOLUME_NAME_GUID);
+        if (length == 0 || length >= buffer.size()) {
+            throw_last_error("GetFinalPathNameByHandleW");
+        }
+    }
+
+    std::wstring expected = options.expected_volume_guid;
+    if (expected.back() != L'\\') expected.push_back(L'\\');
+    const std::wstring actual(buffer.data(), length);
+    if (actual.size() < expected.size() || _wcsnicmp(actual.c_str(), expected.c_str(), expected.size()) != 0) {
+        throw std::runtime_error("opened test file is not on the expected volume");
     }
 }
 
@@ -431,6 +456,7 @@ std::uint64_t prepare_file(const Options& options) {
     if (options.cache_mode == CacheMode::device) flags |= FILE_FLAG_NO_BUFFERING;
     Handle file(CreateFileW(options.path.c_str(), GENERIC_READ | GENERIC_WRITE, 0, nullptr, CREATE_NEW, flags, nullptr));
     if (!file) throw_last_error("CreateFile(CREATE_NEW)");
+    validate_opened_volume(file.value, options);
 
     LARGE_INTEGER size;
     size.QuadPart = static_cast<LONGLONG>(options.file_size_bytes);

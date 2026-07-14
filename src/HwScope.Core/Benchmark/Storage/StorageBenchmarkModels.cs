@@ -89,7 +89,9 @@ public sealed record StorageBenchmarkTarget(
     bool IsSystem,
     bool IsRemovable,
     bool IsVirtual = false,
-    bool IsMultiExtent = false)
+    bool IsMultiExtent = false,
+    string VolumeGuidPath = "",
+    uint? VolumeSerialNumber = null)
 {
     public string DisplayName
     {

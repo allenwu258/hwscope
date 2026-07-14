@@ -168,6 +168,7 @@ public sealed class StorageBenchmarkProcessRunner : IStorageBenchmarkRunner
             "--warmup-passes", plan.Options.WarmupPasses.ToString(CultureInfo.InvariantCulture),
             "--mix-read-percent", plan.Options.MixReadPercent.ToString(CultureInfo.InvariantCulture),
             "--alignment-bytes", plan.Target.RequiredAlignmentBytes.ToString(CultureInfo.InvariantCulture),
+            "--expected-volume-guid", plan.Target.VolumeGuidPath,
             "--expected-protocol-version", ExpectedProtocolVersion.ToString(CultureInfo.InvariantCulture),
             "--cache-mode", plan.Options.CacheMode == StorageBenchmarkCacheMode.Device ? "device" : "buffered",
             "--columns", plan.Options.Columns switch
