@@ -32,22 +32,27 @@ public partial class StorageDetailPage : UserControl
     private async void StorageDetailPage_Loaded(object sender, RoutedEventArgs e)
     {
         Subscribe();
-        if (_loadedOnce)
-        {
-            RenderDeviceTiles();
-            return;
-        }
-
-        _loadedOnce = true;
         try
         {
-            var snapshot = await App.HardwarePreload.EnsureLoadedAsync().ConfigureAwait(true);
-            App.StorageDetails.SynchronizeInventory(snapshot);
-            RenderDeviceTiles();
-            var initial = SelectInitialDevice();
-            if (initial is not null)
+            if (!_loadedOnce)
             {
-                await SelectDeviceAsync(initial, forceRefresh: false);
+                var snapshot = await App.HardwarePreload.EnsureLoadedAsync().ConfigureAwait(true);
+                App.StorageDetails.SynchronizeInventory(snapshot);
+                _loadedOnce = true;
+            }
+
+            if (!IsLoaded)
+            {
+                return;
+            }
+
+            RenderDeviceTiles();
+            var selected = App.StorageDetails.Devices.Any(device => device.StableId == _selectedDeviceId)
+                ? _selectedDeviceId
+                : SelectInitialDevice();
+            if (selected is not null)
+            {
+                await SelectDeviceAsync(selected, forceRefresh: false);
             }
         }
         catch (Exception ex)
@@ -61,6 +66,8 @@ public partial class StorageDetailPage : UserControl
     {
         Unsubscribe();
         _selectionCancellation?.Cancel();
+        _selectionCancellation?.Dispose();
+        _selectionCancellation = null;
     }
 
     private async void DeviceTile_Click(object sender, RoutedEventArgs e)
@@ -473,14 +480,20 @@ public partial class StorageDetailPage : UserControl
         _isSubscribed = false;
     }
 
-    private void StorageDetails_DevicesChanged(object? sender, EventArgs e)
+    private async void StorageDetails_DevicesChanged(object? sender, EventArgs e)
     {
-        if (_selectedDeviceId is not null && App.StorageDetails.Devices.All(device => device.StableId != _selectedDeviceId))
+        var selectionChanged = _selectedDeviceId is null
+            || App.StorageDetails.Devices.All(device => device.StableId != _selectedDeviceId);
+        if (selectionChanged)
         {
             _selectedDeviceId = SelectInitialDevice();
             _currentReport = null;
         }
         RenderDeviceTiles();
+        if (selectionChanged && _selectedDeviceId is not null)
+        {
+            await SelectDeviceAsync(_selectedDeviceId, forceRefresh: false);
+        }
     }
 
     private void StorageDetails_ReportChanged(object? sender, Services.StorageReportChangedEventArgs e)
