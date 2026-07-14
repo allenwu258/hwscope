@@ -50,8 +50,9 @@ internal sealed class WindowsStoragePropertyProvider : IStorageDetailProvider
                 features.Add("TRIM");
             }
 
+            var model = JoinModel(property.Vendor, property.Product);
             return new StorageProviderData(
-                Model: JoinModel(property.Vendor, property.Product),
+                Model: model,
                 Firmware: property.Revision,
                 SerialNumber: property.SerialNumber,
                 Bus: property.Bus,
@@ -59,7 +60,9 @@ internal sealed class WindowsStoragePropertyProvider : IStorageDetailProvider
                 LogicalSectorSize: property.LogicalSectorSize is > 0 ? $"{property.LogicalSectorSize} B" : null,
                 PhysicalSectorSize: property.PhysicalSectorSize is > 0 ? $"{property.PhysicalSectorSize} B" : null,
                 Features: features,
-                IdentitySource: StorageDataSource.StorageApi,
+                ModelSource: SourceWhenAvailable(model),
+                FirmwareSource: SourceWhenAvailable(property.Revision),
+                SerialNumberSource: SourceWhenAvailable(property.SerialNumber),
                 InterfaceSource: StorageDataSource.StorageApi);
         }, cancellationToken).ConfigureAwait(false);
         timer.Stop();
@@ -77,6 +80,11 @@ internal sealed class WindowsStoragePropertyProvider : IStorageDetailProvider
     {
         var values = new[] { vendor, product }.Where(value => !string.IsNullOrWhiteSpace(value)).Distinct(StringComparer.OrdinalIgnoreCase);
         return string.Join(' ', values);
+    }
+
+    private static StorageDataSource SourceWhenAvailable(string? value)
+    {
+        return string.IsNullOrWhiteSpace(value) ? StorageDataSource.Unknown : StorageDataSource.StorageApi;
     }
 }
 

@@ -169,5 +169,7 @@ internal sealed record StorageProviderData(
     IReadOnlyList<StorageProtocolAttribute>? Attributes = null,
     IReadOnlyList<StorageDataNote>? Notes = null,
     StorageError? Error = null,
-    StorageDataSource IdentitySource = StorageDataSource.Unknown,
+    StorageDataSource ModelSource = StorageDataSource.Unknown,
+    StorageDataSource FirmwareSource = StorageDataSource.Unknown,
+    StorageDataSource SerialNumberSource = StorageDataSource.Unknown,
     StorageDataSource InterfaceSource = StorageDataSource.Unknown);

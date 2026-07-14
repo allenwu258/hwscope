@@ -62,9 +62,9 @@ public sealed class StorageDetailCollector
             new StorageDeviceIdentity(
                 device.StableId,
                 StorageField.Number(device.PhysicalDriveNumber, StorageDataSource.Wmi),
-                StorageField.Text(FirstUseful(current.Model, device.Model), SourceOr(current.IdentitySource, StorageDataSource.Wmi)),
-                StorageField.Text(FirstUseful(current.Firmware, device.FirmwareRevision), SourceOr(current.IdentitySource, StorageDataSource.Wmi)),
-                StorageField.Text(FirstUseful(current.SerialNumber, device.SerialNumber), SourceOr(current.IdentitySource, StorageDataSource.Wmi)),
+                StorageField.Text(FirstUseful(current.Model, device.Model), SourceOr(current.ModelSource, StorageDataSource.Wmi)),
+                StorageField.Text(FirstUseful(current.Firmware, device.FirmwareRevision), SourceOr(current.FirmwareSource, StorageDataSource.Wmi)),
+                StorageField.Text(FirstUseful(current.SerialNumber, device.SerialNumber), SourceOr(current.SerialNumberSource, StorageDataSource.Wmi)),
                 StorageField.Text(device.DevicePath, StorageDataSource.Wmi),
                 StorageField.Text(device.PnpDeviceId, StorageDataSource.Wmi),
                 StorageField.Bytes(device.CapacityBytes, StorageDataSource.Wmi),
@@ -98,11 +98,13 @@ public sealed class StorageDetailCollector
             Bus: MapFallbackBus(device.InterfaceType),
             Protocol: StorageProtocolKind.Unknown,
             Features: [],
-            IdentitySource: StorageDataSource.Wmi,
+            ModelSource: StorageDataSource.Wmi,
+            FirmwareSource: StorageDataSource.Wmi,
+            SerialNumberSource: StorageDataSource.Wmi,
             InterfaceSource: StorageDataSource.Wmi);
     }
 
-    private static StorageProviderData Merge(StorageProviderData current, StorageProviderData update)
+    internal static StorageProviderData Merge(StorageProviderData current, StorageProviderData update)
     {
         return new StorageProviderData(
             FirstUseful(update.Model, current.Model),
@@ -119,8 +121,20 @@ public sealed class StorageDetailCollector
             update.Attributes ?? current.Attributes,
             MergeNotes(current.Notes, update.Notes),
             update.Error ?? current.Error,
-            update.IdentitySource != StorageDataSource.Unknown ? update.IdentitySource : current.IdentitySource,
+            SourceForValue(update.Model, update.ModelSource, current.ModelSource),
+            SourceForValue(update.Firmware, update.FirmwareSource, current.FirmwareSource),
+            SourceForValue(update.SerialNumber, update.SerialNumberSource, current.SerialNumberSource),
             update.InterfaceSource != StorageDataSource.Unknown ? update.InterfaceSource : current.InterfaceSource);
+    }
+
+    private static StorageDataSource SourceForValue(
+        string? updateValue,
+        StorageDataSource updateSource,
+        StorageDataSource currentSource)
+    {
+        return !string.IsNullOrWhiteSpace(updateValue) && updateSource != StorageDataSource.Unknown
+            ? updateSource
+            : currentSource;
     }
 
     private static IReadOnlyList<string> MergeDistinct(IReadOnlyList<string>? left, IReadOnlyList<string>? right)
