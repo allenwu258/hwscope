@@ -72,7 +72,7 @@ public sealed class StorageDetailCollector
             new StorageInterfaceInfo(
                 current.Bus,
                 current.Protocol,
-                StorageField.Text(current.Bus != StorageBusKind.Unknown ? FormatBus(current.Bus) : device.InterfaceType, SourceOr(current.InterfaceSource, StorageDataSource.Wmi)),
+                StorageField.Text(current.Bus != StorageBusKind.Unknown ? StorageDeviceBusProbe.FormatBus(current.Bus) : device.InterfaceType, SourceOr(current.InterfaceSource, StorageDataSource.Wmi)),
                 StorageField.Text(current.Standard, SourceOr(current.InterfaceSource, StorageDataSource.StorageApi)),
                 StorageField.Placeholder<string>(StorageField.UnknownText),
                 StorageField.Placeholder<string>(StorageField.UnknownText),
@@ -186,23 +186,4 @@ public sealed class StorageDetailCollector
         return value == StorageDataSource.Unknown ? fallback : value;
     }
 
-    private static string FormatBus(StorageBusKind bus)
-    {
-        return bus switch
-        {
-            StorageBusKind.Nvme => "NVMe",
-            StorageBusKind.Sata => "SATA",
-            StorageBusKind.Ata => "ATA",
-            StorageBusKind.Scsi => "SCSI",
-            StorageBusKind.Sas => "SAS",
-            StorageBusKind.Usb => "USB",
-            StorageBusKind.ISCSI => "iSCSI",
-            StorageBusKind.Sd => "SD",
-            StorageBusKind.Mmc => "MMC",
-            StorageBusKind.Ufs => "UFS",
-            StorageBusKind.Scm => "SCM",
-            StorageBusKind.Spaces => "Storage Spaces",
-            _ => bus.ToString()
-        };
-    }
 }

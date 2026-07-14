@@ -43,7 +43,8 @@ try
             Console.WriteLine("---------------");
             foreach (var device in devices)
             {
-                Console.WriteLine($"Disk {device.PhysicalDriveNumber?.ToString() ?? "?"}: {device.Model} · {StorageField.FormatDecimalBytes(device.CapacityBytes)} · {device.InterfaceType}");
+                var bus = StorageDeviceBusProbe.Query(device);
+                Console.WriteLine($"Disk {device.PhysicalDriveNumber?.ToString() ?? "?"}: {device.Model} · {StorageField.FormatDecimalBytes(device.CapacityBytes)} · {bus.DisplayText}");
             }
 
             if (devices.Count == 0)
