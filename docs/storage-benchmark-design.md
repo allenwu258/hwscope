@@ -15,6 +15,7 @@
 - `StorageBenchmarkWindow` 已接入工具菜单、顶部工具栏和 `性能测试 -> 存储跑分`，包含参数、目标/预算条、四行三列矩阵、进度、取消、Diagnostics、Copy 和 TXT/JSON Save。
 - CLI 已支持 `benchmark storage`、target/quick/size/runs/workload/JSON 参数；所有运行必须显式传入 `--drive`，不会回退到系统卷；`--cancel-after-ms` 用于取消路径诊断。
 - App 提供 `HWSCOPE_STORAGE_BENCHMARK_PREVIEW=1` 开发预览入口，可绕过完整硬件 preload 做窗口级 UI 验证。
+- 打开窗口和切换目标卷只消费已有存储详情缓存，不主动触发 SMART/Health 查询或唤醒休眠 HDD；主动温度刷新只发生在用户已明确启动跑分之后。
 - Core 当前共 45 项测试通过，其中 12 项覆盖存储跑分 planner、write budget、alignment、协议字段和 session cleanup。
 - 本机已验证 64 MiB `SEQ1M Q1T1` device-mode Read/Write 完成路径，以及运行中取消路径；两条路径结束后测试文件和 manifest 都为 0。
 

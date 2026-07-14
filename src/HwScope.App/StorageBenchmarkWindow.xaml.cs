@@ -143,7 +143,7 @@ public partial class StorageBenchmarkWindow : FluentWindow
         return target;
     }
 
-    private async void TargetComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    private void TargetComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         if (!_initialized || _isRunning)
         {
@@ -153,43 +153,31 @@ public partial class StorageBenchmarkWindow : FluentWindow
         _selectedTarget = TargetComboBox.SelectedItem as StorageBenchmarkTarget;
         _temperatureBefore = null;
         _healthCritical = false;
-        UpdateTargetDisplay();
-        UpdatePlanPreview();
         if (_selectedTarget is { } target)
         {
-            await LoadTargetHealthAsync(target);
+            LoadCachedTargetHealth(target);
         }
+        UpdateTargetDisplay();
+        UpdatePlanPreview();
     }
 
-    private async Task LoadTargetHealthAsync(StorageBenchmarkTarget target)
+    private void LoadCachedTargetHealth(StorageBenchmarkTarget target)
     {
         if (string.IsNullOrWhiteSpace(target.DeviceStableId))
         {
             return;
         }
 
-        try
+        var report = App.StorageDetails.TryGetCached(target.DeviceStableId);
+        if (report is null)
         {
-            var report = await App.StorageDetails.EnsureLoadedAsync(target.DeviceStableId).ConfigureAwait(true);
-            if (_selectedTarget?.Id != target.Id)
-            {
-                return;
-            }
+            return;
+        }
 
-            _temperatureBefore = report.Health.TemperatureCelsius.IsAvailable
-                ? report.Health.TemperatureCelsius.Value
-                : null;
-            _healthCritical = report.Health.Status == StorageHealthStatus.Critical;
-            TemperatureText.Text = FormatTemperature(_temperatureBefore);
-            UpdatePlanPreview();
-        }
-        catch
-        {
-            if (_selectedTarget?.Id == target.Id)
-            {
-                TemperatureText.Text = "-- C";
-            }
-        }
+        _temperatureBefore = report.Health.TemperatureCelsius.IsAvailable
+            ? report.Health.TemperatureCelsius.Value
+            : null;
+        _healthCritical = report.Health.Status == StorageHealthStatus.Critical;
     }
 
     private void PlanControl_SelectionChanged(object sender, SelectionChangedEventArgs e)
