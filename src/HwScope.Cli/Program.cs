@@ -48,9 +48,10 @@ try
     if (options.StorageBenchmark)
     {
         var targets = new StorageBenchmarkTargetDiscovery().Discover();
-        var target = string.IsNullOrWhiteSpace(options.BenchmarkDrive)
-            ? targets.FirstOrDefault(candidate => candidate.IsSystem) ?? targets.FirstOrDefault()
-            : targets.FirstOrDefault(candidate => string.Equals(candidate.DriveLetter, NormalizeDrive(options.BenchmarkDrive), StringComparison.OrdinalIgnoreCase));
+        var target = targets.FirstOrDefault(candidate => string.Equals(
+            candidate.DriveLetter,
+            NormalizeDrive(options.BenchmarkDrive!),
+            StringComparison.OrdinalIgnoreCase));
         if (target is null)
         {
             Console.Error.WriteLine("未找到可用的本地存储跑分目标卷。");
@@ -375,6 +376,12 @@ internal sealed record CliOptions(
             }
         }
 
+        var showHelp = normalized.Contains("-h") || normalized.Contains("--help") || normalized.Contains("/?");
+        if (storageBenchmark && !showHelp && string.IsNullOrWhiteSpace(benchmarkDrive))
+        {
+            throw new ArgumentException("存储跑分必须显式指定 --drive，例如 --drive C:。");
+        }
+
         return new CliOptions(
             Json: normalized.Contains("--json"),
             Copy: normalized.Contains("--copy"),
@@ -388,7 +395,7 @@ internal sealed record CliOptions(
             CancelAfterMs: cancelAfterMs,
             StorageMode: storageMode,
             StorageDisk: storageDisk,
-            ShowHelp: normalized.Contains("-h") || normalized.Contains("--help") || normalized.Contains("/?"));
+            ShowHelp: showHelp);
     }
 }
 
@@ -431,9 +438,9 @@ internal static class CliHelp
       --copy       将默认文本摘要复制到剪贴板
       benchmark memory
                    运行内存跑分
-      benchmark storage [--drive C:] [--quick] [--size-mib N] [--runs N]
+      benchmark storage --drive C: [--quick] [--size-mib N] [--runs N]
                         [--workload ID] [--cancel-after-ms N] [--json]
-                   运行文件级存储跑分；--quick 使用 1 run / 256 MiB
+                   运行文件级存储跑分；必须显式指定目标卷；--quick 使用 1 run / 256 MiB
       storage list
                    列出物理存储设备
       storage --disk N [--json]
