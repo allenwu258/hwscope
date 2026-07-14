@@ -206,7 +206,7 @@ public partial class StorageDetailPage : UserControl
         HeaderChipsList.ItemsSource = BuildHeaderChips(report);
         SectionList.ItemsSource = BuildSections(report);
         RenderAttributes();
-        RenderVolumes(report);
+        RenderPartitions(report);
         NotesList.ItemsSource = BuildNotes(report);
         NotesPanel.Visibility = NotesList.Items.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
         RenderDeviceTiles();
@@ -229,8 +229,8 @@ public partial class StorageDetailPage : UserControl
         SectionList.ItemsSource = Array.Empty<StorageSectionView>();
         AttributeGrid.ItemsSource = null;
         NoAttributesText.Visibility = Visibility.Visible;
-        VolumeList.ItemsSource = null;
-        NoVolumesText.Visibility = Visibility.Visible;
+        PartitionList.ItemsSource = null;
+        NoPartitionsText.Visibility = Visibility.Visible;
         NotesList.ItemsSource = null;
     }
 
@@ -290,15 +290,69 @@ public partial class StorageDetailPage : UserControl
         CriticalAttributesButton.Background = _attributeFilter == StorageAttributeFilter.Critical ? (Brush)FindResource("HwScopeActiveViewBrush") : Brushes.Transparent;
     }
 
-    private void RenderVolumes(StorageDetailReport report)
+    private void RenderPartitions(StorageDetailReport report)
     {
-        var rows = report.Volumes.Select(volume => new StorageVolumeRowView(
-            string.IsNullOrWhiteSpace(volume.DriveLetter) ? "Volume" : volume.DriveLetter,
-            string.Join(" · ", new[] { volume.Label, volume.FileSystem, volume.HealthStatus }.Where(value => !string.IsNullOrWhiteSpace(value))),
-            StorageField.FormatBinaryBytes(volume.SizeBytes),
-            $"可用 {StorageField.FormatBinaryBytes(volume.FreeBytes)}")).ToList();
-        VolumeList.ItemsSource = rows;
-        NoVolumesText.Visibility = rows.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+        var rows = report.Partitions.Select(partition =>
+        {
+            var volume = FindVolume(partition, report.Volumes);
+            var name = volume is not null && !string.IsNullOrWhiteSpace(volume.DriveLetter)
+                ? volume.DriveLetter
+                : $"分区 {partition.PartitionNumber}";
+            var detail = string.Join(" · ", new[]
+            {
+                partition.Style,
+                partition.Type,
+                volume?.Label,
+                volume?.FileSystem,
+                volume?.HealthStatus,
+                volume is null || volume.Roles.Count == 0 ? null : string.Join('/', volume.Roles),
+                FormatAccessPaths(partition.AccessPaths)
+            }.Where(value => !string.IsNullOrWhiteSpace(value)));
+            var offset = $"偏移 {StorageField.FormatBinaryBytes(partition.OffsetBytes)}";
+            var free = volume is null ? offset : $"可用 {StorageField.FormatBinaryBytes(volume.FreeBytes)} · {offset}";
+            return new StoragePartitionRowView(name, detail, StorageField.FormatBinaryBytes(partition.SizeBytes), free);
+        }).ToList();
+
+        if (rows.Count == 0)
+        {
+            rows.AddRange(report.Volumes.Select(volume => new StoragePartitionRowView(
+                string.IsNullOrWhiteSpace(volume.DriveLetter) ? "Volume" : volume.DriveLetter,
+                string.Join(" · ", new[] { volume.Label, volume.FileSystem, volume.HealthStatus }.Where(value => !string.IsNullOrWhiteSpace(value))),
+                StorageField.FormatBinaryBytes(volume.SizeBytes),
+                $"可用 {StorageField.FormatBinaryBytes(volume.FreeBytes)}")));
+        }
+
+        PartitionList.ItemsSource = rows;
+        NoPartitionsText.Visibility = rows.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    private static StorageVolumeInfo? FindVolume(StoragePartitionInfo partition, IReadOnlyList<StorageVolumeInfo> volumes)
+    {
+        return volumes.FirstOrDefault(volume => partition.AccessPaths.Any(accessPath =>
+            string.Equals(NormalizeStoragePath(accessPath), NormalizeStoragePath(volume.Path), StringComparison.OrdinalIgnoreCase)
+            || (!string.IsNullOrWhiteSpace(volume.DriveLetter)
+                && string.Equals(NormalizeDriveLetter(accessPath), NormalizeDriveLetter(volume.DriveLetter), StringComparison.OrdinalIgnoreCase))));
+    }
+
+    private static string FormatAccessPaths(IReadOnlyList<string> accessPaths)
+    {
+        var display = accessPaths
+            .Select(path => NormalizeDriveLetter(path) is { Length: > 0 } driveLetter ? driveLetter : path)
+            .Where(path => !string.IsNullOrWhiteSpace(path))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        return display.Count == 0 ? string.Empty : string.Join(", ", display);
+    }
+
+    private static string NormalizeStoragePath(string? value)
+    {
+        return value?.Trim().TrimEnd('\\') ?? string.Empty;
+    }
+
+    private static string NormalizeDriveLetter(string? value)
+    {
+        var text = value?.Trim().TrimEnd('\\') ?? string.Empty;
+        return text.Length >= 2 && text[1] == ':' ? $"{char.ToUpperInvariant(text[0])}:" : string.Empty;
     }
 
     private static IReadOnlyList<StorageSectionView> BuildSections(StorageDetailReport report)
@@ -504,4 +558,4 @@ public sealed record StorageSectionView(string Title, IReadOnlyList<StorageField
 
 public sealed record StorageFieldRowView(string Label, string Value, string Source, string SourceDescription);
 
-public sealed record StorageVolumeRowView(string Name, string Detail, string Capacity, string Free);
+public sealed record StoragePartitionRowView(string Name, string Detail, string Capacity, string Free);

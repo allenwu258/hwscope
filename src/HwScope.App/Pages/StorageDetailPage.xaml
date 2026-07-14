@@ -429,9 +429,9 @@
                                    FontSize="15"
                                    FontWeight="SemiBold"
                                    Foreground="{DynamicResource HwScopeStrongTextBrush}" />
-                        <ItemsControl x:Name="VolumeList" Margin="0,8,0,0">
+                        <ItemsControl x:Name="PartitionList" Margin="0,8,0,0">
                             <ItemsControl.ItemTemplate>
-                                <DataTemplate DataType="{x:Type local:StorageVolumeRowView}">
+                                <DataTemplate DataType="{x:Type local:StoragePartitionRowView}">
                                     <Border MinHeight="44"
                                             BorderBrush="{DynamicResource HwScopeLineBrush}"
                                             BorderThickness="0,0,0,1">
@@ -451,7 +451,7 @@
                                 </DataTemplate>
                             </ItemsControl.ItemTemplate>
                         </ItemsControl>
-                        <TextBlock x:Name="NoVolumesText"
+                        <TextBlock x:Name="NoPartitionsText"
                                    Text="未识别到关联卷；设备可能未分区、未挂载或由存储池管理。"
                                    Margin="0,8,0,0"
                                    Foreground="{DynamicResource HwScopeMutedTextBrush}"
