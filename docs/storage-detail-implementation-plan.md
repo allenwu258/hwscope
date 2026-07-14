@@ -21,13 +21,13 @@ ATA SMART、USB bridge 和 RAID 支持在相同架构下继续推进，但不能
 - Milestone 0-10 的首个 NVMe 页面交付。
 - enriched inventory、Storage management volume mapping、domain model、provider aggregation 和 Windows native query layer。
 - NVMe Health log 真实读取、parser、health evaluator、UI、CLI、copy/save 和主题状态 token。
-- Milestone 11 的 ATA SMART parser、threshold merge、legacy SMART IOCTL provider 和 fixture tests。
+- Milestone 11 的 ATA SMART RETURN STATUS、parser、threshold merge、legacy SMART/ATA pass-through provider 和 fixture tests。
 - Milestone 12 CLI diagnostic entry。
 
 验证状态：
 
 - `dotnet build`：通过，0 warning / 0 error。
-- `dotnet test`：18 tests passed。
+- `dotnet test`：33 tests passed。
 - Samsung PM9F1 NVMe：真实读取成功，identity、temperature、remaining life、128-bit counters、partitions/volume 已交叉显示。
 - WPF 页面：使用非管理员开发通道完成首屏和 SMART table 截图验证。
 - ATA：代码和合成测试完成，真实 SATA SSD/HDD 验证待补。
