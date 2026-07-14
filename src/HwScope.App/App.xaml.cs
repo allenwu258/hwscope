@@ -45,6 +45,13 @@ public partial class App : Application
 
         base.OnStartup(e);
 
+        if (Environment.GetEnvironmentVariable("HWSCOPE_STORAGE_BENCHMARK_PREVIEW") == "1")
+        {
+            MainWindow = new StorageBenchmarkWindow();
+            MainWindow.Show();
+            return;
+        }
+
         new HardwarePreloadWindow().Show();
     }
 

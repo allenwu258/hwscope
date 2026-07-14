@@ -68,6 +68,7 @@
                         <MenuItem Header="报告(_R)" />
                         <MenuItem Header="工具(_T)">
                             <MenuItem Header="内存跑分" Click="ShowMemoryBenchmark_Click" />
+                            <MenuItem Header="存储跑分" Click="ShowStorageBenchmark_Click" />
                         </MenuItem>
                         <MenuItem Header="帮助(_H)" />
                     </Menu>
@@ -93,6 +94,23 @@
                                            FontSize="28"
                                            Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" />
                             <TextBlock Text="概要"
+                                       Margin="0,3,0,0"
+                                       HorizontalAlignment="Center"
+                                       FontSize="13"
+                                       Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" />
+                        </StackPanel>
+                    </Button>
+                    <Button Style="{StaticResource QuickLaunchButtonStyle}"
+                            ToolTip="存储跑分"
+                            Click="ShowStorageBenchmark_Click">
+                        <StackPanel HorizontalAlignment="Center">
+                            <ui:SymbolIcon Symbol="HardDrive20"
+                                           Width="30"
+                                           Height="30"
+                                           HorizontalAlignment="Center"
+                                           FontSize="28"
+                                           Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" />
+                            <TextBlock Text="存储跑分"
                                        Margin="0,3,0,0"
                                        HorizontalAlignment="Center"
                                        FontSize="13"
@@ -160,7 +178,7 @@
                                            HorizontalAlignment="Center"
                                            FontSize="28"
                                            Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" />
-                            <TextBlock Text="跑分"
+                            <TextBlock Text="内存跑分"
                                        Margin="0,3,0,0"
                                        HorizontalAlignment="Center"
                                        FontSize="13"
@@ -228,6 +246,10 @@
                             <ui:NavigationViewItem Content="内存跑分"
                                                    Tag="memory-benchmark"
                                                    Icon="{ui:SymbolIcon Gauge32}"
+                                                   Click="NavigationItem_Click" />
+                            <ui:NavigationViewItem Content="存储跑分"
+                                                   Tag="storage-benchmark"
+                                                   Icon="{ui:SymbolIcon HardDrive20}"
                                                    Click="NavigationItem_Click" />
                         </ui:NavigationViewItem.MenuItems>
                     </ui:NavigationViewItem>
