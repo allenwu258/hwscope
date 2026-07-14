@@ -5,6 +5,7 @@ internal static class StorageNativeConstants
     public const uint IoctlStorageQueryProperty = 0x002D1400;
     public const uint SmartGetVersion = 0x00074080;
     public const uint SmartReceiveDriveData = 0x0007C088;
+    public const uint IoctlAtaPassThrough = 0x0004D02C;
 
     public const int StorageDeviceProperty = 0;
     public const int StorageAccessAlignmentProperty = 6;

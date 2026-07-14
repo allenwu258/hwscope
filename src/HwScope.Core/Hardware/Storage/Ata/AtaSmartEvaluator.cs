@@ -24,10 +24,29 @@ internal static class AtaSmartEvaluator
 
     private static readonly HashSet<byte> MediaWarningAttributes = [0x05, 0xC4, 0xC5, 0xC6];
 
-    public static AtaSmartEvaluation Evaluate(AtaSmartData data)
+    public static AtaSmartEvaluation Evaluate(
+        AtaSmartData data,
+        bool? overallHealthPassed = null,
+        StorageError? overallStatusError = null)
     {
-        var status = StorageHealthStatus.Good;
+        var status = overallHealthPassed switch
+        {
+            true => StorageHealthStatus.Good,
+            false => StorageHealthStatus.Critical,
+            _ => StorageHealthStatus.Unknown
+        };
         var reasons = new List<string>();
+        if (overallHealthPassed == false)
+        {
+            reasons.Add("ATA SMART overall status 报告设备健康检查失败。");
+        }
+        else if (!overallHealthPassed.HasValue)
+        {
+            reasons.Add(overallStatusError is null
+                ? "ATA SMART overall status 未报告。"
+                : $"ATA SMART overall status 不可用：{overallStatusError.Message}");
+        }
+
         foreach (var attribute in data.Attributes)
         {
             if (attribute.IsPreFailure && attribute.Threshold is > 0 && attribute.Current <= attribute.Threshold)
@@ -37,12 +56,12 @@ internal static class AtaSmartEvaluator
             }
             else if (MediaWarningAttributes.Contains(attribute.Id) && attribute.RawValue > 0)
             {
-                status = status == StorageHealthStatus.Critical ? status : StorageHealthStatus.Caution;
+                status = Max(status, StorageHealthStatus.Caution);
                 reasons.Add($"SMART 属性 {attribute.Id:X2} 报告非零累计值。");
             }
             else if (attribute.Id == 0xC7 && attribute.RawValue > 0)
             {
-                status = status == StorageHealthStatus.Critical ? status : StorageHealthStatus.Caution;
+                status = Max(status, StorageHealthStatus.Caution);
                 reasons.Add("检测到 UDMA CRC 错误；可能与线缆或链路有关。 ");
             }
         }
@@ -51,7 +70,7 @@ internal static class AtaSmartEvaluator
         var health = new StorageHealthSummary(
             status,
             StorageHealthEvaluator.FormatStatus(status),
-            reasons.Count == 0 ? "ATA SMART 属性和阈值未报告已知异常。" : string.Join(' ', reasons.Distinct()),
+            reasons.Count == 0 ? "ATA SMART overall status、属性和阈值未报告已知异常。" : string.Join(' ', reasons.Distinct()),
             StorageField.Temperature(temperature, StorageDataSource.AtaSmart),
             StorageField.Placeholder<int>("ATA 未提供通用寿命百分比"),
             []);
@@ -77,6 +96,20 @@ internal static class AtaSmartEvaluator
             lifetime,
             rows,
             [new StorageDataNote("ATA SMART raw bytes 具有厂商差异；仅对少数常见属性进行保守解码。", StorageDataSource.AtaSmart)]);
+    }
+
+    private static StorageHealthStatus Max(StorageHealthStatus left, StorageHealthStatus right)
+    {
+        static int Rank(StorageHealthStatus value) => value switch
+        {
+            StorageHealthStatus.Critical => 4,
+            StorageHealthStatus.Caution => 3,
+            StorageHealthStatus.Good => 2,
+            StorageHealthStatus.Unknown => 1,
+            _ => 0
+        };
+
+        return Rank(left) >= Rank(right) ? left : right;
     }
 
     private static StorageProtocolAttribute ToRow(AtaSmartAttribute attribute)

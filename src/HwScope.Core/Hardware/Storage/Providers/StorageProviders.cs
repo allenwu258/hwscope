@@ -157,7 +157,7 @@ internal sealed class AtaSmartStorageProvider : IStorageDetailProvider
                 return new StorageProviderData(Protocol: StorageProtocolKind.Ata, Error: parseError, InterfaceSource: StorageDataSource.AtaSmart);
             }
 
-            var evaluation = AtaSmartEvaluator.Evaluate(smart);
+            var evaluation = AtaSmartEvaluator.Evaluate(smart, query.OverallHealthPassed, query.OverallStatusError);
             return new StorageProviderData(
                 Protocol: StorageProtocolKind.Ata,
                 Health: evaluation.Health,

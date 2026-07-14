@@ -22,6 +22,20 @@ internal static class AtaSmartParser
             return false;
         }
 
+        var attributeRevision = BinaryPrimitives.ReadUInt16LittleEndian(attributeSector[..2]);
+        var thresholdRevision = BinaryPrimitives.ReadUInt16LittleEndian(thresholdSector[..2]);
+        if (attributeRevision == 0 || thresholdRevision == 0)
+        {
+            error = new StorageError(StorageErrorKind.MalformedResponse, "ATA SMART attribute/threshold revision 无效。");
+            return false;
+        }
+
+        if (!HasValidChecksum(attributeSector[..SectorLength]) || !HasValidChecksum(thresholdSector[..SectorLength]))
+        {
+            error = new StorageError(StorageErrorKind.MalformedResponse, "ATA SMART attribute/threshold sector checksum 无效。");
+            return false;
+        }
+
         var thresholds = new Dictionary<byte, byte>();
         for (var index = 0; index < EntryCount; index++)
         {
@@ -55,13 +69,30 @@ internal static class AtaSmartParser
                 thresholds.TryGetValue(id, out var threshold) ? threshold : null));
         }
 
+        if (attributes.Count == 0)
+        {
+            error = new StorageError(StorageErrorKind.MalformedResponse, "ATA SMART attribute sector 未包含有效属性。");
+            return false;
+        }
+
         data = new AtaSmartData(
-            BinaryPrimitives.ReadUInt16LittleEndian(attributeSector[..2]),
+            attributeRevision,
             attributes,
             attributeSector[..SectorLength].ToArray(),
             thresholdSector[..SectorLength].ToArray());
         error = null;
         return true;
+    }
+
+    private static bool HasValidChecksum(ReadOnlySpan<byte> sector)
+    {
+        byte checksum = 0;
+        foreach (var value in sector)
+        {
+            checksum = unchecked((byte)(checksum + value));
+        }
+
+        return checksum == 0;
     }
 
     internal static ulong ReadUInt48LittleEndian(ReadOnlySpan<byte> raw)
