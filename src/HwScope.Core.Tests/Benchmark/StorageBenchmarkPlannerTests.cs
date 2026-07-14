@@ -18,6 +18,27 @@ public sealed class StorageBenchmarkPlannerTests
     }
 
     [Fact]
+    public void PlanOrdersEveryReadThenEveryWriteThenEveryMix()
+    {
+        var options = new StorageBenchmarkOptions
+        {
+            Runs = 1,
+            FileSizeBytes = 64L * 1024 * 1024,
+            Columns = StorageBenchmarkColumnMode.ReadWriteMix
+        };
+
+        var plan = StorageBenchmarkPlanner.CreatePlan(CreateTarget(), options);
+        var expected = new[]
+        {
+            StorageBenchmarkOperation.Read,
+            StorageBenchmarkOperation.Write,
+            StorageBenchmarkOperation.Mix
+        }.SelectMany(operation => StorageBenchmarkWorkloads.DisplayOrder.Select(id => (id, operation)));
+
+        Assert.Equal(expected, plan.Workloads.Select(item => (item.Id, item.Operation)));
+    }
+
+    [Fact]
     public void ReadOnlyStillBudgetsFileInitialization()
     {
         var options = new StorageBenchmarkOptions

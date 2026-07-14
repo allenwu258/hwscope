@@ -752,7 +752,7 @@ std::vector<RowResult> run_benchmark(const Options& options, Counters& counters)
     fill_pattern(pattern_pool.data, static_cast<std::size_t>(pattern_pool_bytes), 0x4452495645444154ULL);
 
     std::vector<RowResult> rows;
-    std::uint64_t seed = 0x485753434F5045ULL;
+    rows.reserve(options.workloads.size());
     for (const auto& workload_id : options.workloads) {
         RowResult row;
         row.workload = get_workload(workload_id);
@@ -760,7 +760,12 @@ std::vector<RowResult> run_benchmark(const Options& options, Counters& counters)
             || (options.cache_mode == CacheMode::device && row.workload.block_size % options.alignment_bytes != 0)) {
             throw std::invalid_argument("workload block size does not satisfy file size/alignment");
         }
-        for (const auto operation : operations_for(options.columns)) {
+        rows.push_back(std::move(row));
+    }
+
+    std::uint64_t seed = 0x485753434F5045ULL;
+    for (const auto operation : operations_for(options.columns)) {
+        for (auto& row : rows) {
             auto metric = run_metric(file.value, completion.value, options, row.workload, operation, seed++, counters,
                 pattern_pool, pattern_pool_bytes);
             if (operation == Operation::read) {
@@ -774,7 +779,6 @@ std::vector<RowResult> run_benchmark(const Options& options, Counters& counters)
                 row.mix = std::move(metric);
             }
         }
-        rows.push_back(std::move(row));
     }
     return rows;
 }

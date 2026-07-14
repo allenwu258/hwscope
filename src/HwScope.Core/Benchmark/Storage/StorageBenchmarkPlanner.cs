@@ -24,14 +24,14 @@ public static class StorageBenchmarkPlanner
         }
 
         var operations = GetOperations(options.Columns);
+        var definitions = selectedWorkloads.Select(StorageBenchmarkWorkloads.GetDefinition).ToList();
         var plans = new List<StorageBenchmarkWorkloadPlan>();
         long plannedRead = 0;
         long maximumWrite = options.FileSizeBytes;
         var seed = 0x485753434F5045UL;
 
-        foreach (var workloadId in selectedWorkloads)
+        foreach (var definition in definitions)
         {
-            var definition = StorageBenchmarkWorkloads.GetDefinition(workloadId);
             if (options.FileSizeBytes % definition.BlockSizeBytes != 0)
             {
                 throw new ArgumentException($"文件大小必须是 {definition.DisplayName} block size 的整数倍。", nameof(options));
@@ -43,8 +43,11 @@ public static class StorageBenchmarkPlanner
                 throw new NotSupportedException(
                     $"{definition.DisplayName} 的 {StorageBenchmarkFormatting.FormatBytes(definition.BlockSizeBytes)} block 不满足目标卷 {target.RequiredAlignmentBytes} B 对齐要求。");
             }
+        }
 
-            foreach (var operation in operations)
+        foreach (var operation in operations)
+        {
+            foreach (var definition in definitions)
             {
                 var passes = checked(options.Runs + options.WarmupPasses);
                 var operationsPerPass = options.FileSizeBytes / definition.BlockSizeBytes;
