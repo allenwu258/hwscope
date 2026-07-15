@@ -75,6 +75,9 @@ public partial class MainWindow : FluentWindow
             case "memory-benchmark":
                 _ = ShowMemoryBenchmarkAsync();
                 break;
+            case "storage-benchmark":
+                ShowStorageBenchmark();
+                break;
             case "cpu-detail":
                 ShowCpuDetail();
                 break;
@@ -98,6 +101,11 @@ public partial class MainWindow : FluentWindow
     private void ShowMemoryBenchmark_Click(object sender, RoutedEventArgs e)
     {
         _ = ShowMemoryBenchmarkAsync();
+    }
+
+    private void ShowStorageBenchmark_Click(object sender, RoutedEventArgs e)
+    {
+        ShowStorageBenchmark();
     }
 
     private void ShowMemoryDetail_Click(object sender, RoutedEventArgs e)
@@ -188,6 +196,23 @@ public partial class MainWindow : FluentWindow
             File.AppendAllText(Path.Combine(Path.GetTempPath(), "HwScope-crash.log"),
                 $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] ShowMemoryBenchmark{Environment.NewLine}{ex}{Environment.NewLine}{new string('-', 80)}{Environment.NewLine}");
             System.Windows.MessageBox.Show(this, ex.ToString(), "打开内存跑分窗口失败", System.Windows.MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+    }
+
+    private void ShowStorageBenchmark()
+    {
+        try
+        {
+            App.SingleInstanceWindows.ShowOrActivate(
+                SingleInstanceWindowKeys.StorageBenchmark,
+                () => new StorageBenchmarkWindow { Owner = this });
+            SetFooterStatus("已打开存储跑分窗口。");
+        }
+        catch (Exception ex)
+        {
+            SetFooterStatus($"打开存储跑分窗口失败：{ex.Message}");
+            File.AppendAllText(Path.Combine(Path.GetTempPath(), "HwScope-crash.log"),
+                $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] ShowStorageBenchmark{Environment.NewLine}{ex}{Environment.NewLine}{new string('-', 80)}{Environment.NewLine}");
         }
     }
 

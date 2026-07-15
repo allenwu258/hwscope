@@ -15,6 +15,7 @@ HwScope 是一个 Windows 本地硬件工具箱项目，目标是在一个程序
 - CLI 硬件摘要输出，支持文本、JSON 和复制到剪贴板。
 - 独立内存跑分窗口，界面参考 AIDA64 Cache & Memory Benchmark。
 - C++ native 内存跑分 worker，当前测量 Memory/L1/L2/L3 Read / Write / Copy / Latency，并支持 topology-aware 多线程 Memory Read / Write / Copy。
+- 独立存储跑分窗口和 C++ native `storagebench.exe`，支持 CrystalDiskMark 风格的四行 Read / Write / Mix 文件级测试、写入预算、取消和残留文件安全清理。
 - JSON 驱动的主题配置，支持跟随系统、浅色、深色和 Mica 开关。
 - 应用图标资源已接入 `HwScope.App`，用于窗口、任务栏和可执行文件图标。
 
@@ -24,7 +25,7 @@ HwScope 是一个 Windows 本地硬件工具箱项目，目标是在一个程序
 HwScope.sln
 src/
   HwScope.App/
-    WPF GUI 入口，启动预加载窗口、主窗口、应用图标资源、硬件摘要页、CPU/内存/存储详情页、主题系统、内存跑分窗口
+    WPF GUI 入口，启动预加载窗口、主窗口、应用图标资源、硬件摘要页、CPU/内存/存储详情页、主题系统、内存/存储跑分窗口
 
   HwScope.Cli/
     命令行入口，复用 HwScope.Core 的硬件采集和跑分能力
@@ -33,10 +34,13 @@ src/
     硬件采集、共享 hardware inventory、CPU/内存/存储领域模型、Windows topology/storage API、格式化、benchmark runner 和 native worker 调用
 
   HwScope.Core.Tests/
-    Core 单元测试，当前覆盖 NVMe/ATA parser、overall/健康判定、storage descriptor 边界、soft timeout、字段来源合并、bus 格式化和报告格式化
+    Core 单元测试，当前覆盖 NVMe/ATA parser、存储跑分规划/协议/session 清理、storage descriptor 边界、soft timeout、字段来源合并、bus 格式化和报告格式化
 
   HwScope.Native.MemoryBench/
     C++ 内存跑分 worker，输出 JSON / progress JSON 给 HwScope.Core 解析，CSV 仅保留为手动兼容格式
+
+  HwScope.Native.StorageBench/
+    C++ 文件级存储跑分 worker，使用 overlapped I/O、create-new 测试文件、progress JSON 和有界写入预算
 
 docs/
   project-architecture.md
@@ -51,6 +55,7 @@ docs/
   memory-spd-detail-implementation-plan.md
   storage-detail-page-design.md
   storage-detail-implementation-plan.md
+  storage-benchmark-design.md
 ```
 
 ## 运行
@@ -77,6 +82,12 @@ CLI 内存跑分：
 
 ```powershell
 dotnet run --project .\src\HwScope.Cli\HwScope.Cli.csproj -- benchmark memory
+```
+
+CLI 存储跑分：
+
+```powershell
+dotnet run --project .\src\HwScope.Cli\HwScope.Cli.csproj -- benchmark storage --drive C: --quick
 ```
 
 ## CPU 详情页
@@ -161,7 +172,7 @@ dotnet run --project .\src\HwScope.Cli -- storage --disk 0 --json
 
 `storage list` 使用轻量 Windows Storage descriptor 查询真实 bus type，查询不可用时才回退到 WMI `InterfaceType`；它不会触发 NVMe Health 或 ATA SMART 读取。
 
-截至 2026-07-14，Core 共有 33 项测试通过。本机 NVMe 路径已使用真实 Samsung PM9F1 验证。ATA provider 已有 fixture tests，但仍需要在直连 SATA SSD/HDD 上完成硬件矩阵验证。USB bridge、RAID、Storage Spaces 和虚拟磁盘可能只能展示身份/卷信息，并明确显示 health passthrough 不可用。
+截至 2026-07-15，存储详情相关的 33 项 Core 测试通过。本机 NVMe 路径已使用真实 Samsung PM9F1 验证。ATA provider 已有 fixture tests，但仍需要在直连 SATA SSD/HDD 上完成硬件矩阵验证。USB bridge、RAID、Storage Spaces 和虚拟磁盘可能只能展示身份/卷信息，并明确显示 health passthrough 不可用。
 
 详细设计见：
 
@@ -190,7 +201,7 @@ dotnet build
 src\HwScope.Native.MemoryBench\build\Release\membench.exe
 ```
 
-GUI 中可以通过顶部工具栏 `跑分` 或左侧导航 `性能测试 -> 内存跑分` 打开独立窗口，然后点击 `Start Benchmark`。
+GUI 中可以通过顶部工具栏 `内存跑分` 或左侧导航 `性能测试 -> 内存跑分` 打开独立窗口，然后点击 `Start Benchmark`。
 
 内存跑分窗口的硬件标题信息来自共享预加载快照，不再依赖先打开或刷新首页概览。
 
@@ -208,6 +219,40 @@ GUI 中可以通过顶部工具栏 `跑分` 或左侧导航 `性能测试 -> 内
 - 后续会继续补 SIMD / non-temporal kernel、NUMA interleaved/per-node 模式、结果历史和导出。
 
 详细设计见 [docs/memory-benchmark-design.md](docs/memory-benchmark-design.md)。L1 / L2 / L3 Cache 行开发方案见 [docs/memory-cache-benchmark-implementation-plan.md](docs/memory-cache-benchmark-implementation-plan.md)。
+
+## 存储跑分
+
+存储跑分由独立 native C++ worker 提供。开发时先构建：
+
+```powershell
+.\src\HwScope.Native.StorageBench\scripts\build-msvc.ps1
+```
+
+输出位置：
+
+```text
+src\HwScope.Native.StorageBench\build\Release\storagebench.exe
+```
+
+GUI 可以通过顶部工具栏、`工具 -> 存储跑分` 或左侧导航 `性能测试 -> 存储跑分` 打开独立窗口。当前实现包括：
+
+- `SEQ1M Q8T1`、`SEQ1M Q1T1`、`RND4K Q32T1`、`RND4K Q1T1` 四行 Read / Write / Mix。
+- `1/3/5 runs`、`64 MiB/256 MiB/1 GiB/4 GiB`、目标卷、设备/系统缓存模式和测试列选择。
+- 主表同时显示 MB/s、IOPS 和 p95 latency；报告保留每轮 sample、p50/p95/p99、aggregate 和 CV。
+- 默认设备模式使用 file-backed `FILE_FLAG_NO_BUFFERING`；不会打开或写入 `PhysicalDrive`。
+- 测试文件使用随机 session GUID 和 `CREATE_NEW`；写入使用 64 MiB 对齐确定性随机数据池，初始化、warmup、Write/Mix 全部计入最大写入预算。
+- `全部开始` 固定按全部 Read、全部 Write、全部 Mix 的顺序执行；Core plan、worker 事件和 UI 总体进度使用同一顺序。
+- Core 在创建目录前后复核 volume GUID、volume serial、单一 physical extent 和目录祖先 reparse 属性；worker 创建文件后再从 handle 复核 expected volume GUID。
+- Core 对最终结果逐行、逐 operation、逐 sample 校验定义、数量、数值、读写字节、cache mode 和 cleanup；取消先协作停止，再在超时后终止 process tree。
+- worker 和父进程双层清理；本地 manifest 记录 volume serial 和 128-bit file ID，下次打开窗口时只允许清理身份仍然一致的孤儿文件，同路径替换文件会被拒绝。
+- 打开窗口和切换目标卷只读取已有健康缓存，不主动查询 SMART/Health 或唤醒休眠 HDD；主动温度刷新只发生在用户明确启动跑分之后。
+- CLI 支持 `--quick`、`--size-mib`、`--runs`、`--workload` 和 JSON 输出；任何存储跑分都必须显式传入 `--drive`，不会默认选择系统卷。
+
+默认标准计划是 `5 runs / 1 GiB / Read+Write / 0 warmup`，四行合计最大写入 21 GiB。开始前必须确认窗口显示的目标卷和最大写入量；`仅读取` 仍需要一次文件初始化写入。
+
+截至 2026-07-15，Core 共 56 项测试通过，其中 23 项覆盖存储跑分 planner、preflight、worker result contract 和 session cleanup。64 MiB 单行 Q1/Q8 完成、Read -> Write -> Mix 事件顺序、CLI 缺少显式目标时拒绝运行以及运行中取消均已在本机 NVMe 系统卷验证；验证后 manifest 和临时测试文件数量均为 0。当前结果不应直接等同于 CrystalDiskMark；durable/write-through 模式、后台 I/O 检测、BitLocker/电源质量标志和 USB/SATA/HDD 广覆盖仍待补充。
+
+详细需求、安全边界和 UI 设计见 [docs/storage-benchmark-design.md](docs/storage-benchmark-design.md)。
 
 ## 主题和配置
 
@@ -254,7 +299,8 @@ src\HwScope.App\Themes\Json\dark.json
 - 内存 / SPD 详情页当前仅使用 WMI/SMBIOS；SPD 读取与解析代码已移除，页面固定显示 `SPD 读取暂未实现`。raw SPD、运行态时序和 DIMM/PMIC telemetry 等驱动相关能力暂时搁置。
 - 存储详情页的 NVMe 标准 Health 路径已验证；ATA SMART 仍需更多真实 SATA 设备验证。USB/RAID bridge 是否支持协议透传取决于控制器和驱动，不支持时不会被误报为磁盘故障。
 - 内存跑分结果目前不应直接对标 AIDA64，kernel、copy accounting、NUMA 和 cache row 仍在演进。
-- native worker 不会由 `dotnet build` 自动编译；需要先运行 native 构建脚本生成 Release 产物。
+- 存储跑分当前仅支持本地、单 physical extent 的文件系统卷；Storage Spaces/跨盘卷、network share、RAM disk 和 raw disk 被拒绝。结果不应直接对标 CrystalDiskMark。
+- native worker 不会由 `dotnet build` 自动编译；需要先运行对应 native 构建脚本生成 Release 产物。
 
 ## License
 

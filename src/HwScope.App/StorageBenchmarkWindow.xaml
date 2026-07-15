@@ -1,0 +1,288 @@
+<ui:FluentWindow x:Class="HwScope.App.StorageBenchmarkWindow"
+                 xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                 xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                 xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
+                 Title="HwScope Storage Benchmark"
+                 Height="760"
+                 Width="1120"
+                 MinHeight="620"
+                 MinWidth="860"
+                 Background="{DynamicResource HwScopePanelBrush}"
+                 ExtendsContentIntoTitleBar="True"
+                 WindowBackdropType="Mica"
+                 WindowStartupLocation="CenterOwner">
+    <ui:FluentWindow.Resources>
+        <Style x:Key="MatrixHeaderStyle" TargetType="TextBlock">
+            <Setter Property="FontSize" Value="13" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="Foreground" Value="{DynamicResource HwScopeStrongTextBrush}" />
+            <Setter Property="HorizontalAlignment" Value="Center" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+        </Style>
+        <Style x:Key="WorkloadButtonStyle" TargetType="Button">
+            <Setter Property="Margin" Value="0,4,8,4" />
+            <Setter Property="Padding" Value="10,6" />
+            <Setter Property="Background" Value="{DynamicResource HwScopeIconBackplateBrush}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource HwScopeLineBrush}" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="Foreground" Value="{DynamicResource HwScopeTextBrush}" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Root"
+                                Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="6"
+                                Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="Stretch" VerticalAlignment="Center" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Root" Property="Background" Value="{DynamicResource HwScopeActiveViewBrush}" />
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter Property="Opacity" Value="0.45" />
+                                <Setter Property="Cursor" Value="Arrow" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        <Style x:Key="ResultCellStyle" TargetType="Border">
+            <Setter Property="Margin" Value="4" />
+            <Setter Property="MinHeight" Value="86" />
+            <Setter Property="Padding" Value="12,8" />
+            <Setter Property="Background" Value="{DynamicResource HwScopeCardBrush}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource HwScopeLineBrush}" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="CornerRadius" Value="6" />
+        </Style>
+        <Style x:Key="ResultValueStyle" TargetType="TextBlock">
+            <Setter Property="FontFamily" Value="Consolas" />
+            <Setter Property="FontSize" Value="25" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="Foreground" Value="{DynamicResource HwScopeStrongTextBrush}" />
+            <Setter Property="HorizontalAlignment" Value="Right" />
+            <Setter Property="TextTrimming" Value="CharacterEllipsis" />
+        </Style>
+        <Style x:Key="ResultDetailStyle" TargetType="TextBlock">
+            <Setter Property="Margin" Value="0,5,0,4" />
+            <Setter Property="FontFamily" Value="Consolas" />
+            <Setter Property="FontSize" Value="12" />
+            <Setter Property="Foreground" Value="{DynamicResource HwScopeMutedTextBrush}" />
+            <Setter Property="HorizontalAlignment" Value="Right" />
+            <Setter Property="TextTrimming" Value="CharacterEllipsis" />
+        </Style>
+        <Style x:Key="CellProgressStyle" TargetType="ProgressBar">
+            <Setter Property="Height" Value="3" />
+            <Setter Property="Minimum" Value="0" />
+            <Setter Property="Maximum" Value="100" />
+            <Setter Property="Visibility" Value="Collapsed" />
+        </Style>
+    </ui:FluentWindow.Resources>
+
+    <Grid Background="{DynamicResource HwScopeContentBrush}">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="44" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <ui:TitleBar Grid.Row="0" Height="44" Title="Storage Benchmark" Icon="{ui:SymbolIcon HardDrive20}" />
+
+        <Border Grid.Row="1"
+                Padding="16,12,16,10"
+                Background="{DynamicResource HwScopePanelBrush}"
+                BorderBrush="{DynamicResource HwScopeLineBrush}"
+                BorderThickness="0,0,0,1">
+            <WrapPanel VerticalAlignment="Center">
+                <ui:Button x:Name="StartCancelButton"
+                           Width="112"
+                           Height="36"
+                           Margin="0,0,12,6"
+                           Content="全部开始"
+                           Click="StartCancelButton_Click" />
+
+                <StackPanel Margin="0,0,10,6">
+                    <TextBlock Text="次数" FontSize="11" Foreground="{DynamicResource HwScopeMutedTextBrush}" />
+                    <ComboBox x:Name="RunsComboBox" Width="68" Height="32" SelectedIndex="2" SelectionChanged="PlanControl_SelectionChanged">
+                        <ComboBoxItem Content="1" Tag="1" />
+                        <ComboBoxItem Content="3" Tag="3" />
+                        <ComboBoxItem Content="5" Tag="5" />
+                    </ComboBox>
+                </StackPanel>
+                <StackPanel Margin="0,0,10,6">
+                    <TextBlock Text="大小" FontSize="11" Foreground="{DynamicResource HwScopeMutedTextBrush}" />
+                    <ComboBox x:Name="SizeComboBox" Width="104" Height="32" SelectedIndex="2" SelectionChanged="PlanControl_SelectionChanged">
+                        <ComboBoxItem Content="64 MiB" Tag="67108864" />
+                        <ComboBoxItem Content="256 MiB" Tag="268435456" />
+                        <ComboBoxItem Content="1 GiB" Tag="1073741824" />
+                        <ComboBoxItem Content="4 GiB" Tag="4294967296" />
+                    </ComboBox>
+                </StackPanel>
+                <StackPanel Margin="0,0,10,6">
+                    <TextBlock Text="目标卷" FontSize="11" Foreground="{DynamicResource HwScopeMutedTextBrush}" />
+                    <ComboBox x:Name="TargetComboBox"
+                              Width="330"
+                              Height="32"
+                              DisplayMemberPath="DisplayName"
+                              SelectionChanged="TargetComboBox_SelectionChanged" />
+                </StackPanel>
+                <StackPanel Margin="0,0,10,6">
+                    <TextBlock Text="缓存" FontSize="11" Foreground="{DynamicResource HwScopeMutedTextBrush}" />
+                    <ComboBox x:Name="CacheModeComboBox" Width="116" Height="32" SelectedIndex="0" SelectionChanged="PlanControl_SelectionChanged">
+                        <ComboBoxItem Content="设备模式" Tag="Device" ToolTip="禁用 Windows 文件缓存；设备自身缓存仍可能生效。" />
+                        <ComboBoxItem Content="系统缓存" Tag="Buffered" ToolTip="包含 Windows 文件缓存影响。" />
+                    </ComboBox>
+                </StackPanel>
+                <StackPanel Margin="0,0,10,6">
+                    <TextBlock Text="测试" FontSize="11" Foreground="{DynamicResource HwScopeMutedTextBrush}" />
+                    <ComboBox x:Name="ColumnModeComboBox" Width="116" Height="32" SelectedIndex="1" SelectionChanged="PlanControl_SelectionChanged">
+                        <ComboBoxItem Content="仅读取" Tag="ReadOnly" />
+                        <ComboBoxItem Content="读取 + 写入" Tag="ReadWrite" />
+                        <ComboBoxItem Content="读取 + 写入 + Mix" Tag="ReadWriteMix" />
+                    </ComboBox>
+                </StackPanel>
+                <StackPanel Margin="0,0,0,6">
+                    <TextBlock Text="主单位" FontSize="11" Foreground="{DynamicResource HwScopeMutedTextBrush}" />
+                    <ComboBox x:Name="UnitComboBox" Width="82" Height="32" SelectedIndex="0" SelectionChanged="UnitComboBox_SelectionChanged">
+                        <ComboBoxItem Content="MB/s" Tag="MBs" />
+                        <ComboBoxItem Content="IOPS" Tag="IOPS" />
+                    </ComboBox>
+                </StackPanel>
+            </WrapPanel>
+        </Border>
+
+        <Border Grid.Row="2"
+                Margin="16,12,16,8"
+                Padding="14,11"
+                Background="{DynamicResource HwScopePanelBrush}"
+                BorderBrush="{DynamicResource HwScopeLineBrush}"
+                BorderThickness="1"
+                CornerRadius="7">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <StackPanel>
+                    <TextBlock x:Name="TargetTitleText"
+                               Text="正在发现可用目标卷..."
+                               FontSize="15"
+                               FontWeight="SemiBold"
+                               Foreground="{DynamicResource HwScopeStrongTextBrush}"
+                               TextTrimming="CharacterEllipsis" />
+                    <TextBlock x:Name="TargetMetaText"
+                               Margin="0,4,0,0"
+                               FontSize="12"
+                               Foreground="{DynamicResource HwScopeMutedTextBrush}"
+                               TextWrapping="Wrap" />
+                    <TextBlock x:Name="PlanSummaryText"
+                               Margin="0,4,0,0"
+                               FontSize="12"
+                               Foreground="{DynamicResource HwScopeTextBrush}"
+                               TextWrapping="Wrap" />
+                    <TextBlock x:Name="TargetWarningText"
+                               Margin="0,5,0,0"
+                               FontSize="12"
+                               Foreground="{DynamicResource HwScopeStatusCautionBrush}"
+                               TextWrapping="Wrap"
+                               Visibility="Collapsed" />
+                </StackPanel>
+                <StackPanel Grid.Column="1" Margin="16,0,0,0" VerticalAlignment="Center" HorizontalAlignment="Right">
+                    <TextBlock x:Name="TemperatureText"
+                               Text="-- C"
+                               FontFamily="Consolas"
+                               FontSize="18"
+                               FontWeight="SemiBold"
+                               Foreground="{DynamicResource HwScopeTextBrush}"
+                               HorizontalAlignment="Right" />
+                    <ui:Button x:Name="CleanupOrphansButton"
+                               Margin="0,7,0,0"
+                               Height="30"
+                               Content="清理残留文件"
+                               Visibility="Collapsed"
+                               Click="CleanupOrphansButton_Click" />
+                </StackPanel>
+            </Grid>
+        </Border>
+
+        <ScrollViewer Grid.Row="3" Margin="12,0,12,0" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto">
+            <Grid MinWidth="1000">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="36" />
+                    <RowDefinition Height="96" />
+                    <RowDefinition Height="96" />
+                    <RowDefinition Height="96" />
+                    <RowDefinition Height="96" />
+                </Grid.RowDefinitions>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="160" />
+                    <ColumnDefinition Width="*" MinWidth="260" />
+                    <ColumnDefinition Width="*" MinWidth="260" />
+                    <ColumnDefinition Width="*" MinWidth="260" />
+                </Grid.ColumnDefinitions>
+
+                <TextBlock Grid.Column="1" Text="Read" Style="{StaticResource MatrixHeaderStyle}" />
+                <TextBlock Grid.Column="2" Text="Write" Style="{StaticResource MatrixHeaderStyle}" />
+                <TextBlock Grid.Column="3" x:Name="MixHeaderText" Text="Mix R70 / W30" Style="{StaticResource MatrixHeaderStyle}" />
+
+                <Button x:Name="SeqQ8Button" Grid.Row="1" Tag="seq1m-q8t1" Style="{StaticResource WorkloadButtonStyle}" Click="WorkloadButton_Click">
+                    <StackPanel><TextBlock Text="SEQ1M Q8T1" FontWeight="SemiBold" /><TextBlock Text="1 MiB · Q8 · T1" Margin="0,4,0,0" FontSize="11" Foreground="{DynamicResource HwScopeMutedTextBrush}" /></StackPanel>
+                </Button>
+                <Button x:Name="SeqQ1Button" Grid.Row="2" Tag="seq1m-q1t1" Style="{StaticResource WorkloadButtonStyle}" Click="WorkloadButton_Click">
+                    <StackPanel><TextBlock Text="SEQ1M Q1T1" FontWeight="SemiBold" /><TextBlock Text="1 MiB · Q1 · T1" Margin="0,4,0,0" FontSize="11" Foreground="{DynamicResource HwScopeMutedTextBrush}" /></StackPanel>
+                </Button>
+                <Button x:Name="RndQ32Button" Grid.Row="3" Tag="rnd4k-q32t1" Style="{StaticResource WorkloadButtonStyle}" Click="WorkloadButton_Click">
+                    <StackPanel><TextBlock Text="RND4K Q32T1" FontWeight="SemiBold" /><TextBlock Text="4 KiB · Q32 · T1" Margin="0,4,0,0" FontSize="11" Foreground="{DynamicResource HwScopeMutedTextBrush}" /></StackPanel>
+                </Button>
+                <Button x:Name="RndQ1Button" Grid.Row="4" Tag="rnd4k-q1t1" Style="{StaticResource WorkloadButtonStyle}" Click="WorkloadButton_Click">
+                    <StackPanel><TextBlock Text="RND4K Q1T1" FontWeight="SemiBold" /><TextBlock Text="4 KiB · Q1 · T1" Margin="0,4,0,0" FontSize="11" Foreground="{DynamicResource HwScopeMutedTextBrush}" /></StackPanel>
+                </Button>
+
+                <Border Grid.Row="1" Grid.Column="1" Style="{StaticResource ResultCellStyle}"><Grid><StackPanel><TextBlock x:Name="SeqQ8ReadValue" Text="--" Style="{StaticResource ResultValueStyle}" /><TextBlock x:Name="SeqQ8ReadDetail" Text="未运行" Style="{StaticResource ResultDetailStyle}" /></StackPanel><ProgressBar x:Name="SeqQ8ReadProgress" VerticalAlignment="Bottom" Style="{StaticResource CellProgressStyle}" /></Grid></Border>
+                <Border Grid.Row="1" Grid.Column="2" Style="{StaticResource ResultCellStyle}"><Grid><StackPanel><TextBlock x:Name="SeqQ8WriteValue" Text="--" Style="{StaticResource ResultValueStyle}" /><TextBlock x:Name="SeqQ8WriteDetail" Text="未运行" Style="{StaticResource ResultDetailStyle}" /></StackPanel><ProgressBar x:Name="SeqQ8WriteProgress" VerticalAlignment="Bottom" Style="{StaticResource CellProgressStyle}" /></Grid></Border>
+                <Border Grid.Row="1" Grid.Column="3" Style="{StaticResource ResultCellStyle}"><Grid><StackPanel><TextBlock x:Name="SeqQ8MixValue" Text="--" Style="{StaticResource ResultValueStyle}" /><TextBlock x:Name="SeqQ8MixDetail" Text="未启用" Style="{StaticResource ResultDetailStyle}" /></StackPanel><ProgressBar x:Name="SeqQ8MixProgress" VerticalAlignment="Bottom" Style="{StaticResource CellProgressStyle}" /></Grid></Border>
+
+                <Border Grid.Row="2" Grid.Column="1" Style="{StaticResource ResultCellStyle}"><Grid><StackPanel><TextBlock x:Name="SeqQ1ReadValue" Text="--" Style="{StaticResource ResultValueStyle}" /><TextBlock x:Name="SeqQ1ReadDetail" Text="未运行" Style="{StaticResource ResultDetailStyle}" /></StackPanel><ProgressBar x:Name="SeqQ1ReadProgress" VerticalAlignment="Bottom" Style="{StaticResource CellProgressStyle}" /></Grid></Border>
+                <Border Grid.Row="2" Grid.Column="2" Style="{StaticResource ResultCellStyle}"><Grid><StackPanel><TextBlock x:Name="SeqQ1WriteValue" Text="--" Style="{StaticResource ResultValueStyle}" /><TextBlock x:Name="SeqQ1WriteDetail" Text="未运行" Style="{StaticResource ResultDetailStyle}" /></StackPanel><ProgressBar x:Name="SeqQ1WriteProgress" VerticalAlignment="Bottom" Style="{StaticResource CellProgressStyle}" /></Grid></Border>
+                <Border Grid.Row="2" Grid.Column="3" Style="{StaticResource ResultCellStyle}"><Grid><StackPanel><TextBlock x:Name="SeqQ1MixValue" Text="--" Style="{StaticResource ResultValueStyle}" /><TextBlock x:Name="SeqQ1MixDetail" Text="未启用" Style="{StaticResource ResultDetailStyle}" /></StackPanel><ProgressBar x:Name="SeqQ1MixProgress" VerticalAlignment="Bottom" Style="{StaticResource CellProgressStyle}" /></Grid></Border>
+
+                <Border Grid.Row="3" Grid.Column="1" Style="{StaticResource ResultCellStyle}"><Grid><StackPanel><TextBlock x:Name="RndQ32ReadValue" Text="--" Style="{StaticResource ResultValueStyle}" /><TextBlock x:Name="RndQ32ReadDetail" Text="未运行" Style="{StaticResource ResultDetailStyle}" /></StackPanel><ProgressBar x:Name="RndQ32ReadProgress" VerticalAlignment="Bottom" Style="{StaticResource CellProgressStyle}" /></Grid></Border>
+                <Border Grid.Row="3" Grid.Column="2" Style="{StaticResource ResultCellStyle}"><Grid><StackPanel><TextBlock x:Name="RndQ32WriteValue" Text="--" Style="{StaticResource ResultValueStyle}" /><TextBlock x:Name="RndQ32WriteDetail" Text="未运行" Style="{StaticResource ResultDetailStyle}" /></StackPanel><ProgressBar x:Name="RndQ32WriteProgress" VerticalAlignment="Bottom" Style="{StaticResource CellProgressStyle}" /></Grid></Border>
+                <Border Grid.Row="3" Grid.Column="3" Style="{StaticResource ResultCellStyle}"><Grid><StackPanel><TextBlock x:Name="RndQ32MixValue" Text="--" Style="{StaticResource ResultValueStyle}" /><TextBlock x:Name="RndQ32MixDetail" Text="未启用" Style="{StaticResource ResultDetailStyle}" /></StackPanel><ProgressBar x:Name="RndQ32MixProgress" VerticalAlignment="Bottom" Style="{StaticResource CellProgressStyle}" /></Grid></Border>
+
+                <Border Grid.Row="4" Grid.Column="1" Style="{StaticResource ResultCellStyle}"><Grid><StackPanel><TextBlock x:Name="RndQ1ReadValue" Text="--" Style="{StaticResource ResultValueStyle}" /><TextBlock x:Name="RndQ1ReadDetail" Text="未运行" Style="{StaticResource ResultDetailStyle}" /></StackPanel><ProgressBar x:Name="RndQ1ReadProgress" VerticalAlignment="Bottom" Style="{StaticResource CellProgressStyle}" /></Grid></Border>
+                <Border Grid.Row="4" Grid.Column="2" Style="{StaticResource ResultCellStyle}"><Grid><StackPanel><TextBlock x:Name="RndQ1WriteValue" Text="--" Style="{StaticResource ResultValueStyle}" /><TextBlock x:Name="RndQ1WriteDetail" Text="未运行" Style="{StaticResource ResultDetailStyle}" /></StackPanel><ProgressBar x:Name="RndQ1WriteProgress" VerticalAlignment="Bottom" Style="{StaticResource CellProgressStyle}" /></Grid></Border>
+                <Border Grid.Row="4" Grid.Column="3" Style="{StaticResource ResultCellStyle}"><Grid><StackPanel><TextBlock x:Name="RndQ1MixValue" Text="--" Style="{StaticResource ResultValueStyle}" /><TextBlock x:Name="RndQ1MixDetail" Text="未启用" Style="{StaticResource ResultDetailStyle}" /></StackPanel><ProgressBar x:Name="RndQ1MixProgress" VerticalAlignment="Bottom" Style="{StaticResource CellProgressStyle}" /></Grid></Border>
+            </Grid>
+        </ScrollViewer>
+
+        <Border Grid.Row="4"
+                Margin="16,8,16,14"
+                Padding="0,8,0,0"
+                BorderBrush="{DynamicResource HwScopeLineBrush}"
+                BorderThickness="0,1,0,0">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <StackPanel VerticalAlignment="Center">
+                    <TextBlock x:Name="StatusText" Text="准备就绪" FontSize="12" Foreground="{DynamicResource HwScopeTextBrush}" TextWrapping="Wrap" />
+                    <ProgressBar x:Name="OverallProgress" Margin="0,7,18,0" Height="4" Minimum="0" Maximum="100" Value="0" />
+                </StackPanel>
+                <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                    <ui:Button x:Name="DiagnosticsButton" Width="108" Height="34" Margin="0,0,6,0" Content="Diagnostics" IsEnabled="False" Click="DiagnosticsButton_Click" />
+                    <ui:Button x:Name="CopyButton" Width="78" Height="34" Margin="0,0,6,0" Content="Copy" IsEnabled="False" Click="CopyButton_Click" />
+                    <ui:Button x:Name="SaveButton" Width="78" Height="34" Content="Save" IsEnabled="False" Click="SaveButton_Click" />
+                </StackPanel>
+            </Grid>
+        </Border>
+    </Grid>
+</ui:FluentWindow>

@@ -6,6 +6,7 @@ using System.Text.Encodings.Web;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using HwScope.Core.Benchmark;
+using HwScope.Core.Benchmark.Storage;
 using HwScope.Core.Hardware;
 using HwScope.Core.Hardware.Inventory;
 using HwScope.Core.Hardware.Storage;
@@ -16,7 +17,18 @@ if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
     return 2;
 }
 
-var options = CliOptions.Parse(args);
+CliOptions options;
+try
+{
+    options = CliOptions.Parse(args);
+}
+catch (ArgumentException ex)
+{
+    Console.Error.WriteLine($"参数错误：{ex.Message}");
+    Console.Error.WriteLine("使用 --help 查看命令说明。");
+    return 2;
+}
+
 if (options.ShowHelp)
 {
     Console.WriteLine(CliHelp.Text);
@@ -33,6 +45,46 @@ var jsonOptions = new JsonSerializerOptions
 
 try
 {
+    if (options.StorageBenchmark)
+    {
+        var targets = new StorageBenchmarkTargetDiscovery().Discover();
+        var target = targets.FirstOrDefault(candidate => string.Equals(
+            candidate.DriveLetter,
+            NormalizeDrive(options.BenchmarkDrive!),
+            StringComparison.OrdinalIgnoreCase));
+        if (target is null)
+        {
+            Console.Error.WriteLine("未找到可用的本地存储跑分目标卷。");
+            return 3;
+        }
+
+        var benchmarkOptions = options.QuickStorageBenchmark
+            ? new StorageBenchmarkOptions { Runs = 1, FileSizeBytes = 256L * 1024 * 1024 }
+            : new StorageBenchmarkOptions();
+        benchmarkOptions = benchmarkOptions with
+        {
+            Runs = options.BenchmarkRuns ?? benchmarkOptions.Runs,
+            FileSizeBytes = checked((long)(options.BenchmarkSizeMiB ?? (benchmarkOptions.FileSizeBytes / 1024 / 1024)) * 1024 * 1024)
+        };
+        var selectedWorkloads = string.IsNullOrWhiteSpace(options.BenchmarkWorkload)
+            ? null
+            : new[] { options.BenchmarkWorkload };
+        var plan = StorageBenchmarkPlanner.CreatePlan(target, benchmarkOptions, selectedWorkloads);
+        Console.Error.WriteLine($"Target: {target.DisplayName}");
+        Console.Error.WriteLine($"Plan  : {StorageBenchmarkFormatting.FormatBytes(plan.Options.FileSizeBytes)}, maximum writes {StorageBenchmarkFormatting.FormatBytes(plan.MaximumWriteBytes)}");
+        using var benchmarkCancellation = options.CancelAfterMs is { } cancelAfterMs
+            ? new CancellationTokenSource(TimeSpan.FromMilliseconds(cancelAfterMs))
+            : new CancellationTokenSource();
+        var storageBenchmarkResult = await new StorageBenchmarkProcessRunner().RunAsync(
+            plan,
+            progress: null,
+            benchmarkCancellation.Token);
+        Console.WriteLine(options.Json
+            ? JsonSerializer.Serialize(storageBenchmarkResult, jsonOptions)
+            : StorageBenchmarkResultFormatter.Format(storageBenchmarkResult));
+        return storageBenchmarkResult.Cleanup.Deleted ? 0 : 5;
+    }
+
     if (options.StorageMode)
     {
         var inventory = new HardwareInventoryCollector().Collect();
@@ -109,10 +161,25 @@ try
 
     return 0;
 }
+catch (OperationCanceledException)
+{
+    Console.Error.WriteLine("存储跑分已取消，临时文件清理已完成或记录到诊断日志。");
+    return 130;
+}
 catch (Exception ex)
 {
-    Console.Error.WriteLine($"采集硬件信息失败：{ex.Message}");
+    Console.Error.WriteLine($"HwScope 命令执行失败：{ex.Message}");
     return 1;
+}
+
+static string NormalizeDrive(string value)
+{
+    var text = value.Trim().TrimEnd('\\');
+    return text.Length == 1 && char.IsLetter(text[0])
+        ? $"{char.ToUpperInvariant(text[0])}:"
+        : text.Length >= 2 && text[1] == ':'
+            ? $"{char.ToUpperInvariant(text[0])}:"
+            : text;
 }
 
 static string FormatRow(MemoryBenchmarkResult result, string rowKey)
@@ -224,13 +291,44 @@ static string FormatProcessor(MemoryBenchmarkProcessorPlacement? processor)
     return $"group {processor.Group}/cpu {processor.ProcessorNumber}{core}{numa}{efficiency}";
 }
 
-internal sealed record CliOptions(bool Json, bool Copy, bool MemoryBenchmark, bool StorageMode, int? StorageDisk, bool ShowHelp)
+internal sealed record CliOptions(
+    bool Json,
+    bool Copy,
+    bool MemoryBenchmark,
+    bool StorageBenchmark,
+    bool QuickStorageBenchmark,
+    string? BenchmarkDrive,
+    int? BenchmarkSizeMiB,
+    int? BenchmarkRuns,
+    string? BenchmarkWorkload,
+    int? CancelAfterMs,
+    bool StorageMode,
+    int? StorageDisk,
+    bool ShowHelp)
 {
     public static CliOptions Parse(string[] args)
     {
         var normalized = args.Select(a => a.Trim().ToLowerInvariant()).ToHashSet();
-        var storageMode = normalized.Contains("storage");
+        var optionsRequiringValue = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            "--disk", "--drive", "--size-mib", "--runs", "--workload", "--cancel-after-ms"
+        };
+        for (var index = 0; index < args.Length; index++)
+        {
+            if (optionsRequiringValue.Contains(args[index]) && index + 1 >= args.Length)
+            {
+                throw new ArgumentException($"{args[index]} 缺少参数值。");
+            }
+        }
+
+        var storageBenchmark = normalized.Contains("benchmark") && normalized.Contains("storage");
+        var storageMode = normalized.Contains("storage") && !storageBenchmark;
         int? storageDisk = null;
+        string? benchmarkDrive = null;
+        int? benchmarkSizeMiB = null;
+        int? benchmarkRuns = null;
+        string? benchmarkWorkload = null;
+        int? cancelAfterMs = null;
         for (var index = 0; index < args.Length - 1; index++)
         {
             if (args[index].Equals("--disk", StringComparison.OrdinalIgnoreCase)
@@ -241,14 +339,63 @@ internal sealed record CliOptions(bool Json, bool Copy, bool MemoryBenchmark, bo
                 break;
             }
         }
+        for (var index = 0; index < args.Length - 1; index++)
+        {
+            if (args[index].Equals("--drive", StringComparison.OrdinalIgnoreCase))
+            {
+                benchmarkDrive = args[index + 1];
+            }
+            if (args[index].Equals("--size-mib", StringComparison.OrdinalIgnoreCase))
+            {
+                if (!int.TryParse(args[index + 1], NumberStyles.Integer, CultureInfo.InvariantCulture, out var sizeMiB))
+                {
+                    throw new ArgumentException("--size-mib 必须是整数。");
+                }
+                benchmarkSizeMiB = sizeMiB;
+            }
+            if (args[index].Equals("--runs", StringComparison.OrdinalIgnoreCase))
+            {
+                if (!int.TryParse(args[index + 1], NumberStyles.Integer, CultureInfo.InvariantCulture, out var runs))
+                {
+                    throw new ArgumentException("--runs 必须是整数。");
+                }
+                benchmarkRuns = runs;
+            }
+            if (args[index].Equals("--workload", StringComparison.OrdinalIgnoreCase))
+            {
+                benchmarkWorkload = args[index + 1];
+            }
+            if (args[index].Equals("--cancel-after-ms", StringComparison.OrdinalIgnoreCase))
+            {
+                if (!int.TryParse(args[index + 1], NumberStyles.Integer, CultureInfo.InvariantCulture, out var milliseconds)
+                    || milliseconds <= 0)
+                {
+                    throw new ArgumentException("--cancel-after-ms 必须是大于 0 的整数。");
+                }
+                cancelAfterMs = milliseconds;
+            }
+        }
+
+        var showHelp = normalized.Contains("-h") || normalized.Contains("--help") || normalized.Contains("/?");
+        if (storageBenchmark && !showHelp && string.IsNullOrWhiteSpace(benchmarkDrive))
+        {
+            throw new ArgumentException("存储跑分必须显式指定 --drive，例如 --drive C:。");
+        }
 
         return new CliOptions(
             Json: normalized.Contains("--json"),
             Copy: normalized.Contains("--copy"),
             MemoryBenchmark: normalized.Contains("benchmark") && normalized.Contains("memory"),
+            StorageBenchmark: storageBenchmark,
+            QuickStorageBenchmark: normalized.Contains("--quick"),
+            BenchmarkDrive: benchmarkDrive,
+            BenchmarkSizeMiB: benchmarkSizeMiB,
+            BenchmarkRuns: benchmarkRuns,
+            BenchmarkWorkload: benchmarkWorkload,
+            CancelAfterMs: cancelAfterMs,
             StorageMode: storageMode,
             StorageDisk: storageDisk,
-            ShowHelp: normalized.Contains("-h") || normalized.Contains("--help") || normalized.Contains("/?"));
+            ShowHelp: showHelp);
     }
 }
 
@@ -291,6 +438,9 @@ internal static class CliHelp
       --copy       将默认文本摘要复制到剪贴板
       benchmark memory
                    运行内存跑分
+      benchmark storage --drive C: [--quick] [--size-mib N] [--runs N]
+                        [--workload ID] [--cancel-after-ms N] [--json]
+                   运行文件级存储跑分；必须显式指定目标卷；--quick 使用 1 run / 256 MiB
       storage list
                    列出物理存储设备
       storage --disk N [--json]
@@ -302,6 +452,7 @@ internal static class CliHelp
       dotnet run --project src/HwScope.Cli -- --json
       dotnet run --project src/HwScope.Cli -- --copy
       dotnet run --project src/HwScope.Cli -- benchmark memory
+      dotnet run --project src/HwScope.Cli -- benchmark storage --drive C: --quick
       dotnet run --project src/HwScope.Cli -- storage list
       dotnet run --project src/HwScope.Cli -- storage --disk 0
     """;
