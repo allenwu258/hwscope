@@ -20,6 +20,7 @@ public partial class App : Application
     public static SingleInstanceWindowManager SingleInstanceWindows { get; private set; } = null!;
     public static HardwarePreloadService HardwarePreload { get; private set; } = null!;
     public static StorageDetailService StorageDetails { get; private set; } = null!;
+    public static DeviceTopologyService DeviceTopologies { get; private set; } = null!;
 
     protected override void OnStartup(StartupEventArgs e)
     {
@@ -41,6 +42,7 @@ public partial class App : Application
         SingleInstanceWindows = new SingleInstanceWindowManager();
         HardwarePreload = new HardwarePreloadService();
         StorageDetails = new StorageDetailService(HardwarePreload);
+        DeviceTopologies = new DeviceTopologyService();
         ThemeService.ApplyCurrentTheme();
 
         base.OnStartup(e);

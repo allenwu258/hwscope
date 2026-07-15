@@ -7,4 +7,7 @@ public sealed record TopologyNode(
     string? Subtitle,
     IReadOnlyDictionary<string, string> Properties,
     IReadOnlyList<string> RelatedIds,
-    TopologyStyle Style);
+    TopologyStyle Style,
+    bool CanExpand = false,
+    bool IsExpanded = false,
+    int HiddenChildCount = 0);

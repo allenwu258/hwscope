@@ -39,10 +39,19 @@ public partial class TopologyCanvas : UserControl
         typeof(TopologyCanvas),
         new PropertyMetadata(Array.Empty<string>(), OnVisualPropertyChanged));
 
-    private readonly ITopologyLayoutEngine _layoutEngine = new NestedDomainLayoutEngine();
+    public static readonly DependencyProperty LayoutModeProperty = DependencyProperty.Register(
+        nameof(LayoutMode),
+        typeof(TopologyLayoutMode),
+        typeof(TopologyCanvas),
+        new PropertyMetadata(TopologyLayoutMode.NestedDomains, OnVisualPropertyChanged));
+
+    private readonly ITopologyLayoutEngine _nestedLayoutEngine = new NestedDomainLayoutEngine();
+    private readonly ITopologyLayoutEngine _hierarchicalLayoutEngine = new HierarchicalTopologyLayoutEngine();
     private TopologyLayoutResult _layout = TopologyLayoutResult.Empty;
 
     public event EventHandler<TopologyItemSelectedEventArgs>? ItemSelected;
+
+    public event EventHandler<TopologyExpansionToggledEventArgs>? ExpansionToggled;
 
     public TopologyCanvas()
     {
@@ -81,6 +90,12 @@ public partial class TopologyCanvas : UserControl
         set => SetValue(HighlightedItemIdsProperty, value);
     }
 
+    public TopologyLayoutMode LayoutMode
+    {
+        get => (TopologyLayoutMode)GetValue(LayoutModeProperty);
+        set => SetValue(LayoutModeProperty, value);
+    }
+
     private static void OnVisualPropertyChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
     {
         ((TopologyCanvas)d).Render();
@@ -105,7 +120,10 @@ public partial class TopologyCanvas : UserControl
 
         var document = Document ?? TopologyDocument.Empty;
         var availableWidth = ActualWidth > 0 ? ActualWidth - 36 : 900;
-        _layout = _layoutEngine.Layout(document, TopologyLayoutOptions.Default with
+        var layoutEngine = LayoutMode == TopologyLayoutMode.Hierarchical
+            ? _hierarchicalLayoutEngine
+            : _nestedLayoutEngine;
+        _layout = layoutEngine.Layout(document, TopologyLayoutOptions.Default with
         {
             AvailableWidth = Math.Max(360, availableWidth),
             Density = Density
@@ -254,7 +272,31 @@ public partial class TopologyCanvas : UserControl
     private UIElement CreateNodeContent(TopologyNode node)
     {
         var panel = new StackPanel();
-        panel.Children.Add(new TextBlock
+        var header = new DockPanel { LastChildFill = true };
+        if (node.CanExpand)
+        {
+            var expansionButton = new Button
+            {
+                Width = 20,
+                Height = 20,
+                Padding = new Thickness(0),
+                Margin = new Thickness(0, 0, 5, 0),
+                Background = Brushes.Transparent,
+                BorderBrush = Brushes.Transparent,
+                Cursor = System.Windows.Input.Cursors.Hand,
+                Content = node.IsExpanded ? "▾" : "▸",
+                ToolTip = node.IsExpanded ? "收起分支" : $"展开分支（隐藏 {node.HiddenChildCount} 个节点）"
+            };
+            expansionButton.Click += (_, e) =>
+            {
+                e.Handled = true;
+                ExpansionToggled?.Invoke(this, new TopologyExpansionToggledEventArgs(node.Id, !node.IsExpanded));
+            };
+            DockPanel.SetDock(expansionButton, Dock.Left);
+            header.Children.Add(expansionButton);
+        }
+
+        header.Children.Add(new TextBlock
         {
             Text = node.Label,
             FontSize = 13,
@@ -262,6 +304,7 @@ public partial class TopologyCanvas : UserControl
             Foreground = TryResourceBrush("HwScopeStrongTextBrush", Brushes.Black),
             TextTrimming = TextTrimming.CharacterEllipsis
         });
+        panel.Children.Add(header);
 
         if (!string.IsNullOrWhiteSpace(node.Subtitle))
         {
@@ -394,4 +437,11 @@ public sealed class TopologyItemSelectedEventArgs(string itemId, string kind) : 
     public string ItemId { get; } = itemId;
 
     public string Kind { get; } = kind;
+}
+
+public sealed class TopologyExpansionToggledEventArgs(string itemId, bool isExpanded) : EventArgs
+{
+    public string ItemId { get; } = itemId;
+
+    public bool IsExpanded { get; } = isExpanded;
 }

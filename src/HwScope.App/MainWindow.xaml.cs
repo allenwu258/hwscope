@@ -14,6 +14,7 @@ public partial class MainWindow : FluentWindow
     private readonly CpuDetailPage _cpuDetailPage = new();
     private readonly MemoryDetailPage _memoryDetailPage = new();
     private readonly StorageDetailPage _storageDetailPage = new();
+    private readonly DeviceTopologyPage _deviceTopologyPage = new();
     private readonly HardwareCollector _hardwareReportBuilder = new();
     private HardwareReport? _currentReport;
 
@@ -26,6 +27,7 @@ public partial class MainWindow : FluentWindow
         _cpuDetailPage.StatusChanged += (_, status) => SetFooterStatus(status);
         _memoryDetailPage.StatusChanged += (_, status) => SetFooterStatus(status);
         _storageDetailPage.StatusChanged += (_, status) => SetFooterStatus(status);
+        _deviceTopologyPage.StatusChanged += (_, status) => SetFooterStatus(status);
         App.ThemeService.StatusChanged += (_, status) => SetFooterStatus(status);
         App.HardwarePreload.ProgressChanged += (_, progress) => SetFooterStatus(progress.Message);
         App.HardwarePreload.InventoryChanged += (_, snapshot) => _currentReport = _hardwareReportBuilder.CreateSummary(snapshot);
@@ -86,6 +88,9 @@ public partial class MainWindow : FluentWindow
                 break;
             case "storage-detail":
                 ShowStorageDetail();
+                break;
+            case "device-topology":
+                ShowDeviceTopology();
                 break;
             case "summary":
                 ShowHardwareSummary();
@@ -167,6 +172,12 @@ public partial class MainWindow : FluentWindow
     {
         PageHost.Content = _storageDetailPage;
         SetFooterStatus("存储设备详情。");
+    }
+
+    private void ShowDeviceTopology()
+    {
+        PageHost.Content = _deviceTopologyPage;
+        SetFooterStatus("总线与端口。");
     }
 
     private async Task ShowMemoryBenchmarkAsync()

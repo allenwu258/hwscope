@@ -8,6 +8,7 @@ using System.Text.Json.Serialization;
 using HwScope.Core.Benchmark;
 using HwScope.Core.Benchmark.Storage;
 using HwScope.Core.Hardware;
+using HwScope.Core.Hardware.DeviceTopology.Pci;
 using HwScope.Core.Hardware.Inventory;
 using HwScope.Core.Hardware.Storage;
 
@@ -45,6 +46,23 @@ var jsonOptions = new JsonSerializerOptions
 
 try
 {
+    if (options.PciMode)
+    {
+        var snapshot = new PciTopologyCollector().Collect();
+        var output = options.Json
+            ? JsonSerializer.Serialize(snapshot, jsonOptions)
+            : PciTopologyReportFormatter.Format(snapshot);
+        Console.WriteLine(output);
+        if (options.Copy)
+        {
+            Clipboard.Copy(output);
+            Console.WriteLine();
+            Console.WriteLine("已复制到剪贴板。");
+        }
+
+        return snapshot.Diagnostics.HasErrors ? 3 : 0;
+    }
+
     if (options.StorageBenchmark)
     {
         var targets = new StorageBenchmarkTargetDiscovery().Discover();
@@ -304,6 +322,7 @@ internal sealed record CliOptions(
     int? CancelAfterMs,
     bool StorageMode,
     int? StorageDisk,
+    bool PciMode,
     bool ShowHelp)
 {
     public static CliOptions Parse(string[] args)
@@ -395,6 +414,7 @@ internal sealed record CliOptions(
             CancelAfterMs: cancelAfterMs,
             StorageMode: storageMode,
             StorageDisk: storageDisk,
+            PciMode: normalized.Contains("pcie") || normalized.Contains("pci"),
             ShowHelp: showHelp);
     }
 }
@@ -445,6 +465,8 @@ internal static class CliHelp
                    列出物理存储设备
       storage --disk N [--json]
                    读取指定物理磁盘的详情和健康数据
+      pcie [--json] [--copy]
+                   枚举当前 PCI/PCIe 拓扑、BDF、链路属性和诊断
       -h, --help   显示帮助
 
     示例：
@@ -455,5 +477,6 @@ internal static class CliHelp
       dotnet run --project src/HwScope.Cli -- benchmark storage --drive C: --quick
       dotnet run --project src/HwScope.Cli -- storage list
       dotnet run --project src/HwScope.Cli -- storage --disk 0
+      dotnet run --project src/HwScope.Cli -- pcie
     """;
 }

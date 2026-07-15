@@ -237,6 +237,10 @@
                                                    Tag="summary"
                                                    Icon="{ui:SymbolIcon WifiSettings20}"
                                                    Click="NavigationItem_Click" />
+                            <ui:NavigationViewItem Content="总线与端口"
+                                                   Tag="device-topology"
+                                                   Icon="{ui:SymbolIcon BranchFork24}"
+                                                   Click="NavigationItem_Click" />
                         </ui:NavigationViewItem.MenuItems>
                     </ui:NavigationViewItem>
                     <ui:NavigationViewItem Content="性能测试"

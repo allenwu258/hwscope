@@ -20,3 +20,9 @@ public enum TopologyDensity
     Compact,
     Detailed
 }
+
+public enum TopologyLayoutMode
+{
+    NestedDomains,
+    Hierarchical
+}

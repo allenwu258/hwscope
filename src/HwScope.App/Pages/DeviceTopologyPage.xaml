@@ -1,0 +1,201 @@
+<UserControl x:Class="HwScope.App.Pages.DeviceTopologyPage"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
+             xmlns:topology="clr-namespace:HwScope.App.Topology.Controls"
+             mc:Ignorable="d"
+             d:DesignHeight="720"
+             d:DesignWidth="1080">
+    <UserControl.Resources>
+        <Style x:Key="TopologySectionStyle" TargetType="Border">
+            <Setter Property="Width" Value="440" />
+            <Setter Property="MinHeight" Value="150" />
+            <Setter Property="Margin" Value="0,0,12,12" />
+            <Setter Property="Padding" Value="14" />
+            <Setter Property="Background" Value="{DynamicResource HwScopeCardBrush}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource HwScopeLineBrush}" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="CornerRadius" Value="7" />
+        </Style>
+    </UserControl.Resources>
+
+    <Grid Background="{DynamicResource HwScopeContentBrush}">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <Grid Grid.Row="0" Margin="16,14,16,10">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+
+            <StackPanel>
+                <TextBlock Text="总线与端口"
+                           FontSize="24"
+                           FontWeight="SemiBold"
+                           Foreground="{DynamicResource HwScopeTextBrush}" />
+                <TextBlock x:Name="SubtitleText"
+                           Margin="0,5,0,0"
+                           FontSize="13"
+                           Foreground="{DynamicResource HwScopeMutedTextBrush}"
+                           Text="正在读取 PCI Express 设备..." />
+            </StackPanel>
+
+            <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                <ui:Button Height="32"
+                           MinWidth="78"
+                           Padding="10,0"
+                           Icon="{ui:SymbolIcon ArrowClockwise24}"
+                           Content="刷新"
+                           Click="RefreshButton_Click" />
+                <ui:Button Height="32"
+                           MinWidth="78"
+                           Margin="6,0,0,0"
+                           Padding="10,0"
+                           Icon="{ui:SymbolIcon Copy24}"
+                           Content="复制"
+                           Click="CopyButton_Click" />
+                <ui:Button Height="32"
+                           MinWidth="78"
+                           Margin="6,0,0,0"
+                           Padding="10,0"
+                           Icon="{ui:SymbolIcon Save24}"
+                           Content="保存"
+                           Click="SaveButton_Click" />
+            </StackPanel>
+        </Grid>
+
+        <TabControl Grid.Row="1" Margin="16,0,16,14">
+            <TabItem Header="PCI Express">
+                <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                    <StackPanel Margin="0,10,0,0">
+                        <Border Height="320"
+                                Background="{DynamicResource HwScopeCardBrush}"
+                                BorderBrush="{DynamicResource HwScopeLineBrush}"
+                                BorderThickness="1"
+                                CornerRadius="7">
+                            <Grid>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="38" />
+                                    <RowDefinition Height="*" />
+                                </Grid.RowDefinitions>
+                                <Grid Grid.Row="0" Margin="12,0">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Text="PCI Express 拓扑"
+                                               VerticalAlignment="Center"
+                                               FontSize="14"
+                                               FontWeight="SemiBold"
+                                               Foreground="{DynamicResource HwScopeStrongTextBrush}" />
+                                    <TextBlock x:Name="MapHintText"
+                                               Grid.Column="1"
+                                               VerticalAlignment="Center"
+                                               FontSize="12"
+                                               Foreground="{DynamicResource HwScopeMutedTextBrush}"
+                                               Text="选择节点查看详情" />
+                                </Grid>
+                                <Border Grid.Row="1" BorderBrush="{DynamicResource HwScopeLineBrush}" BorderThickness="0,1,0,0">
+                                    <topology:TopologyCanvas x:Name="PciTopologyMap"
+                                                             Density="Compact"
+                                                             LayoutMode="Hierarchical"
+                                                             ItemSelected="PciTopologyMap_ItemSelected"
+                                                             ExpansionToggled="PciTopologyMap_ExpansionToggled" />
+                                </Border>
+                            </Grid>
+                        </Border>
+
+                        <Border Margin="0,12,0,12"
+                                Padding="0,0,0,12"
+                                BorderBrush="{DynamicResource HwScopeLineBrush}"
+                                BorderThickness="0,0,0,1">
+                            <StackPanel>
+                                <TextBlock x:Name="SelectedTitleText"
+                                           Text="请选择一个 PCI Express 节点"
+                                           FontSize="19"
+                                           FontWeight="SemiBold"
+                                           Foreground="{DynamicResource HwScopeStrongTextBrush}"
+                                           TextWrapping="Wrap" />
+                                <TextBlock x:Name="SelectedMetaText"
+                                           Margin="0,6,0,0"
+                                           FontSize="13"
+                                           Foreground="{DynamicResource HwScopeMutedTextBrush}"
+                                           TextWrapping="Wrap" />
+                                <TextBlock x:Name="SelectedPathText"
+                                           Margin="0,5,0,0"
+                                           FontSize="12"
+                                           Foreground="{DynamicResource HwScopeMutedTextBrush}"
+                                           TextWrapping="Wrap" />
+                            </StackPanel>
+                        </Border>
+
+                        <ItemsControl x:Name="DetailSectionsList">
+                            <ItemsControl.ItemsPanel>
+                                <ItemsPanelTemplate>
+                                    <WrapPanel />
+                                </ItemsPanelTemplate>
+                            </ItemsControl.ItemsPanel>
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <Border Style="{StaticResource TopologySectionStyle}">
+                                        <StackPanel>
+                                            <TextBlock Text="{Binding Title}"
+                                                       FontSize="15"
+                                                       FontWeight="SemiBold"
+                                                       Foreground="{DynamicResource HwScopeStrongTextBrush}" />
+                                            <ItemsControl ItemsSource="{Binding Rows}" Margin="0,8,0,0">
+                                                <ItemsControl.ItemTemplate>
+                                                    <DataTemplate>
+                                                        <Border MinHeight="31"
+                                                                BorderBrush="{DynamicResource HwScopeLineBrush}"
+                                                                BorderThickness="0,0,0,1">
+                                                            <Grid>
+                                                                <Grid.ColumnDefinitions>
+                                                                    <ColumnDefinition Width="132" />
+                                                                    <ColumnDefinition Width="*" />
+                                                                </Grid.ColumnDefinitions>
+                                                                <TextBlock Text="{Binding Label}"
+                                                                           VerticalAlignment="Center"
+                                                                           FontSize="13"
+                                                                           Foreground="{DynamicResource HwScopeMutedTextBrush}" />
+                                                                <TextBlock Grid.Column="1"
+                                                                           Text="{Binding Value}"
+                                                                           VerticalAlignment="Center"
+                                                                           FontSize="13"
+                                                                           Foreground="{DynamicResource HwScopeTextBrush}"
+                                                                           TextWrapping="Wrap" />
+                                                            </Grid>
+                                                        </Border>
+                                                    </DataTemplate>
+                                                </ItemsControl.ItemTemplate>
+                                            </ItemsControl>
+                                        </StackPanel>
+                                    </Border>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </StackPanel>
+                </ScrollViewer>
+            </TabItem>
+
+            <TabItem Header="USB">
+                <Grid>
+                    <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
+                        <ui:SymbolIcon Symbol="UsbPlug24"
+                                       FontSize="34"
+                                       Foreground="{DynamicResource HwScopeMutedTextBrush}" />
+                        <TextBlock Margin="0,12,0,0"
+                                   Text="USB 物理端口树将在下一阶段接入"
+                                   FontSize="14"
+                                   Foreground="{DynamicResource HwScopeMutedTextBrush}" />
+                    </StackPanel>
+                </Grid>
+            </TabItem>
+        </TabControl>
+    </Grid>
+</UserControl>
