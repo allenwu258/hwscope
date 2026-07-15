@@ -69,6 +69,25 @@ internal static partial class PciAddressParser
         return false;
     }
 
+    public static bool TryParseRootIndex(IEnumerable<string> locationPaths, out uint rootIndex)
+    {
+        rootIndex = 0;
+        foreach (var path in locationPaths)
+        {
+            var match = PciRootRegex().Match(path ?? string.Empty);
+            if (match.Success
+                && uint.TryParse(match.Groups[1].Value, NumberStyles.HexNumber, CultureInfo.InvariantCulture, out rootIndex))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     [GeneratedRegex(@"(?:^|#)PCI\(([0-9A-Fa-f]{4})\)", RegexOptions.CultureInvariant)]
     private static partial Regex PciSegmentRegex();
+
+    [GeneratedRegex(@"(?:^|#)PCIROOT\(([0-9A-Fa-f]+)\)", RegexOptions.CultureInvariant)]
+    private static partial Regex PciRootRegex();
 }

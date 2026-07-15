@@ -37,4 +37,15 @@ public sealed class PciAddressParserTests
         Assert.Equal((byte)0, device);
         Assert.Equal((byte)4, function);
     }
+
+    [Fact]
+    public void TryParseRootIndex_UsesHexadecimalPciRootSegment()
+    {
+        var success = PciAddressParser.TryParseRootIndex(
+            ["PCIROOT(1A)#PCI(0200)"],
+            out var rootIndex);
+
+        Assert.True(success);
+        Assert.Equal((uint)0x1a, rootIndex);
+    }
 }

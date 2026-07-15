@@ -9,7 +9,9 @@ public static class PciTopologyReportFormatter
         var builder = new StringBuilder();
         builder.AppendLine("PCI Express Topology");
         builder.AppendLine($"Generated At: {snapshot.GeneratedAt:yyyy-MM-dd HH:mm:ss zzz}");
-        builder.AppendLine($"Nodes: {snapshot.Nodes.Count}, Roots: {snapshot.RootNodeIds.Count}, Diagnostics: {snapshot.Diagnostics.Entries.Count}");
+        var deviceCount = snapshot.Nodes.Count(node => node.Identity.Enumerator == "PCI");
+        var syntheticCount = snapshot.Nodes.Count - deviceCount;
+        builder.AppendLine($"Devices: {deviceCount}, Synthetic Roots: {syntheticCount}, Roots: {snapshot.RootNodeIds.Count}, Diagnostics: {snapshot.Diagnostics.Entries.Count}");
         builder.AppendLine();
 
         var nodes = snapshot.Nodes.ToDictionary(node => node.NodeId, StringComparer.OrdinalIgnoreCase);

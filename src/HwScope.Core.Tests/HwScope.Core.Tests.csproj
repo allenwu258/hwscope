@@ -19,6 +19,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\HwScope.Core\HwScope.Core.csproj" />
+    <ProjectReference Include="..\HwScope.Cli\HwScope.Cli.csproj" />
   </ItemGroup>
 
 </Project>

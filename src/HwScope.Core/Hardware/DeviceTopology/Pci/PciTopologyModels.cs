@@ -4,7 +4,8 @@ public enum PciTopologyNodeKind
 {
     Root,
     Bridge,
-    Endpoint
+    Endpoint,
+    Unknown
 }
 
 public enum PciDeviceType

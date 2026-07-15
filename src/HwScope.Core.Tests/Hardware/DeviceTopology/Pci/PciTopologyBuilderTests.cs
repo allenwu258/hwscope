@@ -38,10 +38,14 @@ public sealed class PciTopologyBuilderTests
             [root, endpoint],
             generatedAt: new DateTimeOffset(2026, 7, 15, 0, 0, 0, TimeSpan.Zero));
 
+        var syntheticRoot = Assert.Single(snapshot.Nodes, node => node.Identity.Enumerator == "PCIROOT");
         var rootNode = Assert.Single(snapshot.Nodes, node => node.Identity.InstanceId == root.InstanceId);
         var endpointNode = Assert.Single(snapshot.Nodes, node => node.Identity.InstanceId == endpoint.InstanceId);
-        Assert.Equal(PciTopologyNodeKind.Root, rootNode.Kind);
+        Assert.Equal(PciTopologyNodeKind.Root, syntheticRoot.Kind);
+        Assert.Equal(PciTopologyNodeKind.Bridge, rootNode.Kind);
+        Assert.Equal(syntheticRoot.NodeId, rootNode.ParentNodeId);
         Assert.Equal(rootNode.NodeId, endpointNode.ParentNodeId);
+        Assert.Contains(rootNode.NodeId, syntheticRoot.ChildNodeIds);
         Assert.Contains(endpointNode.NodeId, rootNode.ChildNodeIds);
         Assert.Equal("03:00.0", endpointNode.Address!.ToString());
         Assert.Equal("144D", endpointNode.PciIdentity.VendorId);
@@ -64,10 +68,50 @@ public sealed class PciTopologyBuilderTests
 
         var snapshot = PciTopologyBuilder.Build([record]);
 
-        var node = Assert.Single(snapshot.Nodes);
+        var node = Assert.Single(snapshot.Nodes, candidate => candidate.Identity.InstanceId == record.InstanceId);
         Assert.Equal(PciTopologyNodeKind.Endpoint, node.Kind);
         Assert.Equal("05:01.0", node.Address!.ToString());
         Assert.Contains(snapshot.Diagnostics.Entries, entry => entry.Code == "pci.address-location-conflict");
+    }
+
+    [Fact]
+    public void Build_DoesNotClassifyUnknownDeviceAsEndpoint()
+    {
+        var record = CreateRecord(
+            "PCI\\UNKNOWN\\DEVICE",
+            deviceType: null,
+            baseClass: null,
+            subClass: null,
+            programmingInterface: null,
+            bus: 0,
+            address: 0);
+
+        var snapshot = PciTopologyBuilder.Build([record]);
+
+        var node = Assert.Single(snapshot.Nodes);
+        Assert.Equal(PciTopologyNodeKind.Unknown, node.Kind);
+        Assert.Contains(node.NodeId, snapshot.RootNodeIds);
+    }
+
+    [Fact]
+    public void Build_GroupsTopLevelDevicesByPciRootLocation()
+    {
+        var first = CreateRecord(
+            "PCI\\VEN_1111&DEV_0001\\A",
+            parentInstanceId: "ACPI\\ROOT_A",
+            locationPath: "PCIROOT(0)#PCI(0100)");
+        var second = CreateRecord(
+            "PCI\\VEN_2222&DEV_0002\\B",
+            parentInstanceId: "ACPI\\ROOT_B",
+            locationPath: "PCIROOT(0)#PCI(0200)");
+
+        var snapshot = PciTopologyBuilder.Build([first, second]);
+
+        var rootId = Assert.Single(snapshot.RootNodeIds);
+        var root = Assert.Single(snapshot.Nodes, node => node.NodeId == rootId);
+        Assert.Equal("PCIROOT", root.Identity.Enumerator);
+        Assert.Equal(2, root.ChildNodeIds.Count);
+        Assert.All(snapshot.Nodes.Where(node => node.Identity.Enumerator == "PCI"), node => Assert.Equal(rootId, node.ParentNodeId));
     }
 
     [Fact]
@@ -121,6 +165,67 @@ public sealed class PciTopologyBuilderTests
         var diagnostic = Assert.Single(snapshot.Diagnostics.Entries);
         Assert.Equal("pci.enumeration-failed", diagnostic.Code);
         Assert.Contains("InvalidOperationException", diagnostic.Message);
+    }
+
+    [Fact]
+    public void RefreshPolicy_PreservesLastSuccessfulSnapshotAfterCollectionFailure()
+    {
+        var current = PciTopologyBuilder.Build(
+            [CreateRecord("PCI\\VEN_1234&DEV_5678\\CURRENT")],
+            generatedAt: new DateTimeOffset(2026, 7, 15, 1, 0, 0, TimeSpan.Zero));
+        var failed = new PciTopologySnapshot(
+            [],
+            [],
+            new HwScope.Core.Hardware.DeviceTopology.DeviceTopologyDiagnostics(
+            [
+                new HwScope.Core.Hardware.DeviceTopology.DeviceTopologyDiagnostic(
+                    HwScope.Core.Hardware.DeviceTopology.DeviceTopologyDiagnosticSeverity.Error,
+                    "pci.enumeration-failed",
+                    "Synthetic failure")
+            ]),
+            new DateTimeOffset(2026, 7, 15, 2, 0, 0, TimeSpan.Zero));
+
+        var result = PciTopologyRefreshPolicy.Resolve(current, failed);
+
+        Assert.True(result.CollectionFailed);
+        Assert.True(result.IsStale);
+        Assert.Same(current, result.Snapshot);
+        Assert.Same(failed.Diagnostics, result.AttemptDiagnostics);
+    }
+
+    [Fact]
+    public void Redactor_RemovesSensitiveIdentityAndPreservesGraphReferences()
+    {
+        var parent = CreateRecord(
+            "PCI\\VEN_1111&DEV_0001\\SECRET_PARENT",
+            parentInstanceId: "ACPI\\ROOT",
+            locationPath: "PCIROOT(0)#PCI(0100)");
+        var child = CreateRecord(
+            "PCI\\VEN_2222&DEV_0002\\SECRET_CHILD",
+            parentInstanceId: parent.InstanceId,
+            locationPath: "PCIROOT(0)#PCI(0100)#PCI(0000)");
+        var snapshot = PciTopologyBuilder.Build(
+            [parent, child],
+            [new HwScope.Core.Hardware.DeviceTopology.DeviceTopologyDiagnostic(
+                HwScope.Core.Hardware.DeviceTopology.DeviceTopologyDiagnosticSeverity.Warning,
+                "synthetic-sensitive-message",
+                $"Device {child.InstanceId} failed at {PciTopologyBuilder.BuildNodeId(child.InstanceId)}.",
+                PciTopologyBuilder.BuildNodeId(child.InstanceId))]);
+
+        var redacted = PciTopologyRedactor.RedactSensitiveIds(snapshot);
+
+        Assert.DoesNotContain(redacted.Nodes, node => node.Identity.InstanceId.Contains("SECRET", StringComparison.Ordinal));
+        Assert.All(redacted.Nodes, node =>
+        {
+            Assert.Equal("[redacted]", node.Identity.InstanceId);
+            Assert.Null(node.Identity.ContainerId);
+            Assert.Empty(node.Identity.HardwareIds);
+            Assert.Empty(node.Identity.LocationPaths);
+        });
+        var redactedChild = Assert.Single(redacted.Nodes, node => node.Identity.Enumerator == "PCI" && node.ParentNodeId is not null && node.ParentNodeId.StartsWith("pci-node-", StringComparison.Ordinal));
+        Assert.Contains(redactedChild.NodeId, redacted.Nodes.Single(node => node.NodeId == redactedChild.ParentNodeId).ChildNodeIds);
+        Assert.DoesNotContain("SECRET_CHILD", redacted.Diagnostics.Entries.Single().Message, StringComparison.Ordinal);
+        Assert.Contains(snapshot.Nodes, node => node.Identity.InstanceId.Contains("SECRET", StringComparison.Ordinal));
     }
 
     private static PciDeviceRecord CreateRecord(

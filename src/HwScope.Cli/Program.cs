@@ -50,7 +50,9 @@ try
     {
         var snapshot = new PciTopologyCollector().Collect();
         var output = options.Json
-            ? JsonSerializer.Serialize(snapshot, jsonOptions)
+            ? JsonSerializer.Serialize(
+                options.IncludeSensitiveIds ? snapshot : PciTopologyRedactor.RedactSensitiveIds(snapshot),
+                jsonOptions)
             : PciTopologyReportFormatter.Format(snapshot);
         Console.WriteLine(output);
         if (options.Copy)
@@ -323,11 +325,17 @@ internal sealed record CliOptions(
     bool StorageMode,
     int? StorageDisk,
     bool PciMode,
+    bool IncludeSensitiveIds,
     bool ShowHelp)
 {
     public static CliOptions Parse(string[] args)
     {
         var normalized = args.Select(a => a.Trim().ToLowerInvariant()).ToHashSet();
+        var command = args
+            .Select(argument => argument.Trim())
+            .FirstOrDefault(argument => !argument.Equals("--json", StringComparison.OrdinalIgnoreCase)
+                && !argument.Equals("--copy", StringComparison.OrdinalIgnoreCase)
+                && !argument.Equals("--include-sensitive-ids", StringComparison.OrdinalIgnoreCase));
         var optionsRequiringValue = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
             "--disk", "--drive", "--size-mib", "--runs", "--workload", "--cancel-after-ms"
@@ -414,7 +422,8 @@ internal sealed record CliOptions(
             CancelAfterMs: cancelAfterMs,
             StorageMode: storageMode,
             StorageDisk: storageDisk,
-            PciMode: normalized.Contains("pcie") || normalized.Contains("pci"),
+            PciMode: command is not null && (command.Equals("pcie", StringComparison.OrdinalIgnoreCase) || command.Equals("pci", StringComparison.OrdinalIgnoreCase)),
+            IncludeSensitiveIds: normalized.Contains("--include-sensitive-ids"),
             ShowHelp: showHelp);
     }
 }
@@ -465,8 +474,9 @@ internal static class CliHelp
                    列出物理存储设备
       storage --disk N [--json]
                    读取指定物理磁盘的详情和健康数据
-      pcie [--json] [--copy]
+      pcie [--json] [--copy] [--include-sensitive-ids]
                    枚举当前 PCI/PCIe 拓扑、BDF、链路属性和诊断
+                   JSON 默认移除稳定设备标识；仅本机诊断时可显式保留
       -h, --help   显示帮助
 
     示例：

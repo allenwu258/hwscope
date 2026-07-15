@@ -27,7 +27,7 @@ public static class PciCompactTopologyAdapter
         var visibleIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var rootId in snapshot.RootNodeIds)
         {
-            if (nodes.TryGetValue(rootId, out var root) && IsCompactRootVisible(root))
+            if (nodes.TryGetValue(rootId, out var root) && IsCompactNodeVisible(root))
             {
                 AddVisible(rootId, nodes, expandedNodeIds, visibleIds);
             }
@@ -66,7 +66,8 @@ public static class PciCompactTopologyAdapter
         IReadOnlySet<string> expandedNodeIds,
         IReadOnlyDictionary<string, PciTopologyNode> nodes)
     {
-        var hiddenCount = expandedNodeIds.Contains(node.NodeId) ? 0 : CountDescendants(node.NodeId, nodes);
+        var collapsedCount = expandedNodeIds.Contains(node.NodeId) ? 0 : CountCompactDescendants(node.NodeId, nodes);
+        var filteredCount = CountFilteredDescendants(node.NodeId, nodes);
         var properties = new Dictionary<string, string>();
         if (node.Link.CurrentGeneration.IsAvailable || node.Link.CurrentWidth.IsAvailable)
         {
@@ -77,9 +78,18 @@ public static class PciCompactTopologyAdapter
             }.Where(value => !string.IsNullOrWhiteSpace(value)));
         }
 
-        if (hiddenCount > 0)
+        if (collapsedCount > 0 || filteredCount > 0)
         {
-            properties["收起"] = $"{hiddenCount} 个节点";
+            var hiddenParts = new List<string>();
+            if (collapsedCount > 0)
+            {
+                hiddenParts.Add($"收起 {collapsedCount}");
+            }
+            if (filteredCount > 0)
+            {
+                hiddenParts.Add($"内部 {filteredCount}");
+            }
+            properties["隐藏"] = string.Join(" · ", hiddenParts);
         }
         else if (node.Identity.Status.HasProblem)
         {
@@ -92,7 +102,8 @@ public static class PciCompactTopologyAdapter
             {
                 PciTopologyNodeKind.Bridge => "pci.bridge",
                 PciTopologyNodeKind.Root => "pci.root",
-                _ => "pci.endpoint"
+                PciTopologyNodeKind.Endpoint => "pci.endpoint",
+                _ => "pci.unknown"
             },
             BuildCompactLabel(node),
             node.Address?.ToString() ?? node.Class.DisplayName,
@@ -105,7 +116,7 @@ public static class PciCompactTopologyAdapter
                     : TopologyAccentKeys.DevicePcie),
             CanExpand: node.ChildNodeIds.Count > 0,
             IsExpanded: expandedNodeIds.Contains(node.NodeId),
-            HiddenChildCount: hiddenCount);
+            HiddenChildCount: collapsedCount + filteredCount);
     }
 
     private static void AddVisible(
@@ -121,7 +132,10 @@ public static class PciCompactTopologyAdapter
 
         foreach (var childId in node.ChildNodeIds)
         {
-            AddVisible(childId, nodes, expandedNodeIds, visibleIds);
+            if (nodes.TryGetValue(childId, out var child) && IsCompactNodeVisible(child))
+            {
+                AddVisible(childId, nodes, expandedNodeIds, visibleIds);
+            }
         }
     }
 
@@ -151,20 +165,36 @@ public static class PciCompactTopologyAdapter
         return false;
     }
 
-    private static int CountDescendants(string nodeId, IReadOnlyDictionary<string, PciTopologyNode> nodes)
+    private static int CountCompactDescendants(string nodeId, IReadOnlyDictionary<string, PciTopologyNode> nodes)
     {
         if (!nodes.TryGetValue(nodeId, out var node))
         {
             return 0;
         }
 
-        return node.ChildNodeIds.Sum(childId => 1 + CountDescendants(childId, nodes));
+        return node.ChildNodeIds.Sum(childId =>
+            nodes.TryGetValue(childId, out var child) && IsCompactNodeVisible(child)
+                ? 1 + CountCompactDescendants(childId, nodes)
+                : 0);
     }
 
-    private static bool IsCompactRootVisible(PciTopologyNode node)
+    private static int CountFilteredDescendants(string nodeId, IReadOnlyDictionary<string, PciTopologyNode> nodes)
     {
-        return node.ChildNodeIds.Count > 0
-            || node.Class.BaseClass.HasValue
+        if (!nodes.TryGetValue(nodeId, out var node))
+        {
+            return 0;
+        }
+
+        return node.ChildNodeIds.Sum(childId =>
+            nodes.TryGetValue(childId, out var child)
+                ? (IsCompactNodeVisible(child) ? 0 : 1) + CountFilteredDescendants(childId, nodes)
+                : 0);
+    }
+
+    private static bool IsCompactNodeVisible(PciTopologyNode node)
+    {
+        return node.Kind != PciTopologyNodeKind.Unknown
+            || node.ChildNodeIds.Count > 0
             || node.Identity.Status.HasProblem;
     }
 

@@ -35,7 +35,9 @@ internal sealed record PciDeviceRecord(
     string DriverDescription,
     string DriverProvider,
     string DriverVersion,
-    string DriverInfPath);
+    string DriverInfPath,
+    bool IsSyntheticRoot = false,
+    uint? RootIndex = null);
 
 internal sealed record PciDeviceSourceResult(
     IReadOnlyList<PciDeviceRecord> Devices,

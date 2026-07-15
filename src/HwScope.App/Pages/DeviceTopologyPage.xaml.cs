@@ -29,13 +29,13 @@ public partial class DeviceTopologyPage : UserControl
     private async void DeviceTopologyPage_Loaded(object sender, RoutedEventArgs e)
     {
         _loadCancellation = new CancellationTokenSource();
-        App.DeviceTopologies.PciSnapshotChanged += DeviceTopologies_PciSnapshotChanged;
+        App.DeviceTopologies.PciStateChanged += DeviceTopologies_PciStateChanged;
         try
         {
             SetStatus("正在枚举 PCI Express 设备...");
-            var snapshot = await App.DeviceTopologies.EnsurePciLoadedAsync(_loadCancellation.Token).ConfigureAwait(true);
-            RenderSnapshot(snapshot);
-            SetStatus(snapshot.Diagnostics.HasErrors ? "PCI Express 枚举完成，但存在诊断错误。" : "PCI Express 拓扑已加载。");
+            var result = await App.DeviceTopologies.EnsurePciLoadedAsync(_loadCancellation.Token).ConfigureAwait(true);
+            RenderRefreshResult(result);
+            SetStatus(FormatRefreshStatus(result, "PCI Express 拓扑已加载。"));
         }
         catch (OperationCanceledException)
         {
@@ -44,17 +44,17 @@ public partial class DeviceTopologyPage : UserControl
 
     private void DeviceTopologyPage_Unloaded(object sender, RoutedEventArgs e)
     {
-        App.DeviceTopologies.PciSnapshotChanged -= DeviceTopologies_PciSnapshotChanged;
+        App.DeviceTopologies.PciStateChanged -= DeviceTopologies_PciStateChanged;
         _loadCancellation?.Cancel();
         _loadCancellation?.Dispose();
         _loadCancellation = null;
     }
 
-    private void DeviceTopologies_PciSnapshotChanged(object? sender, PciTopologySnapshot snapshot)
+    private void DeviceTopologies_PciStateChanged(object? sender, PciTopologyRefreshResult result)
     {
         if (IsLoaded)
         {
-            RenderSnapshot(snapshot);
+            RenderRefreshResult(result);
         }
     }
 
@@ -63,9 +63,9 @@ public partial class DeviceTopologyPage : UserControl
         try
         {
             SetStatus("正在刷新 PCI Express 拓扑...");
-            var snapshot = await App.DeviceTopologies.RefreshPciAsync(_loadCancellation?.Token ?? CancellationToken.None).ConfigureAwait(true);
-            RenderSnapshot(snapshot);
-            SetStatus("PCI Express 拓扑已刷新。");
+            var result = await App.DeviceTopologies.RefreshPciAsync(_loadCancellation?.Token ?? CancellationToken.None).ConfigureAwait(true);
+            RenderRefreshResult(result);
+            SetStatus(FormatRefreshStatus(result, "PCI Express 拓扑已刷新。"));
         }
         catch (OperationCanceledException)
         {
@@ -149,15 +149,46 @@ public partial class DeviceTopologyPage : UserControl
                 ?? snapshot.Nodes.FirstOrDefault()?.NodeId;
         }
 
-        var bridgeCount = snapshot.Nodes.Count(node => node.Kind is PciTopologyNodeKind.Root or PciTopologyNodeKind.Bridge);
-        var endpointCount = snapshot.Nodes.Count - bridgeCount;
+        var rootCount = snapshot.Nodes.Count(node => node.Kind == PciTopologyNodeKind.Root);
+        var bridgeCount = snapshot.Nodes.Count(node => node.Kind == PciTopologyNodeKind.Bridge);
+        var endpointCount = snapshot.Nodes.Count(node => node.Kind == PciTopologyNodeKind.Endpoint);
+        var unknownCount = snapshot.Nodes.Count(node => node.Kind == PciTopologyNodeKind.Unknown);
+        var deviceCount = snapshot.Nodes.Count(node => node.Identity.Enumerator == "PCI");
         var problemCount = snapshot.Nodes.Count(node => node.Identity.Status.HasProblem);
-        SubtitleText.Text = $"{snapshot.Nodes.Count} 个节点 · {bridgeCount} 个根/桥 · {endpointCount} 个端点 · {problemCount} 个异常 · {snapshot.GeneratedAt:HH:mm:ss}";
+        SubtitleText.Text = $"{deviceCount} 个设备 · {rootCount} 个根 · {bridgeCount} 个桥 · {endpointCount} 个端点 · {unknownCount} 个未分类 · {problemCount} 个异常 · {snapshot.GeneratedAt:HH:mm:ss}";
         MapHintText.Text = snapshot.Diagnostics.Entries.Count == 0
             ? "选择节点查看详情"
             : $"{snapshot.Diagnostics.Entries.Count} 条诊断";
         RenderMap();
         RenderSelection();
+    }
+
+    private void RenderRefreshResult(PciTopologyRefreshResult result)
+    {
+        RenderSnapshot(result.Snapshot);
+        if (result.IsStale)
+        {
+            MapHintText.Text = $"刷新失败，显示 {result.Snapshot.GeneratedAt:HH:mm:ss} 的结果";
+        }
+        else if (result.CollectionFailed)
+        {
+            MapHintText.Text = result.AttemptDiagnostics.Entries.FirstOrDefault()?.Message ?? "PCI Express 枚举失败";
+        }
+    }
+
+    private static string FormatRefreshStatus(PciTopologyRefreshResult result, string success)
+    {
+        if (result.IsStale)
+        {
+            return $"PCI Express 刷新失败，保留 {result.Snapshot.GeneratedAt:HH:mm:ss} 的上次成功结果。";
+        }
+
+        if (result.CollectionFailed)
+        {
+            return result.AttemptDiagnostics.Entries.FirstOrDefault()?.Message ?? "PCI Express 枚举失败。";
+        }
+
+        return result.Snapshot.Diagnostics.HasErrors ? "PCI Express 枚举完成，但存在诊断错误。" : success;
     }
 
     private void RenderMap()

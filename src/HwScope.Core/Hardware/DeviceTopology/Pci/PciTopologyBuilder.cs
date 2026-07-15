@@ -33,9 +33,11 @@ internal static partial class PciTopologyBuilder
             }
         }
 
+        AddSyntheticRoots(records);
+
         var parentByInstance = records.Values.ToDictionary(
             record => record.InstanceId,
-            record => records.ContainsKey(record.ParentInstanceId ?? string.Empty) ? record.ParentInstanceId : null,
+            record => ResolveParent(record, records),
             StringComparer.OrdinalIgnoreCase);
         BreakCycles(parentByInstance, diagnostics);
 
@@ -70,6 +72,11 @@ internal static partial class PciTopologyBuilder
 
     public static string BuildNodeId(string instanceId)
     {
+        if (TryParseSyntheticRootInstanceId(instanceId, out var rootIndex))
+        {
+            return $"pci-root:{rootIndex:x}";
+        }
+
         return $"pci:{instanceId.Trim().ToLowerInvariant()}";
     }
 
@@ -109,16 +116,18 @@ internal static partial class PciTopologyBuilder
                 nodeId));
         }
 
+        if (record.IsSyntheticRoot)
+        {
+            return BuildSyntheticRootNode(record, childNodeIds);
+        }
+
         var deviceType = record.DeviceType is <= 14
             ? (PciDeviceType)(int)record.DeviceType.Value
             : PciDeviceType.Unknown;
         var baseClass = ToByte(record.BaseClass);
         var subClass = ToByte(record.SubClass);
         var programmingInterface = ToByte(record.ProgrammingInterface);
-        var bridge = IsBridge(deviceType, baseClass);
-        var kind = bridge
-            ? parentInstanceId is null ? PciTopologyNodeKind.Root : PciTopologyNodeKind.Bridge
-            : PciTopologyNodeKind.Endpoint;
+        var kind = ClassifyKind(deviceType, baseClass, parentInstanceId);
         var displayName = FirstUseful(record.DisplayName, record.DeviceDescription, record.InstanceId);
 
         return new PciTopologyNode(
@@ -216,6 +225,159 @@ internal static partial class PciTopologyBuilder
     {
         return deviceType is >= PciDeviceType.PciConventionalBridge and <= PciDeviceType.PciExpressBridgeTreatedAsPci
             || baseClass == 0x06;
+    }
+
+    private static PciTopologyNodeKind ClassifyKind(
+        PciDeviceType deviceType,
+        byte? baseClass,
+        string? parentInstanceId)
+    {
+        if (IsBridge(deviceType, baseClass))
+        {
+            return parentInstanceId is null ? PciTopologyNodeKind.Root : PciTopologyNodeKind.Bridge;
+        }
+
+        if (deviceType is >= PciDeviceType.PciConventional and <= PciDeviceType.PciExpressTreatedAsPci
+            || deviceType == PciDeviceType.PciExpressEventCollector
+            || baseClass.HasValue)
+        {
+            return PciTopologyNodeKind.Endpoint;
+        }
+
+        return PciTopologyNodeKind.Unknown;
+    }
+
+    private static void AddSyntheticRoots(IDictionary<string, PciDeviceRecord> records)
+    {
+        var rootIndexes = records.Values
+            .Where(record => !records.ContainsKey(record.ParentInstanceId ?? string.Empty))
+            .Select(record => PciAddressParser.TryParseRootIndex(record.LocationPaths, out var rootIndex) ? (uint?)rootIndex : null)
+            .Where(rootIndex => rootIndex.HasValue)
+            .Select(rootIndex => rootIndex!.Value)
+            .Distinct()
+            .OrderBy(rootIndex => rootIndex)
+            .ToList();
+
+        foreach (var rootIndex in rootIndexes)
+        {
+            var instanceId = BuildSyntheticRootInstanceId(rootIndex);
+            records.TryAdd(instanceId, CreateSyntheticRootRecord(instanceId, rootIndex));
+        }
+    }
+
+    private static string? ResolveParent(PciDeviceRecord record, IReadOnlyDictionary<string, PciDeviceRecord> records)
+    {
+        if (record.IsSyntheticRoot)
+        {
+            return null;
+        }
+
+        if (records.ContainsKey(record.ParentInstanceId ?? string.Empty))
+        {
+            return record.ParentInstanceId;
+        }
+
+        return PciAddressParser.TryParseRootIndex(record.LocationPaths, out var rootIndex)
+            ? BuildSyntheticRootInstanceId(rootIndex)
+            : null;
+    }
+
+    private static PciDeviceRecord CreateSyntheticRootRecord(string instanceId, uint rootIndex)
+    {
+        return new PciDeviceRecord(
+            instanceId,
+            null,
+            $"PCI Root {rootIndex:X}",
+            "Synthetic PCI root derived from Windows Location Path",
+            "Windows",
+            null,
+            null,
+            [],
+            [],
+            [$"PCIROOT({rootIndex:X})"],
+            string.Empty,
+            0,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            string.Empty,
+            string.Empty,
+            string.Empty,
+            string.Empty,
+            IsSyntheticRoot: true,
+            RootIndex: rootIndex);
+    }
+
+    private static PciTopologyNode BuildSyntheticRootNode(PciDeviceRecord record, IReadOnlyList<string> childNodeIds)
+    {
+        var nodeId = BuildNodeId(record.InstanceId);
+        return new PciTopologyNode(
+            nodeId,
+            null,
+            childNodeIds,
+            new PnpDeviceIdentity(
+                nodeId,
+                record.InstanceId,
+                record.DisplayName,
+                record.DeviceDescription,
+                record.Manufacturer,
+                null,
+                null,
+                [],
+                [],
+                record.LocationPaths,
+                "PCIROOT",
+                string.Empty,
+                new DeviceNodeStatus(0, null)),
+            PciTopologyNodeKind.Root,
+            PciDeviceType.Unknown,
+            null,
+            null,
+            null,
+            new PciIdentity(string.Empty, string.Empty, string.Empty, string.Empty),
+            new PciClassInfo(0x06, 0x00, 0x00, "PCI Root Bus"),
+            new PciLinkInfo(
+                TopologyFieldValue<uint>.Unavailable(),
+                TopologyFieldValue<uint>.Unavailable(),
+                TopologyFieldValue<uint>.Unavailable(),
+                TopologyFieldValue<uint>.Unavailable(),
+                TopologyFieldValue<uint>.Unavailable(),
+                TopologyFieldValue<uint>.Unavailable(),
+                TopologyFieldValue<uint>.Unavailable()),
+            new PciCapabilityInfo(
+                TopologyFieldValue<uint>.Unavailable(),
+                TopologyFieldValue<bool>.Unavailable(),
+                TopologyFieldValue<uint>.Unavailable(),
+                TopologyFieldValue<uint>.Unavailable(),
+                TopologyFieldValue<uint>.Unavailable()),
+            new PciDriverInfo(string.Empty, string.Empty, string.Empty, string.Empty, string.Empty));
+    }
+
+    private static string BuildSyntheticRootInstanceId(uint rootIndex) => $"PCIROOT({rootIndex:X})";
+
+    private static bool TryParseSyntheticRootInstanceId(string instanceId, out uint rootIndex)
+    {
+        rootIndex = 0;
+        const string prefix = "PCIROOT(";
+        return instanceId.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)
+            && instanceId.EndsWith(')')
+            && uint.TryParse(instanceId[prefix.Length..^1], NumberStyles.HexNumber, CultureInfo.InvariantCulture, out rootIndex);
     }
 
     private static PciIdentity ParseIdentity(IEnumerable<string> hardwareIds)

@@ -258,6 +258,11 @@ public partial class TopologyCanvas : UserControl
 
             border.MouseLeftButtonDown += (_, e) =>
             {
+                if (IsInsideButton(e.OriginalSource as DependencyObject, border))
+                {
+                    return;
+                }
+
                 e.Handled = true;
                 SelectItem(node.Id, node.Kind);
             };
@@ -368,6 +373,22 @@ public partial class TopologyCanvas : UserControl
     {
         SelectedItemId = id;
         ItemSelected?.Invoke(this, new TopologyItemSelectedEventArgs(id, kind));
+    }
+
+    private static bool IsInsideButton(DependencyObject? source, DependencyObject boundary)
+    {
+        var current = source;
+        while (current is not null && current != boundary)
+        {
+            if (current is Button)
+            {
+                return true;
+            }
+
+            current = VisualTreeHelper.GetParent(current);
+        }
+
+        return false;
     }
 
     private bool IsSelected(string id)
