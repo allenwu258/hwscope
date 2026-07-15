@@ -13,7 +13,9 @@ public static class UsbTopologyRefreshPolicy
         UsbTopologySnapshot attempted)
     {
         var collectionFailed = attempted.Diagnostics.Entries.Any(entry =>
-            string.Equals(entry.Code, "usb.enumeration-failed", StringComparison.Ordinal));
+                string.Equals(entry.Code, "usb.enumeration-failed", StringComparison.Ordinal))
+            || (attempted.HostControllerNodeIds.Count > 0
+                && !attempted.Nodes.Any(node => node.Kind == UsbTopologyNodeKind.RootHub));
         if (collectionFailed && current is { Nodes.Count: > 0 })
         {
             return new UsbTopologyRefreshResult(current, true, true, attempted.Diagnostics);

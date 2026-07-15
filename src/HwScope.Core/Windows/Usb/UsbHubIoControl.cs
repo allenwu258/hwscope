@@ -10,13 +10,21 @@ internal sealed class UsbHubIoControl : IDisposable
     private const uint GenericWrite = 0x40000000;
     private const uint FileShareRead = 0x00000001;
     private const uint FileShareWrite = 0x00000002;
+    private const uint FileFlagOverlapped = 0x40000000;
     private const uint OpenExisting = 3;
+    private const int ErrorIoPending = 997;
     private const int ErrorInvalidFunction = 1;
     private const int ErrorNotSupported = 50;
     private const int ErrorInvalidParameter = 87;
     private const int ErrorNotFound = 1168;
     private const int NameBufferBytes = 16 * 1024;
     private const int ConnectionBufferBytes = 4 * 1024;
+    private const int ConnectionNameStructureSize = 10;
+    private const int ConnectorPropertiesStructureSize = 18;
+    private const uint IoTimeoutMilliseconds = 1_000;
+    private const uint Infinite = 0xFFFFFFFF;
+    private const uint WaitObject0 = 0;
+    private const uint WaitTimeout = 258;
 
     private static readonly uint IoctlGetRootHubName = CtlCode(258);
     private static readonly uint IoctlGetNodeInformation = CtlCode(258);
@@ -70,7 +78,7 @@ internal sealed class UsbHubIoControl : IDisposable
 
     public UsbNativeConnectorProperties? TryQueryConnectorProperties(int portNumber)
     {
-        var input = CreateConnectionIndexInput(portNumber, 16);
+        var input = CreateConnectionIndexInput(portNumber, ConnectorPropertiesStructureSize);
         var output = IoControl(IoctlGetPortConnectorProperties, input, NameBufferBytes, optional: true);
         return output.Length == 0 ? null : UsbNativeBufferParser.ParseConnectorProperties(output);
     }
@@ -92,7 +100,7 @@ internal sealed class UsbHubIoControl : IDisposable
 
     private string TryQueryVariableName(uint ioctl, int portNumber, string structureName)
     {
-        var input = CreateConnectionIndexInput(portNumber, 8);
+        var input = CreateConnectionIndexInput(portNumber, ConnectionNameStructureSize);
         var output = IoControl(ioctl, input, NameBufferBytes, optional: true);
         return output.Length == 0 ? string.Empty : UsbNativeBufferParser.ParseConnectionVariableLengthName(output, structureName);
     }
@@ -100,48 +108,122 @@ internal sealed class UsbHubIoControl : IDisposable
     private byte[] IoControl(uint controlCode, byte[]? input, int outputSize, bool optional)
     {
         var output = new byte[outputSize];
-        if (!DeviceIoControl(
-                _handle,
-                controlCode,
-                input,
-                input?.Length ?? 0,
-                output,
-                output.Length,
-                out var bytesReturned,
-                IntPtr.Zero))
+        using var completionEvent = CreateEventW(IntPtr.Zero, true, false, null);
+        if (completionEvent.IsInvalid)
         {
-            var error = Marshal.GetLastWin32Error();
-            if (optional && error is ErrorInvalidFunction or ErrorNotSupported or ErrorInvalidParameter or ErrorNotFound)
+            throw new Win32Exception(Marshal.GetLastWin32Error(), "Unable to create a USB I/O completion event.");
+        }
+
+        var nativeOverlapped = Marshal.AllocHGlobal(Marshal.SizeOf<NativeOverlappedData>());
+        GCHandle inputPin = default;
+        GCHandle outputPin = default;
+        try
+        {
+            Marshal.StructureToPtr(
+                new NativeOverlappedData { EventHandle = completionEvent.DangerousGetHandle() },
+                nativeOverlapped,
+                false);
+            if (input is { Length: > 0 })
             {
-                return [];
+                inputPin = GCHandle.Alloc(input, GCHandleType.Pinned);
             }
 
-            throw new Win32Exception(error, $"USB DeviceIoControl 0x{controlCode:X8} failed.");
-        }
+            outputPin = GCHandle.Alloc(output, GCHandleType.Pinned);
+            var completedSynchronously = DeviceIoControl(
+                _handle,
+                controlCode,
+                inputPin.IsAllocated ? inputPin.AddrOfPinnedObject() : IntPtr.Zero,
+                input?.Length ?? 0,
+                outputPin.AddrOfPinnedObject(),
+                output.Length,
+                out var bytesReturned,
+                nativeOverlapped);
+            if (!completedSynchronously)
+            {
+                var error = Marshal.GetLastWin32Error();
+                if (error != ErrorIoPending)
+                {
+                    return HandleIoFailure(controlCode, error, optional);
+                }
 
-        if (bytesReturned < 0 || bytesReturned > output.Length)
+                var waitResult = WaitForSingleObject(completionEvent, IoTimeoutMilliseconds);
+                if (waitResult == WaitTimeout)
+                {
+                    CancelAndDrain(_handle, nativeOverlapped, completionEvent);
+                    throw new TimeoutException($"USB DeviceIoControl 0x{controlCode:X8} exceeded {IoTimeoutMilliseconds} ms.");
+                }
+
+                if (waitResult != WaitObject0)
+                {
+                    var waitError = Marshal.GetLastWin32Error();
+                    CancelAndDrain(_handle, nativeOverlapped, completionEvent);
+                    throw new Win32Exception(waitError, "Waiting for USB DeviceIoControl failed.");
+                }
+
+                if (!GetOverlappedResult(_handle, nativeOverlapped, out bytesReturned, false))
+                {
+                    return HandleIoFailure(controlCode, Marshal.GetLastWin32Error(), optional);
+                }
+            }
+
+            if (bytesReturned < 0 || bytesReturned > output.Length)
+            {
+                throw new InvalidDataException($"USB DeviceIoControl returned invalid byte count {bytesReturned} for {output.Length}-byte buffer.");
+            }
+
+            return output.AsSpan(0, bytesReturned).ToArray();
+        }
+        finally
         {
-            throw new InvalidDataException($"USB DeviceIoControl returned invalid byte count {bytesReturned} for {output.Length}-byte buffer.");
+            if (outputPin.IsAllocated)
+            {
+                outputPin.Free();
+            }
+
+            if (inputPin.IsAllocated)
+            {
+                inputPin.Free();
+            }
+
+            Marshal.FreeHGlobal(nativeOverlapped);
+        }
+    }
+
+    private static byte[] HandleIoFailure(uint controlCode, int error, bool optional)
+    {
+        if (optional && error is ErrorInvalidFunction or ErrorNotSupported or ErrorInvalidParameter or ErrorNotFound)
+        {
+            return [];
         }
 
-        return output.AsSpan(0, bytesReturned).ToArray();
+        throw new Win32Exception(error, $"USB DeviceIoControl 0x{controlCode:X8} failed.");
+    }
+
+    private static void CancelAndDrain(
+        SafeFileHandle handle,
+        IntPtr nativeOverlapped,
+        SafeWaitHandle completionEvent)
+    {
+        CancelIoEx(handle, nativeOverlapped);
+        WaitForSingleObject(completionEvent, Infinite);
+        GetOverlappedResult(handle, nativeOverlapped, out _, false);
     }
 
     private static UsbHubIoControl Open(string devicePath)
     {
         var path = NormalizeSymbolicPath(devicePath);
-        var handle = CreateFileW(path, 0, FileShareRead | FileShareWrite, IntPtr.Zero, OpenExisting, 0, IntPtr.Zero);
+        var handle = CreateFileW(path, 0, FileShareRead | FileShareWrite, IntPtr.Zero, OpenExisting, FileFlagOverlapped, IntPtr.Zero);
         if (handle.IsInvalid)
         {
             handle.Dispose();
-            handle = CreateFileW(path, GenericWrite, FileShareRead | FileShareWrite, IntPtr.Zero, OpenExisting, 0, IntPtr.Zero);
+            handle = CreateFileW(path, GenericWrite, FileShareRead | FileShareWrite, IntPtr.Zero, OpenExisting, FileFlagOverlapped, IntPtr.Zero);
         }
 
         if (handle.IsInvalid)
         {
             var error = Marshal.GetLastWin32Error();
             handle.Dispose();
-            throw new Win32Exception(error, $"Unable to open USB device path {path}.");
+            throw new Win32Exception(error, "Unable to open a USB device path.");
         }
 
         return new UsbHubIoControl(handle);
@@ -177,6 +259,16 @@ internal sealed class UsbHubIoControl : IDisposable
 
     private static uint CtlCode(uint function) => (0x22u << 16) | (function << 2);
 
+    [StructLayout(LayoutKind.Sequential)]
+    private struct NativeOverlappedData
+    {
+        public UIntPtr Internal;
+        public UIntPtr InternalHigh;
+        public uint Offset;
+        public uint OffsetHigh;
+        public IntPtr EventHandle;
+    }
+
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     private static extern SafeFileHandle CreateFileW(
         string fileName,
@@ -187,15 +279,37 @@ internal sealed class UsbHubIoControl : IDisposable
         uint flagsAndAttributes,
         IntPtr templateFile);
 
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern SafeWaitHandle CreateEventW(
+        IntPtr eventAttributes,
+        [MarshalAs(UnmanagedType.Bool)] bool manualReset,
+        [MarshalAs(UnmanagedType.Bool)] bool initialState,
+        string? name);
+
     [DllImport("kernel32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool DeviceIoControl(
         SafeFileHandle device,
         uint ioControlCode,
-        byte[]? inputBuffer,
+        IntPtr inputBuffer,
         int inputBufferSize,
-        [Out] byte[] outputBuffer,
+        IntPtr outputBuffer,
         int outputBufferSize,
         out int bytesReturned,
         IntPtr overlapped);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetOverlappedResult(
+        SafeFileHandle file,
+        IntPtr overlapped,
+        out int bytesTransferred,
+        [MarshalAs(UnmanagedType.Bool)] bool wait);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool CancelIoEx(SafeFileHandle file, IntPtr overlapped);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern uint WaitForSingleObject(SafeWaitHandle handle, uint milliseconds);
 }

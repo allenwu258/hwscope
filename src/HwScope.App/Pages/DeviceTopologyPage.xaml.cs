@@ -42,7 +42,10 @@ public partial class DeviceTopologyPage : UserControl
             SetStatus("正在枚举 PCI Express 设备...");
             var result = await App.DeviceTopologies.EnsurePciLoadedAsync(_loadCancellation.Token).ConfigureAwait(true);
             RenderRefreshResult(result);
-            SetStatus(FormatRefreshStatus(result, "PCI Express 拓扑已加载。"));
+            if (TopologyTabs.SelectedItem == PciTab)
+            {
+                SetStatus(FormatRefreshStatus(result, "PCI Express 拓扑已加载。"));
+            }
         }
         catch (OperationCanceledException)
         {
@@ -104,7 +107,10 @@ public partial class DeviceTopologyPage : UserControl
                 .EnsureUsbLoadedAsync(_loadCancellation?.Token ?? CancellationToken.None)
                 .ConfigureAwait(true);
             RenderUsbRefreshResult(result);
-            SetStatus(FormatUsbRefreshStatus(result, "USB 物理端口拓扑已加载。"));
+            if (TopologyTabs.SelectedItem == UsbTab)
+            {
+                SetStatus(FormatUsbRefreshStatus(result, "USB 物理端口拓扑已加载。"));
+            }
         }
         catch (OperationCanceledException)
         {
@@ -129,14 +135,20 @@ public partial class DeviceTopologyPage : UserControl
                     .RefreshUsbAsync(_loadCancellation?.Token ?? CancellationToken.None)
                     .ConfigureAwait(true);
                 RenderUsbRefreshResult(usbResult);
-                SetStatus(FormatUsbRefreshStatus(usbResult, "USB 物理端口拓扑已刷新。"));
+                if (TopologyTabs.SelectedItem == UsbTab)
+                {
+                    SetStatus(FormatUsbRefreshStatus(usbResult, "USB 物理端口拓扑已刷新。"));
+                }
                 return;
             }
 
             SetStatus("正在刷新 PCI Express 拓扑...");
             var result = await App.DeviceTopologies.RefreshPciAsync(_loadCancellation?.Token ?? CancellationToken.None).ConfigureAwait(true);
             RenderRefreshResult(result);
-            SetStatus(FormatRefreshStatus(result, "PCI Express 拓扑已刷新。"));
+            if (TopologyTabs.SelectedItem == PciTab)
+            {
+                SetStatus(FormatRefreshStatus(result, "PCI Express 拓扑已刷新。"));
+            }
         }
         catch (OperationCanceledException)
         {
@@ -285,7 +297,10 @@ public partial class DeviceTopologyPage : UserControl
                 ?? snapshot.Nodes.FirstOrDefault()?.NodeId;
         }
 
-        UpdatePciHeader(snapshot);
+        if (TopologyTabs.SelectedItem == PciTab)
+        {
+            UpdatePciHeader(snapshot);
+        }
         RenderMap();
         RenderSelection();
     }
@@ -437,6 +452,7 @@ public partial class DeviceTopologyPage : UserControl
 
     private void RenderUsbSnapshot(UsbTopologySnapshot snapshot)
     {
+        var previousSelection = _usbSnapshot?.Nodes.FirstOrDefault(node => node.NodeId == _usbSelectedNodeId);
         _usbSnapshot = snapshot;
         var currentIds = snapshot.Nodes.Select(node => node.NodeId).ToHashSet(StringComparer.OrdinalIgnoreCase);
         _usbExpandedNodeIds.RemoveWhere(nodeId => !currentIds.Contains(nodeId));
@@ -447,12 +463,18 @@ public partial class DeviceTopologyPage : UserControl
 
         if (_usbSelectedNodeId is null || !currentIds.Contains(_usbSelectedNodeId))
         {
-            _usbSelectedNodeId = snapshot.Nodes.FirstOrDefault(node => node.Kind == UsbTopologyNodeKind.Device)?.NodeId
+            _usbSelectedNodeId = previousSelection?.ParentNodeId is { } previousParentId
+                    && currentIds.Contains(previousParentId)
+                ? previousParentId
+                : snapshot.Nodes.FirstOrDefault(node => node.Kind == UsbTopologyNodeKind.Device)?.NodeId
                 ?? snapshot.Nodes.FirstOrDefault(node => node.Kind == UsbTopologyNodeKind.Hub)?.NodeId
                 ?? snapshot.Nodes.FirstOrDefault()?.NodeId;
         }
 
-        UpdateUsbHeader(snapshot);
+        if (TopologyTabs.SelectedItem == UsbTab)
+        {
+            UpdateUsbHeader(snapshot);
+        }
         RenderUsbMap();
         RenderUsbSelection();
     }
@@ -465,12 +487,21 @@ public partial class DeviceTopologyPage : UserControl
         var portCount = snapshot.Nodes.Count(node => node.Kind == UsbTopologyNodeKind.Port);
         var connectedCount = snapshot.Nodes.Count(node =>
             node.Kind == UsbTopologyNodeKind.Port
-            && node.Port?.ConnectionStatus != UsbConnectionStatus.NoDeviceConnected);
-        var problemCount = snapshot.Nodes.Count(node =>
-            node.Identity?.Status.HasProblem == true
-            || node.Port?.ConnectionStatus is not null
+            && node.Port?.ConnectionStatus is not null
                 and not UsbConnectionStatus.NoDeviceConnected
-                and not UsbConnectionStatus.DeviceConnected);
+                and not UsbConnectionStatus.Unknown);
+        var problemAttachments = snapshot.Nodes
+            .Where(node => node.Kind == UsbTopologyNodeKind.Port
+                && node.Port?.ConnectionStatus is not null
+                    and not UsbConnectionStatus.NoDeviceConnected
+                    and not UsbConnectionStatus.DeviceConnected
+                    and not UsbConnectionStatus.Unknown)
+            .Select(node => node.NodeId)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        problemAttachments.UnionWith(snapshot.Nodes
+            .Where(node => node.Identity?.Status.HasProblem == true)
+            .Select(node => node.AttachmentId ?? node.NodeId));
+        var problemCount = problemAttachments.Count;
         SubtitleText.Text = $"{controllerCount} 个控制器 · {hubCount} 个 Hub · {portCount} 个端口 · {connectedCount} 个已连接 · {deviceCount} 个设备 · {problemCount} 个异常 · {snapshot.GeneratedAt:HH:mm:ss}";
         UsbMapHintText.Text = snapshot.Diagnostics.Entries.Count == 0
             ? "已连接分支默认展开"

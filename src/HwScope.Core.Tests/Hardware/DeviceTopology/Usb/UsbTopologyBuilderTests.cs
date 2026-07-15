@@ -30,9 +30,9 @@ public sealed class UsbTopologyBuilderTests
         var controllerId = UsbTopologyBuilder.BuildControllerNodeId(controller.Identity.InstanceId);
         var rootId = UsbTopologyBuilder.BuildRootHubNodeId(controller.Identity.InstanceId);
         var emptyPortId = UsbTopologyBuilder.BuildPortNodeId(controller.Identity.InstanceId, "2");
-        var hubId = UsbTopologyBuilder.BuildDeviceNodeId(controller.Identity.InstanceId, "3", true);
+        var hubId = UsbTopologyBuilder.BuildPnpNodeId(@"USB\VID_3333&PID_0003\HUB", true);
         var nestedPortId = UsbTopologyBuilder.BuildPortNodeId(controller.Identity.InstanceId, "3.1");
-        var nestedDeviceId = UsbTopologyBuilder.BuildDeviceNodeId(controller.Identity.InstanceId, "3.1", false);
+        var nestedDeviceId = UsbTopologyBuilder.BuildPnpNodeId(@"USB\VID_2222&PID_0002\SERIAL-B", false);
 
         Assert.Equal(9, snapshot.Nodes.Count);
         Assert.Equal([controllerId], snapshot.HostControllerNodeIds);
@@ -42,6 +42,7 @@ public sealed class UsbTopologyBuilderTests
         Assert.Equal([nestedPortId], Find(snapshot, hubId).ChildNodeIds);
         Assert.Equal([nestedDeviceId], Find(snapshot, nestedPortId).ChildNodeIds);
         Assert.Equal("3.1", Find(snapshot, nestedDeviceId).Port!.PortChain);
+        Assert.Equal(nestedPortId, Find(snapshot, nestedDeviceId).AttachmentId);
     }
 
     [Fact]
@@ -66,6 +67,47 @@ public sealed class UsbTopologyBuilderTests
 
         Assert.Single(snapshot.HostControllerNodeIds);
         Assert.Contains(snapshot.Diagnostics.Entries, item => item.Code == "usb.duplicate-controller");
+    }
+
+    [Fact]
+    public void BuildUsesDeviceIdentitySeparatelyFromPhysicalAttachment()
+    {
+        var first = UsbTopologyBuilder.Build(
+            [new UsbControllerRecord(
+                "controller",
+                Identity(@"PCI\CTRL", "Controller"),
+                new UsbHubRecord("ROOT", 1, true, true, [ConnectedPort(1, @"USB\DEVICE-A", false)]))]);
+        var second = UsbTopologyBuilder.Build(
+            [new UsbControllerRecord(
+                "controller",
+                Identity(@"PCI\CTRL", "Controller"),
+                new UsbHubRecord("ROOT", 1, true, true, [ConnectedPort(1, @"USB\DEVICE-B", false)]))]);
+
+        var firstDevice = Assert.Single(first.Nodes, node => node.Kind == UsbTopologyNodeKind.Device);
+        var secondDevice = Assert.Single(second.Nodes, node => node.Kind == UsbTopologyNodeKind.Device);
+
+        Assert.NotEqual(firstDevice.NodeId, secondDevice.NodeId);
+        Assert.Equal(firstDevice.AttachmentId, secondDevice.AttachmentId);
+        Assert.Equal("pnp:usb\\device-a", firstDevice.Identity!.StableId);
+    }
+
+    [Fact]
+    public void BuildFallsBackToAttachmentIdForDuplicateDeviceIdentity()
+    {
+        var duplicatedIdentity = Identity(@"USB\SAME", "Device");
+        var firstPort = ConnectedPort(1, @"USB\SAME", false) with { Identity = duplicatedIdentity };
+        var secondPort = ConnectedPort(2, @"USB\SAME", false) with { Identity = duplicatedIdentity };
+        var snapshot = UsbTopologyBuilder.Build(
+            [new UsbControllerRecord(
+                "controller",
+                Identity(@"PCI\CTRL", "Controller"),
+                new UsbHubRecord("ROOT", 2, true, true, [firstPort, secondPort]))]);
+
+        var devices = snapshot.Nodes.Where(node => node.Kind == UsbTopologyNodeKind.Device).ToArray();
+
+        Assert.Equal(2, devices.Length);
+        Assert.Equal(2, devices.Select(node => node.NodeId).Distinct(StringComparer.OrdinalIgnoreCase).Count());
+        Assert.Contains(snapshot.Diagnostics.Entries, entry => entry.Code == "usb.duplicate-device-identity");
     }
 
     [Fact]
@@ -95,7 +137,14 @@ public sealed class UsbTopologyBuilderTests
         {
             Nodes = snapshot.Nodes.Select(node => node.Kind == UsbTopologyNodeKind.Port
                 ? node with { DriverKey = "{CLASS}\\SECRET" }
-                : node).ToArray()
+                : node).ToArray(),
+            Diagnostics = new DeviceTopologyDiagnostics(
+            [
+                new DeviceTopologyDiagnostic(
+                    DeviceTopologyDiagnosticSeverity.Error,
+                    "usb.test",
+                    @"Unable to open \\?\PCI#VEN_1234#SECRET and \??\USB#ROOT_HUB30#SECRET.")
+            ])
         };
 
         var redacted = UsbTopologyRedactor.RedactSensitiveIds(snapshot);
@@ -107,6 +156,9 @@ public sealed class UsbTopologyBuilderTests
             Assert.StartsWith("usb-node-", node.NodeId);
             Assert.All(node.ChildNodeIds, childId => Assert.Contains(redacted.Nodes, child => child.NodeId == childId));
         });
+        Assert.All(
+            redacted.Nodes.Where(node => node.AttachmentId is not null),
+            node => Assert.StartsWith("usb-node-", node.AttachmentId));
     }
 
     [Fact]
@@ -120,6 +172,82 @@ public sealed class UsbTopologyBuilderTests
 
         Assert.Contains("chain=1", text);
         Assert.Contains("vid:pid=1234:5678", text);
+    }
+
+    [Fact]
+    public void RefreshPolicyPreservesCurrentSnapshotWhenAllControllerBranchesFail()
+    {
+        var currentRoot = new UsbHubRecord("ROOT", 1, true, true, [EmptyPort(1)]);
+        var current = UsbTopologyBuilder.Build(
+            [new UsbControllerRecord("controller", Identity(@"PCI\CTRL", "Controller"), currentRoot)]);
+        var attempted = UsbTopologyBuilder.Build(
+            [new UsbControllerRecord("controller", Identity(@"PCI\CTRL", "Controller"), null)],
+            [
+                new DeviceTopologyDiagnostic(
+                    DeviceTopologyDiagnosticSeverity.Error,
+                    "usb.controller-enumeration-failed",
+                    "failed")
+            ]);
+
+        var result = UsbTopologyRefreshPolicy.Resolve(current, attempted);
+
+        Assert.True(result.CollectionFailed);
+        Assert.True(result.IsStale);
+        Assert.Same(current, result.Snapshot);
+    }
+
+    [Fact]
+    public void RefreshPolicyPublishesPartialSnapshotWhenAtLeastOneRootHubSucceeded()
+    {
+        var current = UsbTopologySnapshot.Empty;
+        var root = new UsbHubRecord("ROOT", 1, true, true, [EmptyPort(1)]);
+        var attempted = UsbTopologyBuilder.Build(
+            [
+                new UsbControllerRecord("controller-a", Identity(@"PCI\A", "A"), root),
+                new UsbControllerRecord("controller-b", Identity(@"PCI\B", "B"), null)
+            ],
+            [
+                new DeviceTopologyDiagnostic(
+                    DeviceTopologyDiagnosticSeverity.Error,
+                    "usb.controller-enumeration-failed",
+                    "B failed")
+            ]);
+
+        var result = UsbTopologyRefreshPolicy.Resolve(current, attempted);
+
+        Assert.False(result.CollectionFailed);
+        Assert.False(result.IsStale);
+        Assert.Same(attempted, result.Snapshot);
+    }
+
+    [Fact]
+    public void BuildPreservesUnknownOptionalPortCapabilities()
+    {
+        var port = EmptyPort(1) with
+        {
+            IsUserConnectable = null,
+            IsDebugCapable = null,
+            IsTypeC = null,
+            IsDeviceSuperSpeedCapable = null,
+            IsDeviceOperatingAtSuperSpeed = null,
+            IsDeviceSuperSpeedPlusCapable = null,
+            IsDeviceOperatingAtSuperSpeedPlus = null
+        };
+        var snapshot = UsbTopologyBuilder.Build(
+            [new UsbControllerRecord(
+                "controller",
+                Identity(@"PCI\CTRL", "Controller"),
+                new UsbHubRecord("ROOT", 1, true, true, [port]))]);
+
+        var portInfo = Assert.Single(snapshot.Nodes, node => node.Kind == UsbTopologyNodeKind.Port).Port!;
+
+        Assert.Null(portInfo.IsUserConnectable);
+        Assert.Null(portInfo.IsDebugCapable);
+        Assert.Null(portInfo.IsTypeC);
+        Assert.Null(portInfo.IsDeviceSuperSpeedCapable);
+        Assert.Null(portInfo.IsDeviceOperatingAtSuperSpeed);
+        Assert.Null(portInfo.IsDeviceSuperSpeedPlusCapable);
+        Assert.Null(portInfo.IsDeviceOperatingAtSuperSpeedPlus);
     }
 
     private static UsbTopologyNode Find(UsbTopologySnapshot snapshot, string nodeId)

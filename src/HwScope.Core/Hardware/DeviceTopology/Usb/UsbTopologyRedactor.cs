@@ -18,14 +18,43 @@ public static class UsbTopologyRedactor
             DevicePath = string.Empty,
             DriverKey = string.Empty,
             Hub = node.Hub is null ? null : node.Hub with { SymbolicName = string.Empty },
-            Port = node.Port is null ? null : node.Port with { CompanionHubSymbolicName = string.Empty }
+            Port = node.Port is null ? null : node.Port with { CompanionHubSymbolicName = string.Empty },
+            AttachmentId = node.AttachmentId is not null && map.TryGetValue(node.AttachmentId, out var attachmentId)
+                ? attachmentId
+                : null
         }).ToArray();
+
+        var sensitiveValues = snapshot.Nodes
+            .SelectMany(node => new[]
+            {
+                node.NodeId,
+                node.AttachmentId,
+                node.ControllerNodeId,
+                node.DevicePath,
+                node.DriverKey,
+                node.Identity?.StableId,
+                node.Identity?.InstanceId,
+                node.Hub?.SymbolicName,
+                node.Port?.CompanionHubSymbolicName
+            })
+            .Where(value => !string.IsNullOrWhiteSpace(value))
+            .Select(value => value!)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderByDescending(value => value.Length)
+            .ToArray();
+        string RedactMessage(string message)
+        {
+            return sensitiveValues.Aggregate(
+                message,
+                (current, sensitive) => current.Replace(sensitive, "[redacted]", StringComparison.OrdinalIgnoreCase));
+        }
 
         var diagnostics = new DeviceTopologyDiagnostics(snapshot.Diagnostics.Entries.Select(entry => entry with
         {
             NodeId = entry.NodeId is not null && map.TryGetValue(entry.NodeId, out var redactedId)
                 ? redactedId
-                : null
+                : null,
+            Message = RedactMessage(entry.Message)
         }).ToArray());
 
         return new UsbTopologySnapshot(
@@ -42,7 +71,7 @@ public static class UsbTopologyRedactor
             : identity with
             {
                 StableId = stableId,
-                InstanceId = string.Empty,
+                InstanceId = "[redacted]",
                 ContainerId = null,
                 HardwareIds = [],
                 CompatibleIds = [],

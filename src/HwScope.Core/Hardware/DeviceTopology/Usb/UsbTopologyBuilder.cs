@@ -11,6 +11,7 @@ internal static class UsbTopologyBuilder
         var controllerIds = new List<string>();
         var diagnostics = sourceDiagnostics?.ToList() ?? [];
         var seenControllers = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var usedNodeIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         foreach (var controller in controllers)
         {
@@ -26,6 +27,7 @@ internal static class UsbTopologyBuilder
             }
 
             controllerIds.Add(controllerId);
+            usedNodeIds.Add(controllerId);
             var controllerChildren = controller.RootHub is null
                 ? Array.Empty<string>()
                 : [BuildRootHubNodeId(controller.Identity.InstanceId)];
@@ -51,7 +53,9 @@ internal static class UsbTopologyBuilder
                     controllerId,
                     controller.Identity.InstanceId,
                     portChainPrefix: string.Empty,
-                    isRoot: true);
+                    isRoot: true,
+                    diagnostics: diagnostics,
+                    usedNodeIds: usedNodeIds);
             }
         }
 
@@ -82,17 +86,25 @@ internal static class UsbTopologyBuilder
         return $"{(isHub ? "usb-hub" : "usb-device")}:{Normalize(controllerInstanceId)}:{portChain}";
     }
 
+    internal static string BuildPnpNodeId(string instanceId, bool isHub)
+    {
+        return $"{(isHub ? "usb-hub" : "usb-device")}:{Normalize(instanceId)}";
+    }
+
     private static void AddHub(
         ICollection<UsbTopologyNode> nodes,
         UsbHubRecord hub,
         string controllerId,
         string controllerInstanceId,
         string portChainPrefix,
-        bool isRoot)
+        bool isRoot,
+        string? existingHubNodeId = null,
+        ICollection<DeviceTopologyDiagnostic>? diagnostics = null,
+        ISet<string>? usedNodeIds = null)
     {
         var hubId = isRoot
             ? BuildRootHubNodeId(controllerInstanceId)
-            : BuildDeviceNodeId(controllerInstanceId, portChainPrefix, isHub: true);
+            : existingHubNodeId ?? BuildDeviceNodeId(controllerInstanceId, portChainPrefix, isHub: true);
         var parentId = isRoot
             ? controllerId
             : BuildPortNodeId(controllerInstanceId, portChainPrefix);
@@ -104,6 +116,7 @@ internal static class UsbTopologyBuilder
 
         if (isRoot)
         {
+            usedNodeIds?.Add(hubId);
             nodes.Add(new UsbTopologyNode(
                 hubId,
                 parentId,
@@ -123,10 +136,24 @@ internal static class UsbTopologyBuilder
         {
             var portChain = AppendPort(portChainPrefix, port.PortNumber);
             var portId = BuildPortNodeId(controllerInstanceId, portChain);
+            usedNodeIds?.Add(portId);
             var hasPhysicalNode = HasPhysicalNode(port);
-            var physicalId = hasPhysicalNode
-                ? BuildDeviceNodeId(controllerInstanceId, portChain, port.DeviceIsHub)
+            var candidatePhysicalId = hasPhysicalNode
+                ? port.Identity is null
+                    ? BuildDeviceNodeId(controllerInstanceId, portChain, port.DeviceIsHub)
+                    : BuildPnpNodeId(port.Identity.InstanceId, port.DeviceIsHub)
                 : null;
+            var physicalId = candidatePhysicalId;
+            if (physicalId is not null && usedNodeIds is not null && !usedNodeIds.Add(physicalId))
+            {
+                diagnostics?.Add(new DeviceTopologyDiagnostic(
+                    DeviceTopologyDiagnosticSeverity.Warning,
+                    "usb.duplicate-device-identity",
+                    $"Multiple USB attachments resolved to the same device identity; port {portChain} uses its attachment identity.",
+                    portId));
+                physicalId = BuildDeviceNodeId(controllerInstanceId, portChain, port.DeviceIsHub);
+                usedNodeIds.Add(physicalId);
+            }
             nodes.Add(new UsbTopologyNode(
                 portId,
                 hubId,
@@ -158,7 +185,7 @@ internal static class UsbTopologyBuilder
                 physicalChildren,
                 port.DeviceIsHub ? UsbTopologyNodeKind.Hub : UsbTopologyNodeKind.Device,
                 displayName,
-                port.Identity is null ? null : port.Identity with { StableId = physicalId! },
+                port.Identity,
                 controllerId,
                 port.DownstreamHub?.SymbolicName ?? string.Empty,
                 port.DriverKey,
@@ -170,7 +197,8 @@ internal static class UsbTopologyBuilder
                         false)
                     : null,
                 BuildPortInfo(port, portChain),
-                port.DeviceDescriptor));
+                port.DeviceDescriptor,
+                portId));
 
             if (port.DeviceIsHub && port.DownstreamHub is not null)
             {
@@ -180,7 +208,10 @@ internal static class UsbTopologyBuilder
                     controllerId,
                     controllerInstanceId,
                     portChain,
-                    isRoot: false);
+                    isRoot: false,
+                    physicalId,
+                    diagnostics,
+                    usedNodeIds);
             }
         }
     }

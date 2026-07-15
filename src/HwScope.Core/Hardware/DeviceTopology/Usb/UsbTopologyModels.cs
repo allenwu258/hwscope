@@ -78,13 +78,13 @@ public sealed record UsbPortInfo(
     UsbConnectionStatus ConnectionStatus,
     UsbConnectionSpeed ConnectionSpeed,
     UsbSupportedProtocols SupportedProtocols,
-    bool IsDeviceSuperSpeedCapable,
-    bool IsDeviceOperatingAtSuperSpeed,
-    bool IsDeviceSuperSpeedPlusCapable,
-    bool IsDeviceOperatingAtSuperSpeedPlus,
-    bool IsUserConnectable,
-    bool IsDebugCapable,
-    bool IsTypeC,
+    bool? IsDeviceSuperSpeedCapable,
+    bool? IsDeviceOperatingAtSuperSpeed,
+    bool? IsDeviceSuperSpeedPlusCapable,
+    bool? IsDeviceOperatingAtSuperSpeedPlus,
+    bool? IsUserConnectable,
+    bool? IsDebugCapable,
+    bool? IsTypeC,
     int? CompanionPortNumber,
     string CompanionHubSymbolicName,
     ushort DeviceAddress,
@@ -102,7 +102,8 @@ public sealed record UsbTopologyNode(
     string DriverKey,
     UsbHubInfo? Hub,
     UsbPortInfo? Port,
-    UsbDeviceDescriptorInfo? DeviceDescriptor);
+    UsbDeviceDescriptorInfo? DeviceDescriptor,
+    string? AttachmentId = null);
 
 public sealed record UsbTopologySnapshot(
     IReadOnlyList<UsbTopologyNode> Nodes,

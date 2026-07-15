@@ -1,5 +1,6 @@
 using HwScope.Core.Windows.Devices;
 using HwScope.Core.Windows.Usb;
+using System.Diagnostics;
 
 namespace HwScope.Core.Hardware.DeviceTopology.Usb;
 
@@ -9,6 +10,8 @@ internal sealed class UsbWindowsDeviceSource : IUsbDeviceSource
     private const int MaxDepth = 16;
     private const int MaxPortsPerHub = 255;
     private const int MaxTotalNodes = 10_000;
+    private static readonly TimeSpan OverallTimeout = TimeSpan.FromSeconds(8);
+    private static readonly TimeSpan ControllerTimeout = TimeSpan.FromSeconds(3);
 
     private static readonly Guid HostControllerInterface = new("3abf6f2d-71c4-462a-8a92-1e6861e6af27");
     private static readonly Guid DevicePropertyNamespace = new("a45c254e-df1c-4efd-8020-67d146a850e0");
@@ -53,7 +56,8 @@ internal sealed class UsbWindowsDeviceSource : IUsbDeviceSource
         var pnpResult = _deviceEnumerator.EnumeratePresentDevices("USB", Requests);
         AddNativeDiagnostics(pnpResult.Diagnostics, diagnostics);
 
-        var identitiesByDriver = pnpResult.Devices
+        var identitiesByDriver = new Dictionary<string, PnpDeviceIdentity>(StringComparer.OrdinalIgnoreCase);
+        var identitiesGroupedByDriver = pnpResult.Devices
             .Select(device => new
             {
                 Driver = DevicePropertyValueReader.GetString(device.Properties, Driver),
@@ -61,19 +65,36 @@ internal sealed class UsbWindowsDeviceSource : IUsbDeviceSource
             })
             .Where(item => !string.IsNullOrWhiteSpace(item.Driver))
             .GroupBy(item => item.Driver!, StringComparer.OrdinalIgnoreCase)
-            .ToDictionary(group => group.Key, group => group.First().Identity, StringComparer.OrdinalIgnoreCase);
+            .ToArray();
+        foreach (var group in identitiesGroupedByDriver)
+        {
+            var identities = group.Select(item => item.Identity).ToArray();
+            if (identities.Length == 1)
+            {
+                identitiesByDriver[group.Key] = identities[0];
+                continue;
+            }
+
+            diagnostics.Add(Diagnostic(
+                DeviceTopologyDiagnosticSeverity.Warning,
+                "usb.driver-key-correlation-ambiguous",
+                $"A USB driver key matched {identities.Length} present DevNodes; physical-device identity correlation was skipped."));
+        }
 
         var controllersResult = _interfaceEnumerator.EnumeratePresentInterfaces(HostControllerInterface, Requests);
         AddNativeDiagnostics(controllersResult.Diagnostics, diagnostics);
 
         var controllers = new List<UsbControllerRecord>();
-        var nodeBudget = Math.Min(controllersResult.Interfaces.Count, MaxControllers);
+        var nodeBudget = new UsbNodeBudget(Math.Min(controllersResult.Interfaces.Count, MaxControllers));
+        var queryBudget = new UsbQueryBudget();
         foreach (var controller in controllersResult.Interfaces.Take(MaxControllers))
         {
             var identity = ToIdentity(controller.InstanceId, controller.Properties);
             UsbHubRecord? rootHub = null;
+            queryBudget.BeginController();
             try
             {
+                queryBudget.ThrowIfExpired();
                 var rootHubName = UsbHubIoControl.QueryRootHubName(controller.DevicePath);
                 var visitedHubs = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                 rootHub = ReadHub(
@@ -85,7 +106,8 @@ internal sealed class UsbWindowsDeviceSource : IUsbDeviceSource
                     identitiesByDriver,
                     visitedHubs,
                     diagnostics,
-                    ref nodeBudget);
+                    nodeBudget,
+                    queryBudget);
             }
             catch (Exception ex) when (IsExpectedNativeFailure(ex))
             {
@@ -110,7 +132,7 @@ internal sealed class UsbWindowsDeviceSource : IUsbDeviceSource
         return new UsbDeviceSourceResult(controllers, diagnostics);
     }
 
-    private static UsbHubRecord ReadHub(
+    private static UsbHubRecord? ReadHub(
         string symbolicName,
         bool isRoot,
         int depth,
@@ -119,16 +141,19 @@ internal sealed class UsbWindowsDeviceSource : IUsbDeviceSource
         IReadOnlyDictionary<string, PnpDeviceIdentity> identitiesByDriver,
         ISet<string> visitedHubs,
         ICollection<DeviceTopologyDiagnostic> diagnostics,
-        ref int nodeBudget)
+        UsbNodeBudget nodeBudget,
+        UsbQueryBudget queryBudget)
     {
+        queryBudget.ThrowIfExpired();
         if (depth > MaxDepth)
         {
             throw new InvalidDataException($"USB hub nesting exceeds the maximum depth of {MaxDepth}.");
         }
 
-        if (++nodeBudget > MaxTotalNodes)
+        if (isRoot && !nodeBudget.TryReserve(1))
         {
-            throw new InvalidDataException($"USB topology exceeds the maximum node count of {MaxTotalNodes}.");
+            AddLimitDiagnostic(diagnostics, controllerInstanceId, portChainPrefix);
+            return null;
         }
 
         var hubKey = NormalizeHubKey(symbolicName);
@@ -140,6 +165,7 @@ internal sealed class UsbWindowsDeviceSource : IUsbDeviceSource
         try
         {
             using var hub = UsbHubIoControl.OpenHub(symbolicName);
+            queryBudget.ThrowIfExpired();
             var hubInfo = hub.QueryHubInformation();
             var portCount = Math.Min(hubInfo.PortCount, MaxPortsPerHub);
             if (hubInfo.PortCount > MaxPortsPerHub)
@@ -156,6 +182,12 @@ internal sealed class UsbWindowsDeviceSource : IUsbDeviceSource
                 var portChain = string.IsNullOrEmpty(portChainPrefix)
                     ? portNumber.ToString(System.Globalization.CultureInfo.InvariantCulture)
                     : $"{portChainPrefix}.{portNumber}";
+                if (!nodeBudget.TryReserve(2))
+                {
+                    AddLimitDiagnostic(diagnostics, controllerInstanceId, portChain);
+                    break;
+                }
+
                 ports.Add(ReadPort(
                     hub,
                     portNumber,
@@ -165,7 +197,8 @@ internal sealed class UsbWindowsDeviceSource : IUsbDeviceSource
                     identitiesByDriver,
                     visitedHubs,
                     diagnostics,
-                    ref nodeBudget));
+                    nodeBudget,
+                    queryBudget));
             }
 
             return new UsbHubRecord(symbolicName, hubInfo.PortCount, hubInfo.IsBusPowered, isRoot, ports);
@@ -185,13 +218,10 @@ internal sealed class UsbWindowsDeviceSource : IUsbDeviceSource
         IReadOnlyDictionary<string, PnpDeviceIdentity> identitiesByDriver,
         ISet<string> visitedHubs,
         ICollection<DeviceTopologyDiagnostic> diagnostics,
-        ref int nodeBudget)
+        UsbNodeBudget nodeBudget,
+        UsbQueryBudget queryBudget)
     {
-        if (++nodeBudget > MaxTotalNodes)
-        {
-            throw new InvalidDataException($"USB topology exceeds the maximum node count of {MaxTotalNodes}.");
-        }
-
+        queryBudget.ThrowIfExpired();
         UsbNativePortConnection connection;
         try
         {
@@ -208,22 +238,19 @@ internal sealed class UsbWindowsDeviceSource : IUsbDeviceSource
         }
 
         var connectionStatus = ToConnectionStatus(connection.ConnectionStatus);
-        if (connectionStatus is not UsbConnectionStatus.NoDeviceConnected and not UsbConnectionStatus.Unknown
-            && ++nodeBudget > MaxTotalNodes)
-        {
-            throw new InvalidDataException($"USB topology exceeds the maximum node count of {MaxTotalNodes}.");
-        }
         UsbNativeConnectionV2? connectionV2 = null;
         UsbNativeConnectorProperties? connector = null;
         string driverKey = string.Empty;
 
         TryOptional(
+            queryBudget,
             () => connectionV2 = hub.TryQueryConnectionV2(portNumber),
             "usb.port-v2-query-failed",
             portChain,
             controllerInstanceId,
             diagnostics);
         TryOptional(
+            queryBudget,
             () => connector = hub.TryQueryConnectorProperties(portNumber),
             "usb.port-connector-query-failed",
             portChain,
@@ -233,6 +260,7 @@ internal sealed class UsbWindowsDeviceSource : IUsbDeviceSource
         if (connectionStatus != UsbConnectionStatus.NoDeviceConnected)
         {
             TryOptional(
+                queryBudget,
                 () => driverKey = hub.TryQueryDriverKey(portNumber),
                 "usb.port-driver-key-query-failed",
                 portChain,
@@ -246,6 +274,7 @@ internal sealed class UsbWindowsDeviceSource : IUsbDeviceSource
         {
             string downstreamName = string.Empty;
             TryOptional(
+                queryBudget,
                 () => downstreamName = hub.TryQueryConnectionName(portNumber),
                 "usb.hub-name-query-failed",
                 portChain,
@@ -264,7 +293,8 @@ internal sealed class UsbWindowsDeviceSource : IUsbDeviceSource
                         identitiesByDriver,
                         visitedHubs,
                         diagnostics,
-                        ref nodeBudget);
+                        nodeBudget,
+                        queryBudget);
                 }
                 catch (Exception ex) when (IsExpectedNativeFailure(ex))
                 {
@@ -291,15 +321,15 @@ internal sealed class UsbWindowsDeviceSource : IUsbDeviceSource
             connection.OpenPipeCount,
             ToDescriptor(connection.DeviceDescriptor),
             driverKey,
-            (connectorFlags & 0x1) != 0,
-            (connectorFlags & 0x2) != 0,
-            (connectorFlags & 0x8) != 0,
+            connector is null ? null : (connectorFlags & 0x1) != 0,
+            connector is null ? null : (connectorFlags & 0x2) != 0,
+            connector is null ? null : (connectorFlags & 0x8) != 0,
             connector?.CompanionPortNumber is > 0 ? connector.CompanionPortNumber : null,
             connector?.CompanionHubSymbolicName ?? string.Empty,
-            (v2Flags & 0x2) != 0,
-            (v2Flags & 0x1) != 0,
-            (v2Flags & 0x8) != 0,
-            (v2Flags & 0x4) != 0,
+            connectionV2 is null ? null : (v2Flags & 0x2) != 0,
+            connectionV2 is null ? null : (v2Flags & 0x1) != 0,
+            connectionV2 is null ? null : (v2Flags & 0x8) != 0,
+            connectionV2 is null ? null : (v2Flags & 0x4) != 0,
             identity,
             downstreamHub);
     }
@@ -330,6 +360,7 @@ internal sealed class UsbWindowsDeviceSource : IUsbDeviceSource
     }
 
     private static void TryOptional(
+        UsbQueryBudget queryBudget,
         Action query,
         string code,
         string portChain,
@@ -338,6 +369,7 @@ internal sealed class UsbWindowsDeviceSource : IUsbDeviceSource
     {
         try
         {
+            queryBudget.ThrowIfExpired();
             query();
         }
         catch (Exception ex) when (IsExpectedNativeFailure(ex))
@@ -433,6 +465,7 @@ internal sealed class UsbWindowsDeviceSource : IUsbDeviceSource
         return ex is System.ComponentModel.Win32Exception
             or InvalidDataException
             or IOException
+            or TimeoutException
             or UnauthorizedAccessException;
     }
 
@@ -478,6 +511,70 @@ internal sealed class UsbWindowsDeviceSource : IUsbDeviceSource
     private static string ControllerNodeId(string instanceId) => $"usb-controller:{NormalizeId(instanceId)}";
 
     private static string NormalizeId(string value) => value.Trim().ToLowerInvariant();
+
+    private static void AddLimitDiagnostic(
+        ICollection<DeviceTopologyDiagnostic> diagnostics,
+        string controllerInstanceId,
+        string portChain)
+    {
+        if (diagnostics.Any(entry => entry.Code == "usb.node-limit"))
+        {
+            return;
+        }
+
+        diagnostics.Add(Diagnostic(
+            DeviceTopologyDiagnosticSeverity.Error,
+            "usb.node-limit",
+            $"USB topology reached the {MaxTotalNodes}-node safety limit; remaining branches were not read.",
+            string.IsNullOrEmpty(portChain)
+                ? ControllerNodeId(controllerInstanceId)
+                : $"usb-port:{NormalizeId(controllerInstanceId)}:{portChain}"));
+    }
+
+    private sealed class UsbNodeBudget
+    {
+        private int _used;
+
+        public UsbNodeBudget(int initiallyUsed)
+        {
+            _used = initiallyUsed;
+        }
+
+        public bool TryReserve(int count)
+        {
+            if (count < 0 || _used > MaxTotalNodes - count)
+            {
+                return false;
+            }
+
+            _used += count;
+            return true;
+        }
+    }
+
+    private sealed class UsbQueryBudget
+    {
+        private readonly Stopwatch _overall = Stopwatch.StartNew();
+        private TimeSpan _controllerStartedAt;
+
+        public void BeginController()
+        {
+            _controllerStartedAt = _overall.Elapsed;
+        }
+
+        public void ThrowIfExpired()
+        {
+            if (_overall.Elapsed >= OverallTimeout)
+            {
+                throw new TimeoutException($"USB topology collection exceeded the {OverallTimeout.TotalSeconds:0}-second overall budget.");
+            }
+
+            if (_overall.Elapsed - _controllerStartedAt >= ControllerTimeout)
+            {
+                throw new TimeoutException($"USB host controller collection exceeded the {ControllerTimeout.TotalSeconds:0}-second budget.");
+            }
+        }
+    }
 
     private static DevicePropertyRequest Request(string name, DevicePropertyKey key) => new(name, key);
 
