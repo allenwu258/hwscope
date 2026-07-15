@@ -48,6 +48,7 @@ docs/
   cpu-detail-implementation-plan.md
   cpu-stage2-topology-plan.md
   cpu-topology-visualization-plan.md
+  pcie-usb-topology-design.md
   theme-system.md
   memory-benchmark-design.md
   memory-cache-benchmark-implementation-plan.md
