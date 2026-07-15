@@ -69,8 +69,11 @@
             </StackPanel>
         </Grid>
 
-        <TabControl Grid.Row="1" Margin="16,0,16,14">
-            <TabItem Header="PCI Express">
+        <TabControl x:Name="TopologyTabs"
+                    Grid.Row="1"
+                    Margin="16,0,16,14"
+                    SelectionChanged="TopologyTabs_SelectionChanged">
+            <TabItem x:Name="PciTab" Header="PCI Express">
                 <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
                     <StackPanel Margin="0,10,0,0">
                         <Border Height="320"
@@ -183,18 +186,119 @@
                 </ScrollViewer>
             </TabItem>
 
-            <TabItem Header="USB">
-                <Grid>
-                    <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
-                        <ui:SymbolIcon Symbol="UsbPlug24"
-                                       FontSize="34"
-                                       Foreground="{DynamicResource HwScopeMutedTextBrush}" />
-                        <TextBlock Margin="0,12,0,0"
-                                   Text="USB 物理端口树将在下一阶段接入"
-                                   FontSize="14"
-                                   Foreground="{DynamicResource HwScopeMutedTextBrush}" />
+            <TabItem x:Name="UsbTab" Header="USB">
+                <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                    <StackPanel Margin="0,10,0,0">
+                        <Border Height="320"
+                                Background="{DynamicResource HwScopeCardBrush}"
+                                BorderBrush="{DynamicResource HwScopeLineBrush}"
+                                BorderThickness="1"
+                                CornerRadius="7">
+                            <Grid>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="38" />
+                                    <RowDefinition Height="*" />
+                                </Grid.RowDefinitions>
+                                <Grid Grid.Row="0" Margin="12,0">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Text="USB 物理端口拓扑"
+                                               VerticalAlignment="Center"
+                                               FontSize="14"
+                                               FontWeight="SemiBold"
+                                               Foreground="{DynamicResource HwScopeStrongTextBrush}" />
+                                    <TextBlock x:Name="UsbMapHintText"
+                                               Grid.Column="1"
+                                               VerticalAlignment="Center"
+                                               FontSize="12"
+                                               Foreground="{DynamicResource HwScopeMutedTextBrush}"
+                                               Text="切换到此标签后开始枚举" />
+                                </Grid>
+                                <Border Grid.Row="1"
+                                        BorderBrush="{DynamicResource HwScopeLineBrush}"
+                                        BorderThickness="0,1,0,0">
+                                    <topology:TopologyCanvas x:Name="UsbTopologyMap"
+                                                             Density="Compact"
+                                                             LayoutMode="Hierarchical"
+                                                             ItemSelected="UsbTopologyMap_ItemSelected"
+                                                             ExpansionToggled="UsbTopologyMap_ExpansionToggled" />
+                                </Border>
+                            </Grid>
+                        </Border>
+
+                        <Border Margin="0,12,0,12"
+                                Padding="0,0,0,12"
+                                BorderBrush="{DynamicResource HwScopeLineBrush}"
+                                BorderThickness="0,0,0,1">
+                            <StackPanel>
+                                <TextBlock x:Name="UsbSelectedTitleText"
+                                           Text="请选择一个 USB 节点"
+                                           FontSize="19"
+                                           FontWeight="SemiBold"
+                                           Foreground="{DynamicResource HwScopeStrongTextBrush}"
+                                           TextWrapping="Wrap" />
+                                <TextBlock x:Name="UsbSelectedMetaText"
+                                           Margin="0,6,0,0"
+                                           FontSize="13"
+                                           Foreground="{DynamicResource HwScopeMutedTextBrush}"
+                                           TextWrapping="Wrap" />
+                                <TextBlock x:Name="UsbSelectedPathText"
+                                           Margin="0,5,0,0"
+                                           FontSize="12"
+                                           Foreground="{DynamicResource HwScopeMutedTextBrush}"
+                                           TextWrapping="Wrap" />
+                            </StackPanel>
+                        </Border>
+
+                        <ItemsControl x:Name="UsbDetailSectionsList">
+                            <ItemsControl.ItemsPanel>
+                                <ItemsPanelTemplate>
+                                    <WrapPanel />
+                                </ItemsPanelTemplate>
+                            </ItemsControl.ItemsPanel>
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <Border Style="{StaticResource TopologySectionStyle}">
+                                        <StackPanel>
+                                            <TextBlock Text="{Binding Title}"
+                                                       FontSize="15"
+                                                       FontWeight="SemiBold"
+                                                       Foreground="{DynamicResource HwScopeStrongTextBrush}" />
+                                            <ItemsControl ItemsSource="{Binding Rows}" Margin="0,8,0,0">
+                                                <ItemsControl.ItemTemplate>
+                                                    <DataTemplate>
+                                                        <Border MinHeight="31"
+                                                                BorderBrush="{DynamicResource HwScopeLineBrush}"
+                                                                BorderThickness="0,0,0,1">
+                                                            <Grid>
+                                                                <Grid.ColumnDefinitions>
+                                                                    <ColumnDefinition Width="132" />
+                                                                    <ColumnDefinition Width="*" />
+                                                                </Grid.ColumnDefinitions>
+                                                                <TextBlock Text="{Binding Label}"
+                                                                           VerticalAlignment="Center"
+                                                                           FontSize="13"
+                                                                           Foreground="{DynamicResource HwScopeMutedTextBrush}" />
+                                                                <TextBlock Grid.Column="1"
+                                                                           Text="{Binding Value}"
+                                                                           VerticalAlignment="Center"
+                                                                           FontSize="13"
+                                                                           Foreground="{DynamicResource HwScopeTextBrush}"
+                                                                           TextWrapping="Wrap" />
+                                                            </Grid>
+                                                        </Border>
+                                                    </DataTemplate>
+                                                </ItemsControl.ItemTemplate>
+                                            </ItemsControl>
+                                        </StackPanel>
+                                    </Border>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
                     </StackPanel>
-                </Grid>
+                </ScrollViewer>
             </TabItem>
         </TabControl>
     </Grid>

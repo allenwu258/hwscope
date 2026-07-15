@@ -9,6 +9,7 @@ using HwScope.Core.Benchmark;
 using HwScope.Core.Benchmark.Storage;
 using HwScope.Core.Hardware;
 using HwScope.Core.Hardware.DeviceTopology.Pci;
+using HwScope.Core.Hardware.DeviceTopology.Usb;
 using HwScope.Core.Hardware.Inventory;
 using HwScope.Core.Hardware.Storage;
 
@@ -46,6 +47,25 @@ var jsonOptions = new JsonSerializerOptions
 
 try
 {
+    if (options.UsbMode)
+    {
+        var snapshot = new UsbTopologyCollector().Collect();
+        var output = options.Json
+            ? JsonSerializer.Serialize(
+                options.IncludeSensitiveIds ? snapshot : UsbTopologyRedactor.RedactSensitiveIds(snapshot),
+                jsonOptions)
+            : UsbTopologyReportFormatter.Format(snapshot);
+        Console.WriteLine(output);
+        if (options.Copy)
+        {
+            Clipboard.Copy(output);
+            Console.WriteLine();
+            Console.WriteLine("已复制到剪贴板。");
+        }
+
+        return snapshot.Diagnostics.HasErrors ? 3 : 0;
+    }
+
     if (options.PciMode)
     {
         var snapshot = new PciTopologyCollector().Collect();
@@ -325,6 +345,7 @@ internal sealed record CliOptions(
     bool StorageMode,
     int? StorageDisk,
     bool PciMode,
+    bool UsbMode,
     bool IncludeSensitiveIds,
     bool ShowHelp)
 {
@@ -423,6 +444,7 @@ internal sealed record CliOptions(
             StorageMode: storageMode,
             StorageDisk: storageDisk,
             PciMode: command is not null && (command.Equals("pcie", StringComparison.OrdinalIgnoreCase) || command.Equals("pci", StringComparison.OrdinalIgnoreCase)),
+            UsbMode: command is not null && command.Equals("usb", StringComparison.OrdinalIgnoreCase),
             IncludeSensitiveIds: normalized.Contains("--include-sensitive-ids"),
             ShowHelp: showHelp);
     }
@@ -477,6 +499,9 @@ internal static class CliHelp
       pcie [--json] [--copy] [--include-sensitive-ids]
                    枚举当前 PCI/PCIe 拓扑、BDF、链路属性和诊断
                    JSON 默认移除稳定设备标识；仅本机诊断时可显式保留
+      usb [--json] [--copy] [--include-sensitive-ids]
+                   枚举 USB Host Controller、Hub、物理端口和连接设备
+                   JSON 默认移除稳定设备标识；仅本机诊断时可显式保留
       -h, --help   显示帮助
 
     示例：
@@ -488,5 +513,6 @@ internal static class CliHelp
       dotnet run --project src/HwScope.Cli -- storage list
       dotnet run --project src/HwScope.Cli -- storage --disk 0
       dotnet run --project src/HwScope.Cli -- pcie
+      dotnet run --project src/HwScope.Cli -- usb
     """;
 }

@@ -29,4 +29,15 @@ public sealed class CliOptionsTests
         Assert.True(options.PciMode);
         Assert.True(options.IncludeSensitiveIds);
     }
+
+    [Fact]
+    public void Parse_RecognizesUsbCommandWithGlobalOptions()
+    {
+        var options = CliOptions.Parse(["--json", "usb"]);
+
+        Assert.True(options.UsbMode);
+        Assert.False(options.PciMode);
+        Assert.True(options.Json);
+        Assert.False(options.IncludeSensitiveIds);
+    }
 }

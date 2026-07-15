@@ -26,4 +26,8 @@ public static class TopologyAccentKeys
     public const string GroupNuma = "Group.Numa";
     public const string GroupPcieRoot = "Group.PcieRoot";
     public const string DevicePcie = "Device.Pcie";
+    public const string GroupUsbController = "Group.UsbController";
+    public const string GroupUsbHub = "Group.UsbHub";
+    public const string PortUsb = "Port.Usb";
+    public const string DeviceUsb = "Device.Usb";
 }

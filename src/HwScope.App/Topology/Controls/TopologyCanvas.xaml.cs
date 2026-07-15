@@ -435,6 +435,10 @@ public partial class TopologyCanvas : UserControl
             TopologyAccentKeys.GroupNuma => new SolidColorBrush(Color.FromRgb(0x5D, 0x78, 0xA6)),
             TopologyAccentKeys.GroupPcieRoot => new SolidColorBrush(Color.FromRgb(0x2E, 0xCC, 0x71)),
             TopologyAccentKeys.DevicePcie => new SolidColorBrush(Color.FromRgb(0x7F, 0x8C, 0x8D)),
+            TopologyAccentKeys.GroupUsbController => new SolidColorBrush(Color.FromRgb(0x26, 0x7A, 0x73)),
+            TopologyAccentKeys.GroupUsbHub => new SolidColorBrush(Color.FromRgb(0x3B, 0x82, 0xF6)),
+            TopologyAccentKeys.PortUsb => new SolidColorBrush(Color.FromRgb(0x78, 0x78, 0x78)),
+            TopologyAccentKeys.DeviceUsb => new SolidColorBrush(Color.FromRgb(0xD0, 0x79, 0x27)),
             TopologyAccentKeys.GroupPackage => new SolidColorBrush(Color.FromRgb(0x6B, 0x72, 0x80)),
             _ => TryResourceBrush("HwScopeLineBrush", Brushes.Gray)
         };

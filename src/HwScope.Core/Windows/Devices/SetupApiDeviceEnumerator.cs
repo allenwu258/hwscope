@@ -94,7 +94,7 @@ internal sealed class SetupApiDeviceEnumerator
         return new NativeDeviceEnumerationResult(devices, diagnostics);
     }
 
-    private static string ReadInstanceId(IntPtr deviceInfoSet, ref SpDevinfoData deviceInfo)
+    internal static string ReadInstanceId(IntPtr deviceInfoSet, ref SpDevinfoData deviceInfo)
     {
         var builder = new StringBuilder(256);
         if (SetupDiGetDeviceInstanceIdW(deviceInfoSet, ref deviceInfo, builder, builder.Capacity, out var required))
@@ -117,7 +117,7 @@ internal sealed class SetupApiDeviceEnumerator
         return builder.ToString();
     }
 
-    private static NativeDeviceProperty? ReadProperty(
+    internal static NativeDeviceProperty? ReadProperty(
         IntPtr deviceInfoSet,
         ref SpDevinfoData deviceInfo,
         DevicePropertyKey key)
@@ -186,7 +186,7 @@ internal sealed class SetupApiDeviceEnumerator
     }
 
     [StructLayout(LayoutKind.Sequential)]
-    private struct SpDevinfoData
+    internal struct SpDevinfoData
     {
         public uint Size;
         public Guid ClassGuid;

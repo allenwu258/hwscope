@@ -19,3 +19,12 @@ internal sealed record NativeDeviceDiagnostic(
 internal sealed record NativeDeviceEnumerationResult(
     IReadOnlyList<NativeDeviceInfo> Devices,
     IReadOnlyList<NativeDeviceDiagnostic> Diagnostics);
+
+internal sealed record NativeDeviceInterfaceInfo(
+    string DevicePath,
+    string InstanceId,
+    IReadOnlyDictionary<DevicePropertyKey, NativeDeviceProperty> Properties);
+
+internal sealed record NativeDeviceInterfaceEnumerationResult(
+    IReadOnlyList<NativeDeviceInterfaceInfo> Interfaces,
+    IReadOnlyList<NativeDeviceDiagnostic> Diagnostics);
