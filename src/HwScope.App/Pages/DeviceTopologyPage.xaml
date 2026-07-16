@@ -46,8 +46,17 @@
             </StackPanel>
 
             <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                <ui:Button x:Name="DiagnosticsButton"
+                           Height="32"
+                           MinWidth="78"
+                           Padding="10,0"
+                           Icon="{ui:SymbolIcon Search24}"
+                           Content="诊断"
+                           ToolTip="打开 PCIe 精确诊断窗口"
+                           Click="DiagnosticsButton_Click" />
                 <ui:Button Height="32"
                            MinWidth="78"
+                           Margin="6,0,0,0"
                            Padding="10,0"
                            Icon="{ui:SymbolIcon ArrowClockwise24}"
                            Content="刷新"

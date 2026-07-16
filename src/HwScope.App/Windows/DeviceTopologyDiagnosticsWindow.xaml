@@ -1,0 +1,361 @@
+<ui:FluentWindow x:Class="HwScope.App.Windows.DeviceTopologyDiagnosticsWindow"
+                 xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                 xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                 xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
+                 Title="PCIe 精确诊断"
+                 Width="1180"
+                 Height="760"
+                 MinWidth="980"
+                 MinHeight="640"
+                 Background="{DynamicResource HwScopePanelBrush}"
+                 ExtendsContentIntoTitleBar="True"
+                 WindowBackdropType="Mica"
+                 WindowStartupLocation="CenterOwner">
+    <ui:FluentWindow.Resources>
+        <DataTemplate x:Key="DiagnosticFieldTemplate">
+            <Border MinHeight="38"
+                    BorderBrush="{DynamicResource HwScopeLineBrush}"
+                    BorderThickness="0,0,0,1">
+                <Grid Margin="10,4">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="180" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="130" />
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Text="{Binding Label}"
+                               VerticalAlignment="Center"
+                               FontSize="13"
+                               Foreground="{DynamicResource HwScopeMutedTextBrush}" />
+                    <TextBlock Grid.Column="1"
+                               Margin="8,0"
+                               Text="{Binding Value}"
+                               ToolTip="{Binding Note}"
+                               VerticalAlignment="Center"
+                               FontSize="13"
+                               Foreground="{DynamicResource HwScopeTextBrush}"
+                               TextWrapping="Wrap" />
+                    <TextBlock Grid.Column="2"
+                               Text="{Binding Source}"
+                               VerticalAlignment="Center"
+                               FontSize="11"
+                               Foreground="{DynamicResource HwScopeStatusInfoBrush}"
+                               TextWrapping="Wrap" />
+                </Grid>
+            </Border>
+        </DataTemplate>
+
+        <Style x:Key="DiagnosticTreeItemStyle" TargetType="ListBoxItem">
+            <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+            <Setter Property="Padding" Value="0" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="Background" Value="Transparent" />
+        </Style>
+    </ui:FluentWindow.Resources>
+
+    <Grid Background="{DynamicResource HwScopePanelBrush}">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="44" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <ui:TitleBar Grid.Row="0"
+                     Height="44"
+                     Title="PCIe 精确诊断"
+                     Icon="{ui:SymbolIcon Search32}" />
+
+        <Grid Grid.Row="1" Margin="16,12,16,8">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <StackPanel>
+                <TextBlock Text="PCI Express 精确目录与原始属性"
+                           FontSize="19"
+                           FontWeight="SemiBold"
+                           Foreground="{DynamicResource HwScopeStrongTextBrush}" />
+                <TextBlock x:Name="SummaryText"
+                           Margin="0,4,0,0"
+                           FontSize="12"
+                           Foreground="{DynamicResource HwScopeMutedTextBrush}"
+                           Text="正在加载 PCI Express snapshot..." />
+            </StackPanel>
+
+            <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                <ui:Button Height="32"
+                           MinWidth="78"
+                           Padding="10,0"
+                           Icon="{ui:SymbolIcon ArrowClockwise24}"
+                           Content="刷新"
+                           Click="RefreshButton_Click" />
+                <ui:Button Height="32"
+                           MinWidth="78"
+                           Margin="6,0,0,0"
+                           Padding="10,0"
+                           Icon="{ui:SymbolIcon Copy24}"
+                           Content="复制节点"
+                           Click="CopyNodeButton_Click" />
+                <ui:Button Height="32"
+                           MinWidth="78"
+                           Margin="6,0,0,0"
+                           Padding="10,0"
+                           Icon="{ui:SymbolIcon Save24}"
+                           Content="保存节点"
+                           Click="SaveNodeButton_Click" />
+            </StackPanel>
+        </Grid>
+
+        <Grid Grid.Row="2" Margin="16,0,16,10">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="250" />
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="150" />
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+
+            <TextBlock Text="搜索"
+                       VerticalAlignment="Center"
+                       FontSize="12"
+                       Foreground="{DynamicResource HwScopeMutedTextBrush}" />
+            <TextBox x:Name="SearchTextBox"
+                     Grid.Column="1"
+                     Height="30"
+                     Margin="8,0,14,0"
+                     Padding="8,3"
+                     VerticalContentAlignment="Center"
+                     TextChanged="SearchTextBox_TextChanged" />
+            <TextBlock Grid.Column="2"
+                       Text="筛选"
+                       VerticalAlignment="Center"
+                       FontSize="12"
+                       Foreground="{DynamicResource HwScopeMutedTextBrush}" />
+            <ComboBox x:Name="FilterComboBox"
+                      Grid.Column="3"
+                      Height="30"
+                      Margin="8,0,14,0"
+                      SelectedIndex="0"
+                      SelectionChanged="FilterComboBox_SelectionChanged">
+                <ComboBoxItem Content="全部节点" Tag="All" />
+                <ComboBoxItem Content="存在问题" Tag="Problems" />
+                <ComboBoxItem Content="Root / Bridge" Tag="Bridges" />
+                <ComboBoxItem Content="Endpoint" Tag="Endpoints" />
+            </ComboBox>
+            <ui:Button Grid.Column="4"
+                       MinWidth="72"
+                       Height="30"
+                       Margin="0,0,6,0"
+                       Padding="8,0"
+                       Icon="{ui:SymbolIcon ArrowExpandAll20}"
+                       Content="展开"
+                       ToolTip="全部展开"
+                       Click="ExpandAllButton_Click" />
+            <ui:Button Grid.Column="5"
+                       MinWidth="72"
+                       Height="30"
+                       Padding="8,0"
+                       Icon="{ui:SymbolIcon ArrowCollapseAll20}"
+                       Content="折叠"
+                       ToolTip="全部折叠"
+                       Click="CollapseAllButton_Click" />
+            <TextBlock x:Name="VisibleCountText"
+                       Grid.Column="7"
+                       VerticalAlignment="Center"
+                       FontSize="12"
+                       Foreground="{DynamicResource HwScopeMutedTextBrush}" />
+        </Grid>
+
+        <Grid Grid.Row="3" Margin="16,0,16,10">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="360" MinWidth="280" MaxWidth="520" />
+                <ColumnDefinition Width="5" />
+                <ColumnDefinition Width="*" MinWidth="560" />
+            </Grid.ColumnDefinitions>
+
+            <Border Grid.Column="0"
+                    Background="{DynamicResource HwScopeCardBrush}"
+                    BorderBrush="{DynamicResource HwScopeLineBrush}"
+                    BorderThickness="1"
+                    CornerRadius="7">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="38" />
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+                    <TextBlock Margin="12,0"
+                               Text="精确目录树"
+                               VerticalAlignment="Center"
+                               FontSize="14"
+                               FontWeight="SemiBold"
+                               Foreground="{DynamicResource HwScopeStrongTextBrush}" />
+                    <ListBox x:Name="TreeRowsList"
+                             Grid.Row="1"
+                             BorderThickness="0"
+                             Background="Transparent"
+                             ItemsSource="{Binding}"
+                             ItemContainerStyle="{StaticResource DiagnosticTreeItemStyle}"
+                             SelectionChanged="TreeRowsList_SelectionChanged"
+                             ScrollViewer.CanContentScroll="True"
+                             ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                             ScrollViewer.VerticalScrollBarVisibility="Auto"
+                             VirtualizingPanel.IsVirtualizing="True"
+                             VirtualizingPanel.VirtualizationMode="Recycling">
+                        <ListBox.ItemsPanel>
+                            <ItemsPanelTemplate>
+                                <VirtualizingStackPanel />
+                            </ItemsPanelTemplate>
+                        </ListBox.ItemsPanel>
+                        <ListBox.ItemTemplate>
+                            <DataTemplate>
+                                <Grid MinHeight="48" Margin="{Binding Indent}">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="28" />
+                                        <ColumnDefinition Width="28" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <Button Width="24"
+                                            Height="24"
+                                            Padding="0"
+                                            HorizontalAlignment="Center"
+                                            VerticalAlignment="Center"
+                                            Background="Transparent"
+                                            BorderThickness="0"
+                                            Content="{Binding ExpansionGlyph}"
+                                            IsEnabled="{Binding HasChildren}"
+                                            Tag="{Binding NodeId}"
+                                            ToolTip="展开或折叠"
+                                            Click="TreeExpansionButton_Click" />
+                                    <ui:SymbolIcon Grid.Column="1"
+                                                   Width="20"
+                                                   Height="20"
+                                                   VerticalAlignment="Center"
+                                                   Symbol="{Binding Icon}"
+                                                   Foreground="{DynamicResource HwScopeMutedTextBrush}" />
+                                    <Grid Grid.Column="2" Margin="4,4,8,4">
+                                        <Grid.RowDefinitions>
+                                            <RowDefinition Height="Auto" />
+                                            <RowDefinition Height="Auto" />
+                                        </Grid.RowDefinitions>
+                                        <TextBlock Text="{Binding Label}"
+                                                   FontSize="13"
+                                                   FontWeight="SemiBold"
+                                                   Foreground="{DynamicResource HwScopeTextBrush}"
+                                                   TextTrimming="CharacterEllipsis" />
+                                        <StackPanel Grid.Row="1" Orientation="Horizontal" Margin="0,2,0,0">
+                                            <TextBlock Text="{Binding Coordinate}"
+                                                       FontFamily="Cascadia Mono, Consolas"
+                                                       FontSize="11"
+                                                       Foreground="{DynamicResource HwScopeMutedTextBrush}" />
+                                            <TextBlock Margin="8,0,0,0"
+                                                       Text="{Binding KindLabel}"
+                                                       FontSize="11"
+                                                       Foreground="{DynamicResource HwScopeStatusInfoBrush}" />
+                                            <TextBlock Margin="8,0,0,0"
+                                                       Text="{Binding StatusText}"
+                                                       FontSize="11">
+                                                <TextBlock.Style>
+                                                    <Style TargetType="TextBlock">
+                                                        <Setter Property="Foreground" Value="{DynamicResource HwScopeStatusGoodBrush}" />
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding HasProblem}" Value="True">
+                                                                <Setter Property="Foreground" Value="{DynamicResource HwScopeStatusCriticalBrush}" />
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </TextBlock.Style>
+                                            </TextBlock>
+                                        </StackPanel>
+                                    </Grid>
+                                </Grid>
+                            </DataTemplate>
+                        </ListBox.ItemTemplate>
+                    </ListBox>
+                </Grid>
+            </Border>
+
+            <GridSplitter Grid.Column="1"
+                          Width="5"
+                          HorizontalAlignment="Stretch"
+                          VerticalAlignment="Stretch"
+                          Background="Transparent"
+                          ResizeDirection="Columns"
+                          ResizeBehavior="PreviousAndNext" />
+
+            <Grid Grid.Column="2">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                </Grid.RowDefinitions>
+                <Border Padding="0,0,0,10"
+                        BorderBrush="{DynamicResource HwScopeLineBrush}"
+                        BorderThickness="0,0,0,1">
+                    <StackPanel>
+                        <TextBlock x:Name="SelectedNodeTitleText"
+                                   Text="请选择一个 PCI Express 节点"
+                                   FontSize="19"
+                                   FontWeight="SemiBold"
+                                   Foreground="{DynamicResource HwScopeStrongTextBrush}"
+                                   TextWrapping="Wrap" />
+                        <TextBlock x:Name="SelectedNodeMetaText"
+                                   Margin="0,4,0,0"
+                                   FontSize="12"
+                                   Foreground="{DynamicResource HwScopeMutedTextBrush}"
+                                   TextWrapping="Wrap" />
+                    </StackPanel>
+                </Border>
+
+                <TabControl Grid.Row="1" Margin="0,8,0,0">
+                    <TabItem Header="概览">
+                        <ScrollViewer x:Name="OverviewScrollViewer" VerticalScrollBarVisibility="Auto">
+                            <ItemsControl x:Name="OverviewFieldsList" ItemTemplate="{StaticResource DiagnosticFieldTemplate}" />
+                        </ScrollViewer>
+                    </TabItem>
+                    <TabItem Header="链路与能力">
+                        <ScrollViewer x:Name="LinkScrollViewer" VerticalScrollBarVisibility="Auto">
+                            <ItemsControl x:Name="LinkFieldsList" ItemTemplate="{StaticResource DiagnosticFieldTemplate}" />
+                        </ScrollViewer>
+                    </TabItem>
+                    <TabItem Header="资源">
+                        <ScrollViewer x:Name="ResourceScrollViewer" VerticalScrollBarVisibility="Auto">
+                            <ItemsControl x:Name="ResourceFieldsList" ItemTemplate="{StaticResource DiagnosticFieldTemplate}" />
+                        </ScrollViewer>
+                    </TabItem>
+                    <TabItem Header="驱动">
+                        <ScrollViewer x:Name="DriverScrollViewer" VerticalScrollBarVisibility="Auto">
+                            <ItemsControl x:Name="DriverFieldsList" ItemTemplate="{StaticResource DiagnosticFieldTemplate}" />
+                        </ScrollViewer>
+                    </TabItem>
+                    <TabItem Header="原始">
+                        <TextBox x:Name="RawReportTextBox"
+                                 Margin="1"
+                                 Padding="12"
+                                 AcceptsReturn="True"
+                                 AcceptsTab="True"
+                                 Background="{DynamicResource HwScopeCardBrush}"
+                                 BorderBrush="{DynamicResource HwScopeLineBrush}"
+                                 BorderThickness="1"
+                                 FontFamily="Cascadia Mono, Consolas"
+                                 FontSize="12"
+                                 Foreground="{DynamicResource HwScopeTextBrush}"
+                                 HorizontalScrollBarVisibility="Auto"
+                                 IsReadOnly="True"
+                                 TextWrapping="NoWrap"
+                                 VerticalScrollBarVisibility="Auto" />
+                    </TabItem>
+                </TabControl>
+            </Grid>
+        </Grid>
+
+        <TextBlock x:Name="StatusText"
+                   Grid.Row="4"
+                   Margin="16,0,16,10"
+                   FontSize="12"
+                   Foreground="{DynamicResource HwScopeMutedTextBrush}"
+                   Text="等待 PCI Express snapshot。" />
+    </Grid>
+</ui:FluentWindow>

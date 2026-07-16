@@ -4,6 +4,7 @@ using System.Windows.Controls;
 using HwScope.App.Pages.DeviceTopology;
 using HwScope.App.Topology.Controls;
 using HwScope.App.Topology.Model;
+using HwScope.App.Windows;
 using HwScope.Core.Hardware.DeviceTopology.Pci;
 using HwScope.Core.Hardware.DeviceTopology.Usb;
 using Microsoft.Win32;
@@ -85,6 +86,11 @@ public partial class DeviceTopologyPage : UserControl
 
     private async void TopologyTabs_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
+        if (DiagnosticsButton is not null)
+        {
+            DiagnosticsButton.IsEnabled = TopologyTabs.SelectedItem == PciTab;
+        }
+
         if (!IsLoaded || TopologyTabs.SelectedItem != UsbTab)
         {
             if (IsLoaded && _snapshot is not null)
@@ -128,6 +134,24 @@ public partial class DeviceTopologyPage : UserControl
                 _usbLoadStarted = false;
             }
         }
+    }
+
+    private void DiagnosticsButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (TopologyTabs.SelectedItem != PciTab)
+        {
+            return;
+        }
+
+        var owner = Window.GetWindow(this);
+        var window = App.SingleInstanceWindows.ShowOrActivate(
+            SingleInstanceWindowKeys.DeviceTopologyDiagnostics,
+            () => new DeviceTopologyDiagnosticsWindow(_selectedNodeId)
+            {
+                Owner = owner
+            });
+        window.SetTarget(_selectedNodeId);
+        SetStatus("PCIe 精确诊断窗口已打开。");
     }
 
     private async void RefreshButton_Click(object sender, RoutedEventArgs e)
