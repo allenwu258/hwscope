@@ -1,4 +1,5 @@
 using System.Buffers.Binary;
+using System.Collections.Immutable;
 using System.Globalization;
 using System.Text;
 using HwScope.Core.Hardware.DeviceTopology.Usb;
@@ -7,6 +8,11 @@ namespace HwScope.Core.Windows.Usb;
 
 internal static class UsbDescriptorParser
 {
+    internal const int MaximumInterfacesPerConfiguration = 256;
+    internal const int MaximumEndpointsPerConfiguration = 1_024;
+    internal const int MaximumAssociationsPerConfiguration = 256;
+    internal const int MaximumAdditionalDescriptorsPerConfiguration = 1_024;
+    internal const int MaximumBosCapabilities = 256;
     private const byte ConfigurationDescriptorType = 0x02;
     private const byte StringDescriptorType = 0x03;
     private const byte InterfaceDescriptorType = 0x04;
@@ -44,6 +50,8 @@ internal static class UsbDescriptorParser
         var interfaces = new List<UsbInterfaceDescriptorInfo>();
         var associations = new List<UsbInterfaceAssociationInfo>();
         var additional = new List<UsbRawDescriptorInfo>();
+        var endpointCount = 0;
+        byte? previousDescriptorType = null;
         var offset = 0;
         while (offset < bounded.Length)
         {
@@ -74,6 +82,10 @@ internal static class UsbDescriptorParser
                     }
                     break;
                 case InterfaceDescriptorType:
+                    EnsureCountWithinLimit(
+                        interfaces.Count,
+                        MaximumInterfacesPerConfiguration,
+                        "interfaces");
                     interfaces.Add(ParseInterface(descriptor, strings));
                     break;
                 case EndpointDescriptorType:
@@ -82,37 +94,66 @@ internal static class UsbDescriptorParser
                         throw new InvalidDataException($"USB endpoint descriptor at offset {offset} has no preceding interface.");
                     }
 
+                    EnsureCountWithinLimit(
+                        endpointCount,
+                        MaximumEndpointsPerConfiguration,
+                        "endpoints");
+
                     var currentInterface = interfaces[^1];
                     interfaces[^1] = currentInterface with
                     {
-                        Endpoints = currentInterface.Endpoints.Append(ParseEndpoint(descriptor)).ToArray()
+                        Endpoints = currentInterface.Endpoints.Add(ParseEndpoint(descriptor))
                     };
+                    endpointCount++;
                     break;
                 case SuperSpeedEndpointCompanionDescriptorType:
-                    if (interfaces.Count == 0 || interfaces[^1].Endpoints.Count == 0)
+                    if (previousDescriptorType != EndpointDescriptorType
+                        || interfaces.Count == 0
+                        || interfaces[^1].Endpoints.IsDefaultOrEmpty)
                     {
-                        throw new InvalidDataException($"USB SuperSpeed endpoint companion at offset {offset} has no preceding endpoint.");
+                        throw new InvalidDataException(
+                            $"USB SuperSpeed endpoint companion at offset {offset} does not immediately follow an endpoint.");
                     }
 
                     var owner = interfaces[^1];
-                    var endpoints = owner.Endpoints.ToArray();
-                    endpoints[^1] = endpoints[^1] with
+                    var endpointIndex = owner.Endpoints.Length - 1;
+                    var endpoint = owner.Endpoints[endpointIndex];
+                    if (endpoint.SuperSpeedCompanion is not null)
                     {
-                        SuperSpeedCompanion = ParseSuperSpeedEndpointCompanion(descriptor)
+                        throw new InvalidDataException(
+                            $"USB endpoint at offset {offset} has more than one SuperSpeed companion.");
+                    }
+
+                    interfaces[^1] = owner with
+                    {
+                        Endpoints = owner.Endpoints.SetItem(
+                            endpointIndex,
+                            endpoint with
+                            {
+                                SuperSpeedCompanion = ParseSuperSpeedEndpointCompanion(descriptor)
+                            })
                     };
-                    interfaces[^1] = owner with { Endpoints = endpoints };
                     break;
                 case InterfaceAssociationDescriptorType:
+                    EnsureCountWithinLimit(
+                        associations.Count,
+                        MaximumAssociationsPerConfiguration,
+                        "interface associations");
                     associations.Add(ParseInterfaceAssociation(descriptor, strings));
                     break;
                 default:
                     if (offset != 0)
                     {
-                        additional.Add(new UsbRawDescriptorInfo(type, length, descriptor.ToArray()));
+                        EnsureCountWithinLimit(
+                            additional.Count,
+                            MaximumAdditionalDescriptorsPerConfiguration,
+                            "additional descriptors");
+                        additional.Add(new UsbRawDescriptorInfo(type, length, descriptor.ToArray().ToImmutableArray()));
                     }
                     break;
             }
 
+            previousDescriptorType = type;
             offset += length;
         }
 
@@ -129,10 +170,10 @@ internal static class UsbDescriptorParser
             (attributes & 0x40) != 0,
             (attributes & 0x20) != 0,
             bounded[8] * powerUnitMilliamps,
-            associations,
-            interfaces,
-            additional,
-            bounded.ToArray());
+            associations.ToImmutableArray(),
+            interfaces.ToImmutableArray(),
+            additional.ToImmutableArray(),
+            bounded.ToArray().ToImmutableArray());
     }
 
     public static ushort ReadBosTotalLength(ReadOnlySpan<byte> data)
@@ -177,14 +218,19 @@ internal static class UsbDescriptorParser
                 throw new InvalidDataException($"USB BOS child at offset {offset} has unexpected descriptor type 0x{descriptor[1]:X2}.");
             }
 
+            EnsureCountWithinLimit(capabilities.Count, MaximumBosCapabilities, "BOS capabilities");
             capabilities.Add(new UsbBosCapabilityInfo(
                 descriptor[2],
                 FormatCapabilityName(descriptor[2]),
-                descriptor.ToArray()));
+                descriptor.ToArray().ToImmutableArray()));
             offset += length;
         }
 
-        return new UsbBosDescriptorInfo(totalLength, bounded[4], capabilities, bounded.ToArray());
+        return new UsbBosDescriptorInfo(
+            totalLength,
+            bounded[4],
+            capabilities.ToImmutableArray(),
+            bounded.ToArray().ToImmutableArray());
     }
 
     public static IReadOnlyList<ushort> ParseLanguageIds(ReadOnlySpan<byte> data)
@@ -231,7 +277,7 @@ internal static class UsbDescriptorParser
             descriptor[7],
             descriptor[8],
             Lookup(strings, descriptor[8]),
-            []);
+            ImmutableArray<UsbEndpointDescriptorInfo>.Empty);
     }
 
     private static UsbEndpointDescriptorInfo ParseEndpoint(ReadOnlySpan<byte> descriptor)
@@ -310,6 +356,15 @@ internal static class UsbDescriptorParser
     private static string? Lookup(IReadOnlyDictionary<byte, string>? strings, byte index)
     {
         return index != 0 && strings is not null && strings.TryGetValue(index, out var value) ? value : null;
+    }
+
+    private static void EnsureCountWithinLimit(int count, int maximum, string itemName)
+    {
+        if (count >= maximum)
+        {
+            throw new InvalidDataException(
+                $"USB descriptor exceeds the limit of {maximum} {itemName}.");
+        }
     }
 
     private static string FormatCapabilityName(byte capabilityType)

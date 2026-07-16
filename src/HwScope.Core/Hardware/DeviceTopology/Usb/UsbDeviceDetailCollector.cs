@@ -1,5 +1,7 @@
+using System.Collections.Immutable;
 using System.Globalization;
 using System.ComponentModel;
+using System.Diagnostics;
 using HwScope.Core.Windows.Usb;
 
 namespace HwScope.Core.Hardware.DeviceTopology.Usb;
@@ -18,6 +20,13 @@ internal sealed class UsbDeviceDetailCollector : IUsbDeviceDetailSource
     private const int MaximumDescriptorLength = ushort.MaxValue;
     private const int MaximumDescriptorBytesPerDevice = 64 * 1024;
     private const int MaximumStringDescriptorLength = 255;
+    private const int MaximumDescriptorRequestsPerDevice = 64;
+    private const int MaximumStringDescriptorCount = 32;
+    private const int MaximumInterfacesPerDevice = 512;
+    private const int MaximumEndpointsPerDevice = 2_048;
+    private const int MaximumAssociationsPerDevice = 512;
+    private const int MaximumAdditionalDescriptorsPerDevice = 2_048;
+    private static readonly TimeSpan MaximumCollectionDuration = TimeSpan.FromSeconds(8);
 
     public UsbDeviceDetailSnapshot Collect(UsbDeviceDetailTarget target)
     {
@@ -27,7 +36,14 @@ internal sealed class UsbDeviceDetailCollector : IUsbDeviceDetailSource
         var configurations = new List<UsbConfigurationDescriptorInfo>();
         var strings = new Dictionary<byte, string>();
         var attemptedStrings = new HashSet<byte>();
-        var budget = new DescriptorReadBudget(MaximumDescriptorBytesPerDevice);
+        var budget = new DescriptorReadBudget(
+            MaximumDescriptorBytesPerDevice,
+            MaximumDescriptorRequestsPerDevice,
+            MaximumCollectionDuration);
+        var interfaceCount = 0;
+        var endpointCount = 0;
+        var associationCount = 0;
+        var additionalDescriptorCount = 0;
         UsbBosDescriptorInfo? bos = null;
 
         try
@@ -58,7 +74,7 @@ internal sealed class UsbDeviceDetailCollector : IUsbDeviceDetailSource
                 {
                     if (!budget.TryReserve(9))
                     {
-                        diagnostics.Add(BudgetDiagnostic(target));
+                        AddBudgetDiagnostic(target, budget, diagnostics);
                         break;
                     }
 
@@ -71,12 +87,24 @@ internal sealed class UsbDeviceDetailCollector : IUsbDeviceDetailSource
 
                     if (!budget.TryReserve(totalLength))
                     {
-                        diagnostics.Add(BudgetDiagnostic(target));
+                        AddBudgetDiagnostic(target, budget, diagnostics);
                         break;
                     }
 
                     var raw = hub.QueryDescriptor(target.PortNumber, ConfigurationDescriptorType, index, 0, totalLength);
                     var initial = UsbDescriptorParser.ParseConfiguration(raw, index, target.DeviceDescriptor.UsbVersionBcd);
+                    if (interfaceCount + initial.Interfaces.Length > MaximumInterfacesPerDevice
+                        || endpointCount + initial.Interfaces.Sum(item => item.Endpoints.Length) > MaximumEndpointsPerDevice
+                        || associationCount + initial.InterfaceAssociations.Length > MaximumAssociationsPerDevice
+                        || additionalDescriptorCount + initial.AdditionalDescriptors.Length > MaximumAdditionalDescriptorsPerDevice)
+                    {
+                        diagnostics.Add(Diagnostic(
+                            target,
+                            "usb.detail.object-limit",
+                            "USB descriptors exceed the per-device parsed object limit."));
+                        break;
+                    }
+
                     if (languageId.HasValue)
                     {
                         foreach (var stringIndex in EnumerateStringIndices(initial).Distinct())
@@ -85,11 +113,16 @@ internal sealed class UsbDeviceDetailCollector : IUsbDeviceDetailSource
                         }
                     }
 
-                    configurations.Add(UsbDescriptorParser.ParseConfiguration(
+                    var configuration = UsbDescriptorParser.ParseConfiguration(
                         raw,
                         index,
                         target.DeviceDescriptor.UsbVersionBcd,
-                        strings));
+                        strings);
+                    configurations.Add(configuration);
+                    interfaceCount += configuration.Interfaces.Length;
+                    endpointCount += configuration.Interfaces.Sum(item => item.Endpoints.Length);
+                    associationCount += configuration.InterfaceAssociations.Length;
+                    additionalDescriptorCount += configuration.AdditionalDescriptors.Length;
                 }
                 catch (Exception ex) when (IsRecoverable(ex))
                 {
@@ -106,7 +139,7 @@ internal sealed class UsbDeviceDetailCollector : IUsbDeviceDetailSource
                 {
                     if (!budget.TryReserve(5))
                     {
-                        diagnostics.Add(BudgetDiagnostic(target));
+                        AddBudgetDiagnostic(target, budget, diagnostics);
                         return CreateSnapshot(target, languages, configurations, strings, bos, diagnostics);
                     }
 
@@ -114,7 +147,7 @@ internal sealed class UsbDeviceDetailCollector : IUsbDeviceDetailSource
                     var totalLength = UsbDescriptorParser.ReadBosTotalLength(header);
                     if (!budget.TryReserve(totalLength))
                     {
-                        diagnostics.Add(BudgetDiagnostic(target));
+                        AddBudgetDiagnostic(target, budget, diagnostics);
                         return CreateSnapshot(target, languages, configurations, strings, bos, diagnostics);
                     }
 
@@ -157,10 +190,10 @@ internal sealed class UsbDeviceDetailCollector : IUsbDeviceDetailSource
             Lookup(strings, target.DeviceDescriptor.ManufacturerStringIndex),
             Lookup(strings, target.DeviceDescriptor.ProductStringIndex),
             Lookup(strings, target.DeviceDescriptor.SerialNumberStringIndex),
-            languages.Select(CreateLanguageInfo).ToArray(),
-            configurations.ToArray(),
+            languages.Select(CreateLanguageInfo).ToImmutableArray(),
+            configurations.ToImmutableArray(),
             bos,
-            new DeviceTopologyDiagnostics(diagnostics),
+            new DeviceTopologyDiagnostics(diagnostics.ToArray().AsReadOnly()),
             DateTimeOffset.Now);
     }
 
@@ -172,7 +205,7 @@ internal sealed class UsbDeviceDetailCollector : IUsbDeviceDetailSource
     {
         if (!budget.TryReserve(MaximumStringDescriptorLength))
         {
-            diagnostics.Add(BudgetDiagnostic(target));
+            AddBudgetDiagnostic(target, budget, diagnostics);
             return [];
         }
 
@@ -206,14 +239,29 @@ internal sealed class UsbDeviceDetailCollector : IUsbDeviceDetailSource
         DescriptorReadBudget budget,
         ICollection<DeviceTopologyDiagnostic> diagnostics)
     {
-        if (index == 0 || !attemptedStrings.Add(index))
+        if (index == 0 || attemptedStrings.Contains(index))
         {
             return;
         }
 
+        if (attemptedStrings.Count >= MaximumStringDescriptorCount)
+        {
+            if (!diagnostics.Any(entry => entry.Code == "usb.detail.string-limit"))
+            {
+                diagnostics.Add(Diagnostic(
+                    target,
+                    "usb.detail.string-limit",
+                    $"Only the first {MaximumStringDescriptorCount} unique string descriptors were read."));
+            }
+
+            return;
+        }
+
+        attemptedStrings.Add(index);
+
         if (!budget.TryReserve(MaximumStringDescriptorLength))
         {
-            diagnostics.Add(BudgetDiagnostic(target));
+            AddBudgetDiagnostic(target, budget, diagnostics);
             return;
         }
 
@@ -303,26 +351,68 @@ internal sealed class UsbDeviceDetailCollector : IUsbDeviceDetailSource
         return new DeviceTopologyDiagnostic(severity, code, message, target.DeviceNodeId);
     }
 
-    private static DeviceTopologyDiagnostic BudgetDiagnostic(UsbDeviceDetailTarget target)
+    private static void AddBudgetDiagnostic(
+        UsbDeviceDetailTarget target,
+        DescriptorReadBudget budget,
+        ICollection<DeviceTopologyDiagnostic> diagnostics)
     {
-        return Diagnostic(
-            target,
-            "usb.detail.descriptor-budget-exhausted",
-            $"The {MaximumDescriptorBytesPerDevice / 1024} KiB per-device descriptor read budget was exhausted.");
+        if (diagnostics.Any(entry => entry.Code == "usb.detail.descriptor-budget-exhausted"))
+        {
+            return;
+        }
+
+        var message = budget.ExhaustionReason switch
+        {
+            DescriptorBudgetExhaustion.Duration =>
+                $"The {MaximumCollectionDuration.TotalSeconds:0}-second per-device descriptor time budget was exhausted.",
+            DescriptorBudgetExhaustion.RequestCount =>
+                $"The {MaximumDescriptorRequestsPerDevice}-request per-device descriptor budget was exhausted.",
+            _ => $"The {MaximumDescriptorBytesPerDevice / 1024} KiB per-device descriptor read budget was exhausted."
+        };
+        diagnostics.Add(Diagnostic(target, "usb.detail.descriptor-budget-exhausted", message));
     }
 
-    private sealed class DescriptorReadBudget(int bytes)
+    private enum DescriptorBudgetExhaustion
+    {
+        None,
+        Bytes,
+        RequestCount,
+        Duration
+    }
+
+    private sealed class DescriptorReadBudget(
+        int bytes,
+        int maximumRequests,
+        TimeSpan maximumDuration)
     {
         private int _remaining = bytes;
+        private int _requests;
+        private readonly Stopwatch _elapsed = Stopwatch.StartNew();
+
+        public DescriptorBudgetExhaustion ExhaustionReason { get; private set; }
 
         public bool TryReserve(int bytesToRead)
         {
+            if (_elapsed.Elapsed >= maximumDuration)
+            {
+                ExhaustionReason = DescriptorBudgetExhaustion.Duration;
+                return false;
+            }
+
+            if (_requests >= maximumRequests)
+            {
+                ExhaustionReason = DescriptorBudgetExhaustion.RequestCount;
+                return false;
+            }
+
             if (bytesToRead <= 0 || bytesToRead > _remaining)
             {
+                ExhaustionReason = DescriptorBudgetExhaustion.Bytes;
                 return false;
             }
 
             _remaining -= bytesToRead;
+            _requests++;
             return true;
         }
     }

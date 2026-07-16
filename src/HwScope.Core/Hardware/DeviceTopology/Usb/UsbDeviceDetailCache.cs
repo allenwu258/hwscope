@@ -4,16 +4,35 @@ public sealed class UsbDeviceDetailCache
 {
     private readonly object _sync = new();
     private readonly IUsbDeviceDetailSource _source;
+    private readonly SemaphoreSlim _collectionGate;
     private readonly Dictionary<string, CacheState> _states = new(StringComparer.OrdinalIgnoreCase);
 
     public UsbDeviceDetailCache()
-        : this(new UsbDeviceDetailCollector())
+        : this(CreateDefaultSource(), maximumConcurrentCollections: 2)
     {
     }
 
-    internal UsbDeviceDetailCache(IUsbDeviceDetailSource source)
+    private static IUsbDeviceDetailSource CreateDefaultSource()
     {
+        var workerPath = Path.Combine(AppContext.BaseDirectory, "HwScope.UsbWorker.exe");
+        return File.Exists(workerPath)
+            ? new UsbDeviceDetailWorkerSource(workerPath)
+            : new UnavailableWorkerSource(workerPath);
+    }
+
+    internal UsbDeviceDetailCache(
+        IUsbDeviceDetailSource source,
+        int maximumConcurrentCollections = 2)
+    {
+        if (maximumConcurrentCollections <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(maximumConcurrentCollections));
+        }
+
         _source = source;
+        _collectionGate = new SemaphoreSlim(
+            maximumConcurrentCollections,
+            maximumConcurrentCollections);
     }
 
     public UsbDeviceDetailSnapshot? TryGetCached(string attachmentId, string deviceNodeId)
@@ -76,18 +95,17 @@ public sealed class UsbDeviceDetailCache
         Task<UsbDeviceDetailSnapshot> sharedTask;
         lock (_sync)
         {
-            if (!forceRefresh
-                && _states.TryGetValue(target.AttachmentId, out var existing)
+            if (_states.TryGetValue(target.AttachmentId, out var existing)
                 && string.Equals(existing.DeviceNodeId, target.DeviceNodeId, StringComparison.OrdinalIgnoreCase))
             {
-                if (existing.Cached is not null)
-                {
-                    return Task.FromResult(existing.Cached).WaitAsync(cancellationToken);
-                }
-
                 if (existing.LoadTask is not null)
                 {
                     return existing.LoadTask.WaitAsync(cancellationToken);
+                }
+
+                if (!forceRefresh && existing.Cached is not null)
+                {
+                    return Task.FromResult(existing.Cached).WaitAsync(cancellationToken);
                 }
             }
 
@@ -106,7 +124,17 @@ public sealed class UsbDeviceDetailCache
     {
         try
         {
-            var detail = await Task.Run(() => _source.Collect(target)).ConfigureAwait(false);
+            await _collectionGate.WaitAsync().ConfigureAwait(false);
+            UsbDeviceDetailSnapshot detail;
+            try
+            {
+                detail = await Task.Run(() => _source.Collect(target)).ConfigureAwait(false);
+            }
+            finally
+            {
+                _collectionGate.Release();
+            }
+
             lock (_sync)
             {
                 if (_states.TryGetValue(target.AttachmentId, out var current) && ReferenceEquals(current, owner))
@@ -137,5 +165,30 @@ public sealed class UsbDeviceDetailCache
         public string DeviceNodeId { get; } = deviceNodeId;
         public UsbDeviceDetailSnapshot? Cached { get; set; }
         public Task<UsbDeviceDetailSnapshot>? LoadTask { get; set; }
+    }
+
+    private sealed class UnavailableWorkerSource(string workerPath) : IUsbDeviceDetailSource
+    {
+        public UsbDeviceDetailSnapshot Collect(UsbDeviceDetailTarget target)
+        {
+            return new UsbDeviceDetailSnapshot(
+                target.AttachmentId,
+                target.DeviceNodeId,
+                null,
+                null,
+                null,
+                [],
+                [],
+                null,
+                new DeviceTopologyDiagnostics(
+                [
+                    new DeviceTopologyDiagnostic(
+                        DeviceTopologyDiagnosticSeverity.Error,
+                        "usb.detail.worker-missing",
+                        $"USB descriptor worker is unavailable at {Path.GetFileName(workerPath)}.",
+                        target.DeviceNodeId)
+                ]),
+                DateTimeOffset.Now);
+        }
     }
 }

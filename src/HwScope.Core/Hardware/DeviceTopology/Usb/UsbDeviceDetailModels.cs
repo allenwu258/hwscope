@@ -1,3 +1,5 @@
+using System.Collections.Immutable;
+
 namespace HwScope.Core.Hardware.DeviceTopology.Usb;
 
 public enum UsbEndpointDirection
@@ -17,7 +19,7 @@ public enum UsbEndpointTransferType
 public sealed record UsbRawDescriptorInfo(
     byte DescriptorType,
     byte Length,
-    ReadOnlyMemory<byte> Bytes);
+    ImmutableArray<byte> Bytes);
 
 public sealed record UsbSuperSpeedEndpointCompanionInfo(
     byte MaximumBurst,
@@ -45,7 +47,7 @@ public sealed record UsbInterfaceDescriptorInfo(
     byte InterfaceProtocol,
     byte DescriptionStringIndex,
     string? Description,
-    IReadOnlyList<UsbEndpointDescriptorInfo> Endpoints);
+    ImmutableArray<UsbEndpointDescriptorInfo> Endpoints);
 
 public sealed record UsbInterfaceAssociationInfo(
     byte FirstInterface,
@@ -67,21 +69,21 @@ public sealed record UsbConfigurationDescriptorInfo(
     bool IsSelfPowered,
     bool SupportsRemoteWakeup,
     int MaximumPowerMilliamps,
-    IReadOnlyList<UsbInterfaceAssociationInfo> InterfaceAssociations,
-    IReadOnlyList<UsbInterfaceDescriptorInfo> Interfaces,
-    IReadOnlyList<UsbRawDescriptorInfo> AdditionalDescriptors,
-    ReadOnlyMemory<byte> RawBytes);
+    ImmutableArray<UsbInterfaceAssociationInfo> InterfaceAssociations,
+    ImmutableArray<UsbInterfaceDescriptorInfo> Interfaces,
+    ImmutableArray<UsbRawDescriptorInfo> AdditionalDescriptors,
+    ImmutableArray<byte> RawBytes);
 
 public sealed record UsbBosCapabilityInfo(
     byte CapabilityType,
     string DisplayName,
-    ReadOnlyMemory<byte> RawBytes);
+    ImmutableArray<byte> RawBytes);
 
 public sealed record UsbBosDescriptorInfo(
     ushort TotalLength,
     byte DeclaredCapabilityCount,
-    IReadOnlyList<UsbBosCapabilityInfo> Capabilities,
-    ReadOnlyMemory<byte> RawBytes);
+    ImmutableArray<UsbBosCapabilityInfo> Capabilities,
+    ImmutableArray<byte> RawBytes);
 
 public sealed record UsbLanguageInfo(ushort LanguageId, string DisplayName);
 
@@ -91,8 +93,8 @@ public sealed record UsbDeviceDetailSnapshot(
     string? Manufacturer,
     string? Product,
     string? SerialNumber,
-    IReadOnlyList<UsbLanguageInfo> Languages,
-    IReadOnlyList<UsbConfigurationDescriptorInfo> Configurations,
+    ImmutableArray<UsbLanguageInfo> Languages,
+    ImmutableArray<UsbConfigurationDescriptorInfo> Configurations,
     UsbBosDescriptorInfo? Bos,
     DeviceTopologyDiagnostics Diagnostics,
     DateTimeOffset GeneratedAt);

@@ -67,6 +67,77 @@ public sealed class UsbDeviceDetailCacheTests
     }
 
     [Fact]
+    public async Task ConcurrentRefreshesShareTheActiveCollection()
+    {
+        var release = new ManualResetEventSlim();
+        var source = new FakeSource(target =>
+        {
+            release.Wait();
+            return Detail(target);
+        });
+        var cache = new UsbDeviceDetailCache(source);
+        var snapshot = Snapshot("device-a");
+
+        var first = cache.RefreshAsync(snapshot, "device-a");
+        var second = cache.RefreshAsync(snapshot, "device-a");
+        Assert.True(SpinWait.SpinUntil(() => source.CallCount == 1, TimeSpan.FromSeconds(2)));
+        release.Set();
+
+        Assert.Same(await first, await second);
+        Assert.Equal(1, source.CallCount);
+    }
+
+    [Fact]
+    public async Task RefreshSharesAnActiveEnsureLoad()
+    {
+        var release = new ManualResetEventSlim();
+        var source = new FakeSource(target =>
+        {
+            release.Wait();
+            return Detail(target);
+        });
+        var cache = new UsbDeviceDetailCache(source);
+        var snapshot = Snapshot("device-a");
+
+        var ensure = cache.EnsureLoadedAsync(snapshot, "device-a");
+        var refresh = cache.RefreshAsync(snapshot, "device-a");
+        Assert.True(SpinWait.SpinUntil(() => source.CallCount == 1, TimeSpan.FromSeconds(2)));
+        release.Set();
+
+        Assert.Same(await ensure, await refresh);
+        Assert.Equal(1, source.CallCount);
+    }
+
+    [Fact]
+    public async Task DifferentAttachmentsRespectTheCollectionConcurrencyLimit()
+    {
+        var release = new ManualResetEventSlim();
+        var active = 0;
+        var maximumActive = 0;
+        var source = new FakeSource(target =>
+        {
+            var current = Interlocked.Increment(ref active);
+            InterlockedExtensions.Max(ref maximumActive, current);
+            release.Wait();
+            Interlocked.Decrement(ref active);
+            return Detail(target);
+        });
+        var cache = new UsbDeviceDetailCache(source, maximumConcurrentCollections: 1);
+        var firstSnapshot = Snapshot("device-a", "port-1");
+        var secondSnapshot = Snapshot("device-b", "port-2");
+
+        var first = cache.EnsureLoadedAsync(firstSnapshot, "device-a");
+        var second = cache.EnsureLoadedAsync(secondSnapshot, "device-b");
+        Assert.True(SpinWait.SpinUntil(() => source.CallCount == 1, TimeSpan.FromSeconds(2)));
+        Assert.Equal(1, source.CallCount);
+        release.Set();
+        await Task.WhenAll(first, second);
+
+        Assert.Equal(1, maximumActive);
+        Assert.Equal(2, source.CallCount);
+    }
+
+    [Fact]
     public async Task NewDeviceAtSameAttachmentInvalidatesCachedResult()
     {
         var source = new FakeSource(Detail);
@@ -143,24 +214,44 @@ public sealed class UsbDeviceDetailCacheTests
         Assert.Equal(2, source.CallCount);
     }
 
-    private static UsbTopologySnapshot Snapshot(string deviceNodeId)
+    private static UsbTopologySnapshot Snapshot(
+        string deviceNodeId,
+        string attachmentId = "port-1")
     {
         var descriptor = new UsbDeviceDescriptorInfo(
             18, 1, 0x0320, 0, 0, 0, 9, 0x1234, 0x5678, 0x0100, 1, 2, 3, 1);
         var root = new UsbTopologyNode(
-            "root", null, ["port-1"], UsbTopologyNodeKind.RootHub, "Root Hub", null,
+            "root", null, [attachmentId], UsbTopologyNodeKind.RootHub, "Root Hub", null,
             "controller", string.Empty, string.Empty, new UsbHubInfo("ROOT-HUB", 1, true, true), null, null);
         var port = new UsbTopologyNode(
-            "port-1", "root", [deviceNodeId], UsbTopologyNodeKind.Port, "Port 1", null,
+            attachmentId, "root", [deviceNodeId], UsbTopologyNodeKind.Port, "Port 1", null,
             "controller", string.Empty, string.Empty, null,
             new UsbPortInfo(1, "1", UsbConnectionStatus.DeviceConnected, UsbConnectionSpeed.Super,
                 UsbSupportedProtocols.Usb30, true, true, false, false, true, false, true, null,
                 string.Empty, 1, 1),
             descriptor);
         var device = new UsbTopologyNode(
-            deviceNodeId, "port-1", [], UsbTopologyNodeKind.Device, "Device", null,
-            "controller", string.Empty, string.Empty, null, port.Port, descriptor, "port-1");
+            deviceNodeId, attachmentId, [], UsbTopologyNodeKind.Device, "Device", null,
+            "controller", string.Empty, string.Empty, null, port.Port, descriptor, attachmentId);
         return new UsbTopologySnapshot([root, port, device], [], DeviceTopologyDiagnostics.Empty, DateTimeOffset.Now);
+    }
+
+    private static class InterlockedExtensions
+    {
+        public static void Max(ref int location, int value)
+        {
+            var current = Volatile.Read(ref location);
+            while (current < value)
+            {
+                var observed = Interlocked.CompareExchange(ref location, value, current);
+                if (observed == current)
+                {
+                    return;
+                }
+
+                current = observed;
+            }
+        }
     }
 
     private static UsbDeviceDetailSnapshot Detail(UsbDeviceDetailTarget target)

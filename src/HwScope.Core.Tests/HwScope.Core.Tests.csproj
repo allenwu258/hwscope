@@ -20,6 +20,20 @@
   <ItemGroup>
     <ProjectReference Include="..\HwScope.Core\HwScope.Core.csproj" />
     <ProjectReference Include="..\HwScope.Cli\HwScope.Cli.csproj" />
+    <ProjectReference Include="..\HwScope.UsbWorker\HwScope.UsbWorker.csproj"
+                      ReferenceOutputAssembly="false" />
   </ItemGroup>
+
+  <Target Name="CopyUsbDescriptorWorker" AfterTargets="Build">
+    <ItemGroup>
+      <UsbDescriptorWorkerFiles Include="$(MSBuildThisFileDirectory)..\HwScope.UsbWorker\bin\$(Configuration)\net8.0-windows\HwScope.UsbWorker.exe" />
+      <UsbDescriptorWorkerFiles Include="$(MSBuildThisFileDirectory)..\HwScope.UsbWorker\bin\$(Configuration)\net8.0-windows\HwScope.UsbWorker.dll" />
+      <UsbDescriptorWorkerFiles Include="$(MSBuildThisFileDirectory)..\HwScope.UsbWorker\bin\$(Configuration)\net8.0-windows\HwScope.UsbWorker.deps.json" />
+      <UsbDescriptorWorkerFiles Include="$(MSBuildThisFileDirectory)..\HwScope.UsbWorker\bin\$(Configuration)\net8.0-windows\HwScope.UsbWorker.runtimeconfig.json" />
+    </ItemGroup>
+    <Copy SourceFiles="@(UsbDescriptorWorkerFiles)"
+          DestinationFolder="$(TargetDir)"
+          SkipUnchangedFiles="true" />
+  </Target>
 
 </Project>

@@ -120,7 +120,7 @@ public sealed class UsbDescriptorParserTests
 
         var result = UsbDescriptorParser.ParseBos(raw);
 
-        Assert.Equal(2, result.Capabilities.Count);
+        Assert.Equal(2, result.Capabilities.Length);
         Assert.Equal("USB 2.0 Extension", result.Capabilities[0].DisplayName);
         Assert.Equal("Container ID", result.Capabilities[1].DisplayName);
     }
@@ -131,6 +131,51 @@ public sealed class UsbDescriptorParserTests
         var raw = new byte[] { 5, 0x0F, 8, 0, 1, 0, 0x10, 2 };
 
         Assert.Throws<InvalidDataException>(() => UsbDescriptorParser.ParseBos(raw));
+    }
+
+    [Fact]
+    public void ParseConfigurationRejectsNonAdjacentSuperSpeedCompanion()
+    {
+        var raw = new byte[]
+        {
+            9, 2, 35, 0, 1, 1, 0, 0x80, 10,
+            9, 4, 0, 0, 1, 0x0A, 0, 0, 0,
+            7, 5, 0x81, 2, 0, 4, 1,
+            4, 0x24, 1, 2,
+            6, 0x30, 0, 0, 0, 4
+        };
+
+        Assert.Throws<InvalidDataException>(() => UsbDescriptorParser.ParseConfiguration(raw, 0, 0x0300));
+    }
+
+    [Fact]
+    public void ParseConfigurationRejectsDuplicateSuperSpeedCompanion()
+    {
+        var raw = new byte[]
+        {
+            9, 2, 40, 0, 1, 1, 0, 0x80, 10,
+            9, 4, 0, 0, 1, 0x0A, 0, 0, 0,
+            7, 5, 0x81, 2, 0, 4, 1,
+            6, 0x30, 0, 0, 0, 4,
+            6, 0x30, 0, 0, 0, 4
+        };
+
+        Assert.Throws<InvalidDataException>(() => UsbDescriptorParser.ParseConfiguration(raw, 0, 0x0300));
+    }
+
+    [Fact]
+    public void ParseConfigurationRejectsExcessiveInterfaceObjects()
+    {
+        var raw = new List<byte> { 9, 2, 0, 0, 1, 1, 0, 0x80, 10 };
+        for (var index = 0; index <= UsbDescriptorParser.MaximumInterfacesPerConfiguration; index++)
+        {
+            raw.AddRange([9, 4, (byte)index, 0, 0, 0xFF, 0, 0, 0]);
+        }
+
+        raw[2] = (byte)raw.Count;
+        raw[3] = (byte)(raw.Count >> 8);
+
+        Assert.Throws<InvalidDataException>(() => UsbDescriptorParser.ParseConfiguration(raw.ToArray(), 0, 0x0200));
     }
 
     private static byte[] ValidConfiguration()

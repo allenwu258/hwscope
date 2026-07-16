@@ -2,6 +2,8 @@
 
   <ItemGroup>
     <ProjectReference Include="..\HwScope.Core\HwScope.Core.csproj" />
+    <ProjectReference Include="..\HwScope.UsbWorker\HwScope.UsbWorker.csproj"
+                      ReferenceOutputAssembly="false" />
   </ItemGroup>
 
   <ItemGroup>
@@ -17,6 +19,18 @@
     <MemoryBenchExecutable>$(MSBuildThisFileDirectory)..\HwScope.Native.MemoryBench\build\Release\membench.exe</MemoryBenchExecutable>
     <StorageBenchExecutable>$(MSBuildThisFileDirectory)..\HwScope.Native.StorageBench\build\Release\storagebench.exe</StorageBenchExecutable>
   </PropertyGroup>
+
+  <Target Name="CopyUsbDescriptorWorker" AfterTargets="Build">
+    <ItemGroup>
+      <UsbDescriptorWorkerFiles Include="$(MSBuildThisFileDirectory)..\HwScope.UsbWorker\bin\$(Configuration)\net8.0-windows\HwScope.UsbWorker.exe" />
+      <UsbDescriptorWorkerFiles Include="$(MSBuildThisFileDirectory)..\HwScope.UsbWorker\bin\$(Configuration)\net8.0-windows\HwScope.UsbWorker.dll" />
+      <UsbDescriptorWorkerFiles Include="$(MSBuildThisFileDirectory)..\HwScope.UsbWorker\bin\$(Configuration)\net8.0-windows\HwScope.UsbWorker.deps.json" />
+      <UsbDescriptorWorkerFiles Include="$(MSBuildThisFileDirectory)..\HwScope.UsbWorker\bin\$(Configuration)\net8.0-windows\HwScope.UsbWorker.runtimeconfig.json" />
+    </ItemGroup>
+    <Copy SourceFiles="@(UsbDescriptorWorkerFiles)"
+          DestinationFolder="$(TargetDir)"
+          SkipUnchangedFiles="true" />
+  </Target>
 
   <Target Name="CopyNativeMemoryBench" AfterTargets="Build" Condition="Exists('$(MemoryBenchExecutable)')">
     <MakeDir Directories="$(TargetDir)native" />

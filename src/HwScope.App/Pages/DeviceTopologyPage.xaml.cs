@@ -141,6 +141,7 @@ public partial class DeviceTopologyPage : UserControl
                     .RefreshUsbAsync(_loadCancellation?.Token ?? CancellationToken.None)
                     .ConfigureAwait(true);
                 RenderUsbRefreshResult(usbResult);
+                RenderUsbSelection(forceRefresh: true);
                 if (TopologyTabs.SelectedItem == UsbTab)
                 {
                     SetStatus(FormatUsbRefreshStatus(usbResult, "USB 物理端口拓扑已刷新。"));
@@ -554,7 +555,7 @@ public partial class DeviceTopologyPage : UserControl
         UsbTopologyMap.SelectedItemId = _usbSelectedNodeId;
     }
 
-    private void RenderUsbSelection()
+    private void RenderUsbSelection(bool forceRefresh = false)
     {
         _usbDetailLoadCancellation?.Cancel();
         _usbDetailLoadCancellation?.Dispose();
@@ -584,7 +585,7 @@ public partial class DeviceTopologyPage : UserControl
         }
 
         var cached = App.DeviceTopologies.UsbDetails.TryGetCached(target.AttachmentId, target.DeviceNodeId);
-        if (cached is not null)
+        if (!forceRefresh && cached is not null)
         {
             sections.AddRange(BuildUsbDetailSections(cached));
             UsbDetailSectionsList.ItemsSource = sections;
@@ -601,6 +602,7 @@ public partial class DeviceTopologyPage : UserControl
             _usbSnapshot!,
             node.NodeId,
             selectionVersion,
+            forceRefresh,
             _usbDetailLoadCancellation.Token);
     }
 
@@ -608,13 +610,15 @@ public partial class DeviceTopologyPage : UserControl
         UsbTopologySnapshot snapshot,
         string nodeId,
         int selectionVersion,
+        bool forceRefresh,
         CancellationToken cancellationToken)
     {
         try
         {
-            var detail = await App.DeviceTopologies.UsbDetails
-                .EnsureLoadedAsync(snapshot, nodeId, cancellationToken)
-                .ConfigureAwait(true);
+            var detailTask = forceRefresh
+                ? App.DeviceTopologies.UsbDetails.RefreshAsync(snapshot, nodeId, cancellationToken)
+                : App.DeviceTopologies.UsbDetails.EnsureLoadedAsync(snapshot, nodeId, cancellationToken);
+            var detail = await detailTask.ConfigureAwait(true);
             if (!IsLoaded
                 || selectionVersion != _usbDetailSelectionVersion
                 || !string.Equals(_usbSelectedNodeId, nodeId, StringComparison.OrdinalIgnoreCase))
@@ -747,6 +751,8 @@ public partial class DeviceTopologyPage : UserControl
 
     private static IReadOnlyList<TopologyDetailSectionView> BuildUsbDetailSections(UsbDeviceDetailSnapshot detail)
     {
+        const int maximumDescriptorSections = 96;
+        const int maximumEndpointRowsPerInterface = 32;
         var sections = new List<TopologyDetailSectionView>
         {
             new("描述符字符串",
@@ -754,37 +760,65 @@ public partial class DeviceTopologyPage : UserControl
                 new("Manufacturer", detail.Manufacturer ?? "未报告"),
                 new("Product", detail.Product ?? "未报告"),
                 new("Serial Number", detail.SerialNumber ?? "未报告"),
-                new("Languages", detail.Languages.Count == 0
+                new("Languages", detail.Languages.IsDefaultOrEmpty
                     ? "未报告"
                     : string.Join(" / ", detail.Languages.Select(language => language.DisplayName))),
                 new("缓存时间", detail.GeneratedAt.ToString("HH:mm:ss"))
             ])
         };
+        var descriptorSectionCount = 0;
+        var sectionLimitReached = false;
+        var contentTruncated = false;
+
+        bool TryAddDescriptorSection(TopologyDetailSectionView section)
+        {
+            if (descriptorSectionCount >= maximumDescriptorSections)
+            {
+                sectionLimitReached = true;
+                contentTruncated = true;
+                return false;
+            }
+
+            sections.Add(section);
+            descriptorSectionCount++;
+            return true;
+        }
 
         foreach (var configuration in detail.Configurations)
         {
-            sections.Add(new TopologyDetailSectionView(
+            if (!TryAddDescriptorSection(new TopologyDetailSectionView(
                 $"Configuration {configuration.DescriptorIndex}",
                 [
                     new("Configuration Value", configuration.ConfigurationValue.ToString()),
                     new("Description", configuration.Description ?? "未报告"),
                     new("Total Length", $"{configuration.TotalLength} bytes"),
-                    new("Interfaces", $"{configuration.Interfaces.Count} parsed / {configuration.DeclaredInterfaceCount} declared"),
+                    new("Interfaces", $"{configuration.Interfaces.Length} parsed / {configuration.DeclaredInterfaceCount} declared"),
                     new("Power", configuration.IsSelfPowered
                         ? $"Self-powered, {configuration.MaximumPowerMilliamps} mA requested"
                         : $"Bus-powered, {configuration.MaximumPowerMilliamps} mA"),
                     new("Remote Wakeup", configuration.SupportsRemoteWakeup ? "支持" : "不支持"),
-                    new("Additional Descriptors", configuration.AdditionalDescriptors.Count.ToString())
-                ]));
+                    new("Additional Descriptors", configuration.AdditionalDescriptors.Length.ToString())
+                ])))
+            {
+                break;
+            }
 
             foreach (var item in configuration.InterfaceAssociations)
             {
-                sections.Add(new TopologyDetailSectionView(
+                if (!TryAddDescriptorSection(new TopologyDetailSectionView(
                     $"IAD · Interface {item.FirstInterface}-{item.FirstInterface + item.InterfaceCount - 1}",
                     [
                         new("Description", item.Description ?? "未报告"),
                         new("Class / Subclass / Protocol", $"0x{item.FunctionClass:X2} / 0x{item.FunctionSubClass:X2} / 0x{item.FunctionProtocol:X2}")
-                    ]));
+                    ])))
+                {
+                    break;
+                }
+            }
+
+            if (sectionLimitReached)
+            {
+                break;
             }
 
             foreach (var item in configuration.Interfaces)
@@ -794,9 +828,9 @@ public partial class DeviceTopologyPage : UserControl
                     new("Alternate Setting", item.AlternateSetting.ToString()),
                     new("Description", item.Description ?? "未报告"),
                     new("Class / Subclass / Protocol", $"0x{item.InterfaceClass:X2} / 0x{item.InterfaceSubClass:X2} / 0x{item.InterfaceProtocol:X2}"),
-                    new("Endpoints", $"{item.Endpoints.Count} parsed / {item.DeclaredEndpointCount} declared")
+                    new("Endpoints", $"{item.Endpoints.Length} parsed / {item.DeclaredEndpointCount} declared")
                 };
-                foreach (var endpoint in item.Endpoints)
+                foreach (var endpoint in item.Endpoints.Take(maximumEndpointRowsPerInterface))
                 {
                     var companion = endpoint.SuperSpeedCompanion is null
                         ? string.Empty
@@ -806,10 +840,36 @@ public partial class DeviceTopologyPage : UserControl
                         $"{endpoint.Direction} · {endpoint.TransferType} · {endpoint.MaximumPacketBytes} bytes · interval {endpoint.Interval}{companion}"));
                 }
 
-                sections.Add(new TopologyDetailSectionView(
+                if (item.Endpoints.Length > maximumEndpointRowsPerInterface)
+                {
+                    contentTruncated = true;
+                    rows.Add(new TopologyDetailFieldView(
+                        "更多 Endpoint",
+                        $"另有 {item.Endpoints.Length - maximumEndpointRowsPerInterface} 项未在主页面展开。"));
+                }
+
+                if (!TryAddDescriptorSection(new TopologyDetailSectionView(
                     $"Interface {item.InterfaceNumber} · Alt {item.AlternateSetting}",
-                    rows));
+                    rows)))
+                {
+                    break;
+                }
             }
+
+            if (sectionLimitReached)
+            {
+                break;
+            }
+        }
+
+        if (contentTruncated)
+        {
+            sections.Add(new TopologyDetailSectionView(
+                "显示限制",
+                [new TopologyDetailFieldView(
+                    "主页面",
+                    $"为保持响应速度，最多显示 {maximumDescriptorSections} 个 descriptor section；完整内容保留在详情缓存中。")]
+            ));
         }
 
         if (detail.Bos is not null)
@@ -818,7 +878,7 @@ public partial class DeviceTopologyPage : UserControl
                 "BOS Capabilities",
                 [
                     new("Total Length", $"{detail.Bos.TotalLength} bytes"),
-                    new("Capabilities", detail.Bos.Capabilities.Count == 0
+                    new("Capabilities", detail.Bos.Capabilities.IsDefaultOrEmpty
                         ? "无"
                         : string.Join(" / ", detail.Bos.Capabilities.Select(capability => capability.DisplayName))),
                     new("Declared", detail.Bos.DeclaredCapabilityCount.ToString())
