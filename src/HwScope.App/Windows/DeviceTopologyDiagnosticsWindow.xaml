@@ -10,7 +10,8 @@
                  Background="{DynamicResource HwScopePanelBrush}"
                  ExtendsContentIntoTitleBar="True"
                  WindowBackdropType="Mica"
-                 WindowStartupLocation="CenterOwner">
+                 WindowStartupLocation="CenterOwner"
+                 PreviewKeyDown="DiagnosticsWindow_PreviewKeyDown">
     <ui:FluentWindow.Resources>
         <DataTemplate x:Key="DiagnosticFieldTemplate">
             <Border MinHeight="38"
@@ -20,6 +21,7 @@
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="180" />
                         <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="30" />
                         <ColumnDefinition Width="130" />
                     </Grid.ColumnDefinitions>
                     <TextBlock Text="{Binding Label}"
@@ -30,11 +32,24 @@
                                Margin="8,0"
                                Text="{Binding Value}"
                                ToolTip="{Binding Note}"
+                               AutomationProperties.Name="{Binding Label}"
                                VerticalAlignment="Center"
                                FontSize="13"
                                Foreground="{DynamicResource HwScopeTextBrush}"
                                TextWrapping="Wrap" />
-                    <TextBlock Grid.Column="2"
+                    <Button Grid.Column="2"
+                            Width="26"
+                            Height="26"
+                            Padding="0"
+                            VerticalAlignment="Center"
+                            Background="Transparent"
+                            BorderThickness="0"
+                            ToolTip="复制此字段"
+                            AutomationProperties.Name="复制此字段"
+                            Click="CopyFieldButton_Click">
+                        <ui:SymbolIcon Width="16" Height="16" Symbol="Copy24" />
+                    </Button>
+                    <TextBlock Grid.Column="3"
                                Text="{Binding Source}"
                                VerticalAlignment="Center"
                                FontSize="11"
@@ -89,6 +104,7 @@
                            Padding="10,0"
                            Icon="{ui:SymbolIcon ArrowClockwise24}"
                            Content="刷新"
+                           AutomationProperties.Name="刷新 PCI Express 精确拓扑"
                            Click="RefreshButton_Click" />
                 <ui:Button Height="32"
                            MinWidth="78"
@@ -96,6 +112,7 @@
                            Padding="10,0"
                            Icon="{ui:SymbolIcon Copy24}"
                            Content="复制节点"
+                           AutomationProperties.Name="复制当前节点诊断"
                            Click="CopyNodeButton_Click" />
                 <ui:Button Height="32"
                            MinWidth="78"
@@ -103,6 +120,7 @@
                            Padding="10,0"
                            Icon="{ui:SymbolIcon Save24}"
                            Content="保存节点"
+                           AutomationProperties.Name="保存当前节点诊断"
                            Click="SaveNodeButton_Click" />
             </StackPanel>
         </Grid>
@@ -128,8 +146,9 @@
                      Height="30"
                      Margin="8,0,14,0"
                      Padding="8,3"
-                     VerticalContentAlignment="Center"
-                     TextChanged="SearchTextBox_TextChanged" />
+                      VerticalContentAlignment="Center"
+                      AutomationProperties.Name="搜索 PCI Express 节点或诊断"
+                      TextChanged="SearchTextBox_TextChanged" />
             <TextBlock Grid.Column="2"
                        Text="筛选"
                        VerticalAlignment="Center"
@@ -140,6 +159,7 @@
                       Height="30"
                       Margin="8,0,14,0"
                       SelectedIndex="0"
+                      AutomationProperties.Name="筛选 PCI Express 精确目录"
                       SelectionChanged="FilterComboBox_SelectionChanged">
                 <ComboBoxItem Content="全部节点" Tag="All" />
                 <ComboBoxItem Content="存在问题" Tag="Problems" />
@@ -200,6 +220,8 @@
                              ItemsSource="{Binding}"
                              ItemContainerStyle="{StaticResource DiagnosticTreeItemStyle}"
                              SelectionChanged="TreeRowsList_SelectionChanged"
+                             PreviewKeyDown="TreeRowsList_PreviewKeyDown"
+                             AutomationProperties.Name="PCI Express 精确目录树"
                              ScrollViewer.CanContentScroll="True"
                              ScrollViewer.HorizontalScrollBarVisibility="Disabled"
                              ScrollViewer.VerticalScrollBarVisibility="Auto"
@@ -212,7 +234,9 @@
                         </ListBox.ItemsPanel>
                         <ListBox.ItemTemplate>
                             <DataTemplate>
-                                <Grid MinHeight="48" Margin="{Binding Indent}">
+                                <Grid MinHeight="48"
+                                      Margin="{Binding Indent}"
+                                      AutomationProperties.Name="{Binding Label}">
                                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="28" />
                                         <ColumnDefinition Width="28" />
@@ -229,6 +253,7 @@
                                             IsEnabled="{Binding HasChildren}"
                                             Tag="{Binding NodeId}"
                                             ToolTip="展开或折叠"
+                                            AutomationProperties.Name="展开或折叠当前节点"
                                             Click="TreeExpansionButton_Click" />
                                     <ui:SymbolIcon Grid.Column="1"
                                                    Width="20"
@@ -284,6 +309,7 @@
                           VerticalAlignment="Stretch"
                           Background="Transparent"
                           ResizeDirection="Columns"
+                          AutomationProperties.Name="调整目录树和详情宽度"
                           ResizeBehavior="PreviousAndNext" />
 
             <Grid Grid.Column="2">
@@ -309,7 +335,10 @@
                     </StackPanel>
                 </Border>
 
-                <TabControl Grid.Row="1" Margin="0,8,0,0">
+                <TabControl x:Name="DetailsTabControl"
+                            Grid.Row="1"
+                            Margin="0,8,0,0"
+                            AutomationProperties.Name="PCI Express 节点详情">
                     <TabItem Header="概览">
                         <ScrollViewer x:Name="OverviewScrollViewer" VerticalScrollBarVisibility="Auto">
                             <ItemsControl x:Name="OverviewFieldsList" ItemTemplate="{StaticResource DiagnosticFieldTemplate}" />
@@ -320,7 +349,7 @@
                             <ItemsControl x:Name="LinkFieldsList" ItemTemplate="{StaticResource DiagnosticFieldTemplate}" />
                         </ScrollViewer>
                     </TabItem>
-                    <TabItem Header="资源">
+                    <TabItem Header="资源摘要">
                         <ScrollViewer x:Name="ResourceScrollViewer" VerticalScrollBarVisibility="Auto">
                             <ItemsControl x:Name="ResourceFieldsList" ItemTemplate="{StaticResource DiagnosticFieldTemplate}" />
                         </ScrollViewer>

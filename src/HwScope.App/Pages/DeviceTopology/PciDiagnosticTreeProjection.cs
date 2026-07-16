@@ -25,29 +25,59 @@ internal sealed record PciDiagnosticTreeRow(
     string Coordinate,
     string KindLabel,
     string StatusText,
-    bool HasProblem);
+    bool HasProblem,
+    bool IsStandaloneDiagnostic = false);
 
 internal sealed class PciDiagnosticTreeProjection
 {
     private readonly HashSet<string> _expandedNodeIds = new(StringComparer.OrdinalIgnoreCase);
+    private bool _expansionInitialized;
     private PciTopologySnapshot _snapshot = PciTopologySnapshot.Empty;
     private IReadOnlyDictionary<string, PciTopologyNode> _nodes =
         new Dictionary<string, PciTopologyNode>(StringComparer.OrdinalIgnoreCase);
     private IReadOnlySet<string> _diagnosticNodeIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+    private IReadOnlyDictionary<string, string> _searchTextByNodeId =
+        new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+    private IReadOnlyDictionary<string, DeviceTopologyDiagnostic> _standaloneDiagnostics =
+        new Dictionary<string, DeviceTopologyDiagnostic>(StringComparer.OrdinalIgnoreCase);
 
-    public void SetSnapshot(PciTopologySnapshot snapshot)
+    public int ProblemCount { get; private set; }
+
+    public int DiagnosticCount { get; private set; }
+
+    public void SetSnapshot(
+        PciTopologySnapshot snapshot,
+        IReadOnlyList<DeviceTopologyDiagnostic>? diagnostics = null)
     {
         _snapshot = snapshot;
         _nodes = snapshot.Nodes.ToDictionary(node => node.NodeId, StringComparer.OrdinalIgnoreCase);
-        _diagnosticNodeIds = snapshot.Diagnostics.Entries
+        var effectiveDiagnostics = diagnostics ?? snapshot.Diagnostics.Entries;
+        _diagnosticNodeIds = effectiveDiagnostics
             .Where(entry => entry.NodeId is not null
+                && _nodes.ContainsKey(entry.NodeId)
                 && entry.Severity != DeviceTopologyDiagnosticSeverity.Information)
             .Select(entry => entry.NodeId!)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        _standaloneDiagnostics = effectiveDiagnostics
+            .Where(entry => entry.NodeId is null || !_nodes.ContainsKey(entry.NodeId))
+            .Select((entry, index) => new KeyValuePair<string, DeviceTopologyDiagnostic>(
+                BuildDiagnosticRowId(entry, index),
+                entry))
+            .ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.OrdinalIgnoreCase);
+        _searchTextByNodeId = snapshot.Nodes.ToDictionary(
+            node => node.NodeId,
+            BuildSearchText,
+            StringComparer.OrdinalIgnoreCase);
+        DiagnosticCount = effectiveDiagnostics.Count;
+        ProblemCount = snapshot.Nodes.Count(node =>
+                node.Identity.Status.HasProblem || _diagnosticNodeIds.Contains(node.NodeId))
+            + _standaloneDiagnostics.Values.Count(diagnostic =>
+                diagnostic.Severity != DeviceTopologyDiagnosticSeverity.Information);
         _expandedNodeIds.RemoveWhere(nodeId => !_nodes.ContainsKey(nodeId));
-        if (_expandedNodeIds.Count == 0)
+        if (!_expansionInitialized && snapshot.RootNodeIds.Count > 0)
         {
             _expandedNodeIds.UnionWith(snapshot.RootNodeIds);
+            _expansionInitialized = true;
         }
     }
 
@@ -66,6 +96,8 @@ internal sealed class PciDiagnosticTreeProjection
         {
             AppendVisibleRows(rootId, 0, hasCriteria, included, visited, rows);
         }
+
+        AppendStandaloneDiagnostics(search, filter, rows);
 
         return rows;
     }
@@ -118,12 +150,48 @@ internal sealed class PciDiagnosticTreeProjection
         return true;
     }
 
+    public bool TryGetParentNodeId(string nodeId, out string? parentNodeId)
+    {
+        if (_nodes.TryGetValue(nodeId, out var node))
+        {
+            parentNodeId = node.ParentNodeId;
+            return parentNodeId is not null;
+        }
+
+        parentNodeId = null;
+        return false;
+    }
+
+    public bool TryGetStandaloneDiagnostic(
+        string rowId,
+        out DeviceTopologyDiagnostic? diagnostic)
+    {
+        return _standaloneDiagnostics.TryGetValue(rowId, out diagnostic);
+    }
+
+    public bool IsSearchMatch(string rowId, string? searchText)
+    {
+        var search = searchText?.Trim() ?? string.Empty;
+        if (search.Length == 0)
+        {
+            return true;
+        }
+
+        if (_standaloneDiagnostics.TryGetValue(rowId, out var diagnostic))
+        {
+            return BuildDiagnosticSearchText(diagnostic)
+                .Contains(search, StringComparison.OrdinalIgnoreCase);
+        }
+
+        return MatchesSearch(rowId, search);
+    }
+
     private HashSet<string> BuildIncludedSet(string search, PciDiagnosticTreeFilter filter)
     {
         var included = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var node in _snapshot.Nodes)
         {
-            if (!MatchesFilter(node, filter) || !MatchesSearch(node, search))
+            if (!MatchesFilter(node, filter) || !MatchesSearch(node.NodeId, search))
             {
                 continue;
             }
@@ -205,28 +273,91 @@ internal sealed class PciDiagnosticTreeProjection
         };
     }
 
-    private static bool MatchesSearch(PciTopologyNode node, string search)
+    private bool MatchesSearch(string nodeId, string search)
     {
-        if (search.Length == 0)
+        return search.Length == 0
+            || (_searchTextByNodeId.TryGetValue(nodeId, out var searchText)
+                && searchText.Contains(search, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private void AppendStandaloneDiagnostics(
+        string search,
+        PciDiagnosticTreeFilter filter,
+        ICollection<PciDiagnosticTreeRow> rows)
+    {
+        if (filter is PciDiagnosticTreeFilter.Bridges or PciDiagnosticTreeFilter.Endpoints)
         {
-            return true;
+            return;
         }
 
-        return new[]
+        foreach (var (rowId, diagnostic) in _standaloneDiagnostics)
         {
-            node.Identity.DisplayName,
-            node.Identity.InstanceId,
-            node.Address?.ToString(),
-            node.PciIdentity.VendorId,
-            node.PciIdentity.DeviceId,
-            node.Class.DisplayName,
-            node.Class.Code,
-            node.Driver.Provider,
-            node.Driver.Service
+            var isProblem = diagnostic.Severity != DeviceTopologyDiagnosticSeverity.Information;
+            if (filter == PciDiagnosticTreeFilter.Problems && !isProblem)
+            {
+                continue;
+            }
+
+            if (search.Length > 0
+                && !BuildDiagnosticSearchText(diagnostic).Contains(search, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            rows.Add(new PciDiagnosticTreeRow(
+                rowId,
+                0,
+                new Thickness(0),
+                HasChildren: false,
+                IsExpanded: false,
+                ExpansionGlyph: string.Empty,
+                SymbolRegular.Warning24,
+                diagnostic.Message,
+                diagnostic.Code,
+                "Diagnostic",
+                FormatSeverity(diagnostic.Severity),
+                isProblem,
+                IsStandaloneDiagnostic: true));
         }
-        .Concat(node.Identity.HardwareIds)
-        .Concat(node.Identity.LocationPaths)
-        .Any(value => value?.Contains(search, StringComparison.OrdinalIgnoreCase) == true);
+    }
+
+    private static string BuildSearchText(PciTopologyNode node)
+    {
+        return string.Join('\n', new string?[]
+            {
+                node.Identity.DisplayName,
+                node.Identity.InstanceId,
+                node.Address?.ToString(),
+                node.PciIdentity.VendorId,
+                node.PciIdentity.DeviceId,
+                node.Class.DisplayName,
+                node.Class.Code,
+                node.Driver.Provider,
+                node.Driver.Service
+            }
+            .Concat(node.Identity.HardwareIds)
+            .Concat(node.Identity.LocationPaths)
+            .Where(value => !string.IsNullOrWhiteSpace(value))!);
+    }
+
+    private static string BuildDiagnosticSearchText(DeviceTopologyDiagnostic diagnostic)
+    {
+        return string.Join('\n', diagnostic.Code, diagnostic.Message, diagnostic.NodeId ?? string.Empty);
+    }
+
+    private static string BuildDiagnosticRowId(DeviceTopologyDiagnostic diagnostic, int index)
+    {
+        return $"pci-diagnostic:{index}:{diagnostic.Code}";
+    }
+
+    private static string FormatSeverity(DeviceTopologyDiagnosticSeverity severity)
+    {
+        return severity switch
+        {
+            DeviceTopologyDiagnosticSeverity.Error => "错误",
+            DeviceTopologyDiagnosticSeverity.Warning => "警告",
+            _ => "信息"
+        };
     }
 
     private static SymbolRegular FormatIcon(PciTopologyNodeKind kind)
