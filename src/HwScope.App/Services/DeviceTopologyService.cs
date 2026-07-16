@@ -28,6 +28,7 @@ public sealed class DeviceTopologyService
 
     public PciTopologySnapshot? CurrentPci { get; private set; }
     public UsbTopologySnapshot? CurrentUsb { get; private set; }
+    public UsbDeviceDetailCache UsbDetails { get; } = new();
 
     public bool IsPciLoading => _pciLoadTask is { IsCompleted: false };
     public bool IsUsbLoading => _usbLoadTask is { IsCompleted: false };
@@ -162,6 +163,7 @@ public sealed class DeviceTopologyService
             if (!result.CollectionFailed)
             {
                 CurrentUsb = result.Snapshot;
+                UsbDetails.SynchronizeSnapshot(result.Snapshot);
                 RaiseOnDispatcher(() => UsbSnapshotChanged?.Invoke(this, result.Snapshot));
             }
 

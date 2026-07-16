@@ -21,6 +21,8 @@ public partial class DeviceTopologyPage : UserControl
     private string? _selectedNodeId;
     private string? _usbSelectedNodeId;
     private CancellationTokenSource? _loadCancellation;
+    private CancellationTokenSource? _usbDetailLoadCancellation;
+    private int _usbDetailSelectionVersion;
     private bool _usbLoadStarted;
 
     public DeviceTopologyPage()
@@ -59,6 +61,10 @@ public partial class DeviceTopologyPage : UserControl
         _loadCancellation?.Cancel();
         _loadCancellation?.Dispose();
         _loadCancellation = null;
+        _usbDetailLoadCancellation?.Cancel();
+        _usbDetailLoadCancellation?.Dispose();
+        _usbDetailLoadCancellation = null;
+        _usbDetailSelectionVersion++;
     }
 
     private void DeviceTopologies_PciStateChanged(object? sender, PciTopologyRefreshResult result)
@@ -550,6 +556,10 @@ public partial class DeviceTopologyPage : UserControl
 
     private void RenderUsbSelection()
     {
+        _usbDetailLoadCancellation?.Cancel();
+        _usbDetailLoadCancellation?.Dispose();
+        _usbDetailLoadCancellation = null;
+        var selectionVersion = ++_usbDetailSelectionVersion;
         var node = _usbSnapshot?.Nodes.FirstOrDefault(candidate => candidate.NodeId == _usbSelectedNodeId);
         if (node is null)
         {
@@ -563,7 +573,84 @@ public partial class DeviceTopologyPage : UserControl
         UsbSelectedTitleText.Text = node.DisplayName;
         UsbSelectedMetaText.Text = BuildUsbMeta(node);
         UsbSelectedPathText.Text = BuildUsbBreadcrumb(node);
-        UsbDetailSectionsList.ItemsSource = BuildUsbSections(node);
+        var sections = BuildUsbSections(node).ToList();
+        var target = _usbSnapshot is null
+            ? null
+            : UsbDeviceDetailTarget.FromSnapshot(_usbSnapshot, node.NodeId);
+        if (target is null)
+        {
+            UsbDetailSectionsList.ItemsSource = sections;
+            return;
+        }
+
+        var cached = App.DeviceTopologies.UsbDetails.TryGetCached(target.AttachmentId, target.DeviceNodeId);
+        if (cached is not null)
+        {
+            sections.AddRange(BuildUsbDetailSections(cached));
+            UsbDetailSectionsList.ItemsSource = sections;
+            return;
+        }
+
+        sections.Add(new TopologyDetailSectionView(
+            "深层描述符",
+            [new TopologyDetailFieldView("状态", "正在读取 configuration、interface、endpoint 与 BOS...")]));
+        UsbDetailSectionsList.ItemsSource = sections;
+        _usbDetailLoadCancellation = CancellationTokenSource.CreateLinkedTokenSource(
+            _loadCancellation?.Token ?? CancellationToken.None);
+        _ = LoadUsbDetailAsync(
+            _usbSnapshot!,
+            node.NodeId,
+            selectionVersion,
+            _usbDetailLoadCancellation.Token);
+    }
+
+    private async Task LoadUsbDetailAsync(
+        UsbTopologySnapshot snapshot,
+        string nodeId,
+        int selectionVersion,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var detail = await App.DeviceTopologies.UsbDetails
+                .EnsureLoadedAsync(snapshot, nodeId, cancellationToken)
+                .ConfigureAwait(true);
+            if (!IsLoaded
+                || selectionVersion != _usbDetailSelectionVersion
+                || !string.Equals(_usbSelectedNodeId, nodeId, StringComparison.OrdinalIgnoreCase))
+            {
+                return;
+            }
+
+            var node = _usbSnapshot?.Nodes.FirstOrDefault(candidate =>
+                string.Equals(candidate.NodeId, nodeId, StringComparison.OrdinalIgnoreCase));
+            if (node is null)
+            {
+                return;
+            }
+
+            var sections = BuildUsbSections(node).ToList();
+            sections.AddRange(BuildUsbDetailSections(detail));
+            UsbDetailSectionsList.ItemsSource = sections;
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (Exception ex)
+        {
+            if (IsLoaded
+                && selectionVersion == _usbDetailSelectionVersion
+                && string.Equals(_usbSelectedNodeId, nodeId, StringComparison.OrdinalIgnoreCase))
+            {
+                var node = _usbSnapshot?.Nodes.FirstOrDefault(candidate =>
+                    string.Equals(candidate.NodeId, nodeId, StringComparison.OrdinalIgnoreCase));
+                var sections = node is null ? [] : BuildUsbSections(node).ToList();
+                sections.Add(new TopologyDetailSectionView(
+                    "深层描述符",
+                    [new TopologyDetailFieldView("读取失败", ex.Message)]));
+                UsbDetailSectionsList.ItemsSource = sections;
+            }
+        }
     }
 
     private string BuildUsbBreadcrumb(UsbTopologyNode node)
@@ -656,6 +743,97 @@ public partial class DeviceTopologyPage : UserControl
                 new("Hub Symbolic Name", node.Hub is null ? "未报告" : Empty(node.Hub.SymbolicName))
             ])
         ];
+    }
+
+    private static IReadOnlyList<TopologyDetailSectionView> BuildUsbDetailSections(UsbDeviceDetailSnapshot detail)
+    {
+        var sections = new List<TopologyDetailSectionView>
+        {
+            new("描述符字符串",
+            [
+                new("Manufacturer", detail.Manufacturer ?? "未报告"),
+                new("Product", detail.Product ?? "未报告"),
+                new("Serial Number", detail.SerialNumber ?? "未报告"),
+                new("Languages", detail.Languages.Count == 0
+                    ? "未报告"
+                    : string.Join(" / ", detail.Languages.Select(language => language.DisplayName))),
+                new("缓存时间", detail.GeneratedAt.ToString("HH:mm:ss"))
+            ])
+        };
+
+        foreach (var configuration in detail.Configurations)
+        {
+            sections.Add(new TopologyDetailSectionView(
+                $"Configuration {configuration.DescriptorIndex}",
+                [
+                    new("Configuration Value", configuration.ConfigurationValue.ToString()),
+                    new("Description", configuration.Description ?? "未报告"),
+                    new("Total Length", $"{configuration.TotalLength} bytes"),
+                    new("Interfaces", $"{configuration.Interfaces.Count} parsed / {configuration.DeclaredInterfaceCount} declared"),
+                    new("Power", configuration.IsSelfPowered
+                        ? $"Self-powered, {configuration.MaximumPowerMilliamps} mA requested"
+                        : $"Bus-powered, {configuration.MaximumPowerMilliamps} mA"),
+                    new("Remote Wakeup", configuration.SupportsRemoteWakeup ? "支持" : "不支持"),
+                    new("Additional Descriptors", configuration.AdditionalDescriptors.Count.ToString())
+                ]));
+
+            foreach (var item in configuration.InterfaceAssociations)
+            {
+                sections.Add(new TopologyDetailSectionView(
+                    $"IAD · Interface {item.FirstInterface}-{item.FirstInterface + item.InterfaceCount - 1}",
+                    [
+                        new("Description", item.Description ?? "未报告"),
+                        new("Class / Subclass / Protocol", $"0x{item.FunctionClass:X2} / 0x{item.FunctionSubClass:X2} / 0x{item.FunctionProtocol:X2}")
+                    ]));
+            }
+
+            foreach (var item in configuration.Interfaces)
+            {
+                var rows = new List<TopologyDetailFieldView>
+                {
+                    new("Alternate Setting", item.AlternateSetting.ToString()),
+                    new("Description", item.Description ?? "未报告"),
+                    new("Class / Subclass / Protocol", $"0x{item.InterfaceClass:X2} / 0x{item.InterfaceSubClass:X2} / 0x{item.InterfaceProtocol:X2}"),
+                    new("Endpoints", $"{item.Endpoints.Count} parsed / {item.DeclaredEndpointCount} declared")
+                };
+                foreach (var endpoint in item.Endpoints)
+                {
+                    var companion = endpoint.SuperSpeedCompanion is null
+                        ? string.Empty
+                        : $", burst {endpoint.SuperSpeedCompanion.MaximumBurst}, {endpoint.SuperSpeedCompanion.BytesPerInterval} bytes/interval";
+                    rows.Add(new TopologyDetailFieldView(
+                        $"Endpoint 0x{endpoint.Address:X2}",
+                        $"{endpoint.Direction} · {endpoint.TransferType} · {endpoint.MaximumPacketBytes} bytes · interval {endpoint.Interval}{companion}"));
+                }
+
+                sections.Add(new TopologyDetailSectionView(
+                    $"Interface {item.InterfaceNumber} · Alt {item.AlternateSetting}",
+                    rows));
+            }
+        }
+
+        if (detail.Bos is not null)
+        {
+            sections.Add(new TopologyDetailSectionView(
+                "BOS Capabilities",
+                [
+                    new("Total Length", $"{detail.Bos.TotalLength} bytes"),
+                    new("Capabilities", detail.Bos.Capabilities.Count == 0
+                        ? "无"
+                        : string.Join(" / ", detail.Bos.Capabilities.Select(capability => capability.DisplayName))),
+                    new("Declared", detail.Bos.DeclaredCapabilityCount.ToString())
+                ]));
+        }
+
+        if (detail.Diagnostics.Entries.Count > 0)
+        {
+            sections.Add(new TopologyDetailSectionView(
+                "Descriptor Diagnostics",
+                detail.Diagnostics.Entries.Select((entry, index) =>
+                    new TopologyDetailFieldView($"{entry.Severity} {index + 1}", entry.Message)).ToArray()));
+        }
+
+        return sections;
     }
 
     private static string FormatUsbKind(UsbTopologyNodeKind kind)

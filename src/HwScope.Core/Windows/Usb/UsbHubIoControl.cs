@@ -21,6 +21,7 @@ internal sealed class UsbHubIoControl : IDisposable
     private const int ConnectionBufferBytes = 4 * 1024;
     private const int ConnectionNameStructureSize = 10;
     private const int ConnectorPropertiesStructureSize = 18;
+    private const int DescriptorRequestHeaderSize = 12;
     private const uint IoTimeoutMilliseconds = 1_000;
     private const uint Infinite = 0xFFFFFFFF;
     private const uint WaitObject0 = 0;
@@ -28,6 +29,7 @@ internal sealed class UsbHubIoControl : IDisposable
 
     private static readonly uint IoctlGetRootHubName = CtlCode(258);
     private static readonly uint IoctlGetNodeInformation = CtlCode(258);
+    private static readonly uint IoctlGetDescriptorFromNodeConnection = CtlCode(260);
     private static readonly uint IoctlGetConnectionName = CtlCode(261);
     private static readonly uint IoctlGetConnectionDriverKeyName = CtlCode(264);
     private static readonly uint IoctlGetConnectionInformationEx = CtlCode(274);
@@ -91,6 +93,41 @@ internal sealed class UsbHubIoControl : IDisposable
     public string TryQueryDriverKey(int portNumber)
     {
         return TryQueryVariableName(IoctlGetConnectionDriverKeyName, portNumber, "USB_NODE_CONNECTION_DRIVERKEY_NAME");
+    }
+
+    public byte[] QueryDescriptor(
+        int portNumber,
+        byte descriptorType,
+        byte descriptorIndex,
+        ushort languageId,
+        int maximumLength)
+    {
+        if (maximumLength is <= 0 or > ushort.MaxValue)
+        {
+            throw new ArgumentOutOfRangeException(nameof(maximumLength));
+        }
+
+        var request = CreateConnectionIndexInput(portNumber, DescriptorRequestHeaderSize + maximumLength);
+        request[4] = 0x80;
+        request[5] = 0x06;
+        BinaryPrimitives.WriteUInt16LittleEndian(
+            request.AsSpan(6),
+            (ushort)((descriptorType << 8) | descriptorIndex));
+        BinaryPrimitives.WriteUInt16LittleEndian(request.AsSpan(8), languageId);
+        BinaryPrimitives.WriteUInt16LittleEndian(request.AsSpan(10), (ushort)maximumLength);
+
+        var output = IoControl(
+            IoctlGetDescriptorFromNodeConnection,
+            request,
+            request.Length,
+            optional: false);
+        if (output.Length < DescriptorRequestHeaderSize)
+        {
+            throw new InvalidDataException(
+                $"USB descriptor request returned {output.Length} bytes; at least {DescriptorRequestHeaderSize} were expected.");
+        }
+
+        return output.AsSpan(DescriptorRequestHeaderSize).ToArray();
     }
 
     public void Dispose()
