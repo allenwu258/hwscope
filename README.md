@@ -2,13 +2,17 @@
 
 HwScope 是一个 Windows 本地硬件工具箱项目，目标是在一个程序里逐步整合硬件摘要、CPU-Z 类详情、传感器、跑分、压力测试和稳定性查询。
 
-当前主线版本已具备：
+当前版本已具备：
 
 - WPF 图形界面，基于 WPF-UI / Fluent 风格，包含传统桌面应用式标题栏菜单、左侧导航和 HWiNFO 风格图标+文字快捷工具栏。
 - 首页硬件配置摘要，支持卡片视图和列表视图。
 - CPU 详情页，展示身份、规格、频率、拓扑、缓存、核心映射、指令集和平台上下文。
 - 内存 / SPD 详情页，展示运行态概览、模块选择、WMI/SMBIOS 模块详情、位宽/电压字段和后续 SPD/时序占位。
 - 存储设备详情页，按物理磁盘展示身份、固件、序列号、总线、扇区、卷/分区、健康状态、温度、寿命和 SMART / Health 属性。
+- `总线与端口` 页面，使用独立 `PCI Express` / `USB` 标签展示真实设备拓扑、节点详情和精确诊断入口。
+- PCIe Root/Bridge/Endpoint/Function 枚举，以及 BDF、身份、驱动、状态和 Windows 可公开链路属性。
+- USB Host Controller/Root Hub/Port/Hub/Device 物理端口树，支持空端口、外置 Hub、连接速度和深层标准 descriptor。
+- PCIe 与 USB 独立精确诊断窗口，支持搜索、筛选、路径展开、原始信息、字段复制和节点报告保存。
 - 启动期硬件预加载窗口，先建立共享硬件信息库，再由概览页、CPU 页和内存跑分窗口复用同一份快照。
 - Windows `GetLogicalProcessorInformationEx` 拓扑采集，提供真实 package/core/thread、CPU group、NUMA、缓存共享和 core-to-logical-processor mapping。
 - CPU topology Inspect 窗口，包含 raw report 和绘制版 Visual Map。
@@ -25,16 +29,22 @@ HwScope 是一个 Windows 本地硬件工具箱项目，目标是在一个程序
 HwScope.sln
 src/
   HwScope.App/
-    WPF GUI 入口，启动预加载窗口、主窗口、应用图标资源、硬件摘要页、CPU/内存/存储详情页、主题系统、内存/存储跑分窗口
+    WPF GUI 入口，包含启动预加载、硬件摘要、CPU/内存/存储详情、总线与端口页、PCIe/USB 精确诊断窗口、主题系统和跑分窗口
 
   HwScope.Cli/
     命令行入口，复用 HwScope.Core 的硬件采集和跑分能力
 
   HwScope.Core/
-    硬件采集、共享 hardware inventory、CPU/内存/存储领域模型、Windows topology/storage API、格式化、benchmark runner 和 native worker 调用
+    硬件采集、共享 hardware inventory、CPU/内存/存储/PCIe/USB 领域模型、Windows topology/storage/SetupAPI/USB API、格式化、缓存和 worker 调用
 
   HwScope.Core.Tests/
-    Core 单元测试，当前覆盖 NVMe/ATA parser、存储跑分规划/协议/session 清理、storage descriptor 边界、soft timeout、字段来源合并、bus 格式化和报告格式化
+    Core 单元测试，覆盖硬件 parser、native buffer 边界、拓扑构建、刷新策略、缓存/worker 协议、跑分规划和报告格式化
+
+  HwScope.App.Tests/
+    App 投影测试，覆盖 PCIe/USB 精确诊断目录的展开、筛选、搜索和节点格式化
+
+  HwScope.UsbWorker/
+    隔离 USB 深层 descriptor IOCTL 的 .NET worker；通过单次 JSON 请求/响应向 Core 返回不可变详情快照
 
   HwScope.Native.MemoryBench/
     C++ 内存跑分 worker，输出 JSON / progress JSON 给 HwScope.Core 解析，CSV 仅保留为手动兼容格式
@@ -180,6 +190,28 @@ dotnet run --project .\src\HwScope.Cli -- storage --disk 0 --json
 - [docs/storage-detail-page-design.md](docs/storage-detail-page-design.md)
 - [docs/storage-detail-implementation-plan.md](docs/storage-detail-implementation-plan.md)
 
+## 总线与端口
+
+GUI 中可以通过左侧导航 `硬件 -> 总线与端口` 打开拓扑页面。PCI Express 和 USB 使用独立标签及独立快照，不把 PnP 关系和 USB 物理端口关系混成一棵树。
+
+当前已实现：
+
+- PCIe 使用 Windows SetupAPI/Configuration Manager 和 PCI bus properties 构建 Root/Bridge/Endpoint/Function 树，展示 BDF、硬件身份、位置路径、驱动、Problem Code 以及真实可得的 current/max link 信息。
+- USB 从 Host Controller 出发，通过 USB hub IOCTL 递归构建 Root Hub/Port/Hub/Device 物理树，保留空端口、连接状态、port chain、速度和 connector 信息。
+- 主页面使用固定高度的可展开紧凑拓扑图；有实际设备的分支默认展开，空分支默认收缩，选择节点后在下方显示分组详情。
+- PCIe 和 USB 各有独立的单实例精确诊断窗口。窗口使用多级目录、搜索和筛选定位节点，右侧展示结构化字段、原始属性或 descriptor，并支持复制与保存节点报告。
+- USB configuration/interface/endpoint/string/BOS 等深层 descriptor 在选择物理设备时按需加载。`HwScope.UsbWorker` 对可能阻塞或返回异常数据的设备查询进行进程隔离，Core 侧缓存按 physical attachment 合并并发请求并在设备变化后失效。
+- PCIe/USB 快照由 App 级 `DeviceTopologyService` 共享；同类并发刷新合并，刷新失败时保留最近成功结果并标记 stale。完整拓扑不进入启动 preload。
+
+当前边界：
+
+- 不提供任意 PCI configuration space、USB control transfer、端口 reset/eject/disable 或其他有副作用命令。
+- PCIe BAR/IRQ/MSI 和 bridge resource range 尚未完整接入；Windows 未公开的 capability 保持 unavailable，不从型号或相邻节点伪造。
+- 自动热插拔通知、snapshot diff、USB composite function 独立树节点、PCIe/USB controller 跨树跳转、跨存储/网络/GPU 页面定位和更广泛的 Intel/AMD/USB-C/USB4 硬件矩阵仍待完成。
+- PCIe/USB 独立 Inspect 全貌窗口已按产品决策取消；精确核对由诊断窗口承担，日常浏览由主页面紧凑拓扑承担。
+
+详细设计见 [docs/pcie-usb-topology-design.md](docs/pcie-usb-topology-design.md)。
+
 ## 构建
 
 ```powershell
@@ -299,9 +331,12 @@ src\HwScope.App\Themes\Json\dark.json
 - CPU code name、工艺、TDP 和部分指令集仍可能来自本地型号映射，页面会标注来源。
 - 内存 / SPD 详情页当前仅使用 WMI/SMBIOS；SPD 读取与解析代码已移除，页面固定显示 `SPD 读取暂未实现`。raw SPD、运行态时序和 DIMM/PMIC telemetry 等驱动相关能力暂时搁置。
 - 存储详情页的 NVMe 标准 Health 路径已验证；ATA SMART 仍需更多真实 SATA 设备验证。USB/RAID bridge 是否支持协议透传取决于控制器和驱动，不支持时不会被误报为磁盘故障。
+- PCIe/USB 拓扑依赖 Windows 和设备驱动公开的信息；链路、connector、companion port 或 descriptor 字段不可用时会明确降级。自动热插拔和完整 PCIe 资源枚举尚未实现。
+- PCIe/USB 的复制和保存报告面向本机诊断，可能包含设备 Instance ID、Location Path、device path 或序列号；分享前需要审阅。Core redactor 已具备，默认脱敏的完整 JSON 导出尚未接入 UI。
 - 内存跑分结果目前不应直接对标 AIDA64，kernel、copy accounting、NUMA 和 cache row 仍在演进。
 - 存储跑分当前仅支持本地、单 physical extent 的文件系统卷；Storage Spaces/跨盘卷、network share、RAM disk 和 raw disk 被拒绝。结果不应直接对标 CrystalDiskMark。
 - native worker 不会由 `dotnet build` 自动编译；需要先运行对应 native 构建脚本生成 Release 产物。
+- 截至 2026-07-17，Release 配置下 Core 与 App 共 152 项自动化测试通过。
 
 ## License
 
