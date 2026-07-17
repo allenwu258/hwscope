@@ -54,6 +54,13 @@ public partial class App : Application
             return;
         }
 
+        if (Environment.GetEnvironmentVariable("HWSCOPE_USB_DIAGNOSTICS_PREVIEW") == "1")
+        {
+            MainWindow = new UsbTopologyDiagnosticsWindow();
+            MainWindow.Show();
+            return;
+        }
+
         if (Environment.GetEnvironmentVariable("HWSCOPE_STORAGE_BENCHMARK_PREVIEW") == "1")
         {
             MainWindow = new StorageBenchmarkWindow();

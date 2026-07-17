@@ -88,7 +88,10 @@ public partial class DeviceTopologyPage : UserControl
     {
         if (DiagnosticsButton is not null)
         {
-            DiagnosticsButton.IsEnabled = TopologyTabs.SelectedItem == PciTab;
+            DiagnosticsButton.IsEnabled = true;
+            DiagnosticsButton.ToolTip = TopologyTabs.SelectedItem == UsbTab
+                ? "打开 USB 精确诊断窗口"
+                : "打开 PCIe 精确诊断窗口";
         }
 
         if (!IsLoaded || TopologyTabs.SelectedItem != UsbTab)
@@ -138,12 +141,20 @@ public partial class DeviceTopologyPage : UserControl
 
     private void DiagnosticsButton_Click(object sender, RoutedEventArgs e)
     {
-        if (TopologyTabs.SelectedItem != PciTab)
+        var owner = Window.GetWindow(this);
+        if (TopologyTabs.SelectedItem == UsbTab)
         {
+            var usbWindow = App.SingleInstanceWindows.ShowOrActivate(
+                SingleInstanceWindowKeys.UsbTopologyDiagnostics,
+                () => new UsbTopologyDiagnosticsWindow(_usbSelectedNodeId)
+                {
+                    Owner = owner
+                });
+            usbWindow.SetTarget(_usbSelectedNodeId);
+            SetStatus("USB 精确诊断窗口已打开。");
             return;
         }
 
-        var owner = Window.GetWindow(this);
         var window = App.SingleInstanceWindows.ShowOrActivate(
             SingleInstanceWindowKeys.DeviceTopologyDiagnostics,
             () => new DeviceTopologyDiagnosticsWindow(_selectedNodeId)
