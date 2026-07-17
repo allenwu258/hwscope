@@ -214,6 +214,59 @@ public sealed class UsbDeviceDetailCacheTests
         Assert.Equal(2, source.CallCount);
     }
 
+    [Fact]
+    public async Task FailedRefreshPreservesLastSuccessfulDetail()
+    {
+        var failRefresh = false;
+        var source = new FakeSource(target => failRefresh
+            ? throw new InvalidOperationException("refresh failure")
+            : Detail(target));
+        var cache = new UsbDeviceDetailCache(source);
+        var snapshot = Snapshot("device-a");
+        var original = await cache.EnsureLoadedAsync(snapshot, "device-a");
+        failRefresh = true;
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            cache.RefreshAsync(snapshot, "device-a"));
+
+        Assert.Same(original, cache.TryGetCached("port-1", "device-a"));
+        Assert.Same(original, await cache.EnsureLoadedAsync(snapshot, "device-a"));
+        Assert.Equal(2, source.CallCount);
+    }
+
+    [Fact]
+    public async Task EnsureReturnsStaleSuccessWhileRefreshIsInFlight()
+    {
+        var refreshRelease = new ManualResetEventSlim();
+        var attempt = 0;
+        var source = new FakeSource(target =>
+        {
+            if (Interlocked.Increment(ref attempt) > 1)
+            {
+                refreshRelease.Wait();
+            }
+
+            return Detail(target);
+        });
+        var cache = new UsbDeviceDetailCache(source);
+        var snapshot = Snapshot("device-a");
+        var original = await cache.EnsureLoadedAsync(snapshot, "device-a");
+
+        var refresh = cache.RefreshAsync(snapshot, "device-a");
+        try
+        {
+            Assert.True(SpinWait.SpinUntil(() => source.CallCount == 2, TimeSpan.FromSeconds(2)));
+            var ensured = await cache.EnsureLoadedAsync(snapshot, "device-a");
+            Assert.Same(original, ensured);
+        }
+        finally
+        {
+            refreshRelease.Set();
+        }
+
+        await refresh;
+    }
+
     private static UsbTopologySnapshot Snapshot(
         string deviceNodeId,
         string attachmentId = "port-1")

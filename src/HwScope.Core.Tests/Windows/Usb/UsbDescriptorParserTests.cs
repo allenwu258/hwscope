@@ -1,5 +1,6 @@
 using HwScope.Core.Hardware.DeviceTopology.Usb;
 using HwScope.Core.Windows.Usb;
+using System.Text.Json;
 
 namespace HwScope.Core.Tests.Windows.Usb;
 
@@ -29,6 +30,33 @@ public sealed class UsbDescriptorParserTests
         Assert.Equal(2, endpoint.SuperSpeedCompanion!.MaximumBurst);
         Assert.Equal(1024, endpoint.SuperSpeedCompanion.BytesPerInterval);
         Assert.Equal(0x24, Assert.Single(result.AdditionalDescriptors).DescriptorType);
+        Assert.Equal(
+            [
+                UsbConfigurationDescriptorEntryKind.InterfaceAssociation,
+                UsbConfigurationDescriptorEntryKind.Interface,
+                UsbConfigurationDescriptorEntryKind.Endpoint,
+                UsbConfigurationDescriptorEntryKind.SuperSpeedEndpointCompanion,
+                UsbConfigurationDescriptorEntryKind.Additional
+            ],
+            result.OrderedDescriptors.Select(entry => entry.Kind));
+        Assert.Equal([9, 17, 26, 33, 39], result.OrderedDescriptors.Select(entry => entry.Offset));
+        var classSpecific = result.OrderedDescriptors[^1];
+        Assert.Equal(UsbConfigurationDescriptorOwnerKind.Interface, classSpecific.OwnerKind);
+        Assert.Equal(0, classSpecific.InterfaceIndex);
+        Assert.Equal(new byte[] { 4, 0x24, 1, 2 }, classSpecific.RawBytes);
+        var roundTrip = JsonSerializer.Deserialize<UsbConfigurationDescriptorInfo>(
+            JsonSerializer.Serialize(result));
+        Assert.Equal(
+            result.OrderedDescriptors.Select(entry =>
+                (entry.Offset, entry.DescriptorType, entry.Length, entry.Kind, entry.OwnerKind,
+                    entry.InterfaceAssociationIndex, entry.InterfaceIndex, entry.EndpointIndex,
+                    entry.AdditionalDescriptorIndex, entry.OwnerIsHeuristic)),
+            roundTrip!.OrderedDescriptors.Select(entry =>
+                (entry.Offset, entry.DescriptorType, entry.Length, entry.Kind, entry.OwnerKind,
+                    entry.InterfaceAssociationIndex, entry.InterfaceIndex, entry.EndpointIndex,
+                    entry.AdditionalDescriptorIndex, entry.OwnerIsHeuristic)));
+        Assert.All(result.OrderedDescriptors.Zip(roundTrip.OrderedDescriptors), pair =>
+            Assert.Equal(pair.First.RawBytes.ToArray(), pair.Second.RawBytes.ToArray()));
     }
 
     [Theory]
@@ -56,6 +84,24 @@ public sealed class UsbDescriptorParserTests
         var result = UsbDescriptorParser.ParseConfiguration(raw, 0, 0x0200);
 
         Assert.Equal([0, 1], result.Interfaces.Select(item => (int)item.AlternateSetting));
+    }
+
+    [Fact]
+    public void UnknownDescriptorUsesMarkedNearestInterfaceContext()
+    {
+        var raw = new byte[]
+        {
+            9, 2, 22, 0, 1, 1, 0, 0x80, 10,
+            9, 4, 0, 0, 0, 0xFF, 0, 0, 0,
+            4, 0xEE, 1, 2
+        };
+
+        var result = UsbDescriptorParser.ParseConfiguration(raw, 0, 0x0200);
+        var unknown = result.OrderedDescriptors[^1];
+
+        Assert.Equal(UsbConfigurationDescriptorOwnerKind.Interface, unknown.OwnerKind);
+        Assert.True(unknown.OwnerIsHeuristic);
+        Assert.Equal(18, unknown.Offset);
     }
 
     [Fact]

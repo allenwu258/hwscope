@@ -21,6 +21,9 @@ internal static class UsbDescriptorParser
     private const byte BosDescriptorType = 0x0F;
     private const byte DeviceCapabilityDescriptorType = 0x10;
     private const byte SuperSpeedEndpointCompanionDescriptorType = 0x30;
+    private const byte HidDescriptorType = 0x21;
+    private const byte ClassSpecificInterfaceDescriptorType = 0x24;
+    private const byte ClassSpecificEndpointDescriptorType = 0x25;
 
     public static ushort ReadConfigurationTotalLength(ReadOnlySpan<byte> data)
     {
@@ -50,7 +53,10 @@ internal static class UsbDescriptorParser
         var interfaces = new List<UsbInterfaceDescriptorInfo>();
         var associations = new List<UsbInterfaceAssociationInfo>();
         var additional = new List<UsbRawDescriptorInfo>();
+        var ordered = new List<UsbConfigurationDescriptorEntryInfo>();
         var endpointCount = 0;
+        int? currentInterfaceIndex = null;
+        int? currentEndpointIndex = null;
         byte? previousDescriptorType = null;
         var offset = 0;
         while (offset < bounded.Length)
@@ -86,7 +92,15 @@ internal static class UsbDescriptorParser
                         interfaces.Count,
                         MaximumInterfacesPerConfiguration,
                         "interfaces");
+                    currentInterfaceIndex = interfaces.Count;
+                    currentEndpointIndex = null;
                     interfaces.Add(ParseInterface(descriptor, strings));
+                    ordered.Add(OrderedEntry(
+                        offset,
+                        descriptor,
+                        UsbConfigurationDescriptorEntryKind.Interface,
+                        UsbConfigurationDescriptorOwnerKind.Configuration,
+                        interfaceIndex: currentInterfaceIndex));
                     break;
                 case EndpointDescriptorType:
                     if (interfaces.Count == 0)
@@ -100,10 +114,18 @@ internal static class UsbDescriptorParser
                         "endpoints");
 
                     var currentInterface = interfaces[^1];
+                    currentEndpointIndex = currentInterface.Endpoints.Length;
                     interfaces[^1] = currentInterface with
                     {
                         Endpoints = currentInterface.Endpoints.Add(ParseEndpoint(descriptor))
                     };
+                    ordered.Add(OrderedEntry(
+                        offset,
+                        descriptor,
+                        UsbConfigurationDescriptorEntryKind.Endpoint,
+                        UsbConfigurationDescriptorOwnerKind.Interface,
+                        interfaceIndex: currentInterfaceIndex,
+                        endpointIndex: currentEndpointIndex));
                     endpointCount++;
                     break;
                 case SuperSpeedEndpointCompanionDescriptorType:
@@ -133,13 +155,29 @@ internal static class UsbDescriptorParser
                                 SuperSpeedCompanion = ParseSuperSpeedEndpointCompanion(descriptor)
                             })
                     };
+                    ordered.Add(OrderedEntry(
+                        offset,
+                        descriptor,
+                        UsbConfigurationDescriptorEntryKind.SuperSpeedEndpointCompanion,
+                        UsbConfigurationDescriptorOwnerKind.Endpoint,
+                        interfaceIndex: currentInterfaceIndex,
+                        endpointIndex: currentEndpointIndex));
                     break;
                 case InterfaceAssociationDescriptorType:
                     EnsureCountWithinLimit(
                         associations.Count,
                         MaximumAssociationsPerConfiguration,
                         "interface associations");
+                    currentInterfaceIndex = null;
+                    currentEndpointIndex = null;
+                    var associationIndex = associations.Count;
                     associations.Add(ParseInterfaceAssociation(descriptor, strings));
+                    ordered.Add(OrderedEntry(
+                        offset,
+                        descriptor,
+                        UsbConfigurationDescriptorEntryKind.InterfaceAssociation,
+                        UsbConfigurationDescriptorOwnerKind.Configuration,
+                        interfaceAssociationIndex: associationIndex));
                     break;
                 default:
                     if (offset != 0)
@@ -148,7 +186,41 @@ internal static class UsbDescriptorParser
                             additional.Count,
                             MaximumAdditionalDescriptorsPerConfiguration,
                             "additional descriptors");
+                        var additionalIndex = additional.Count;
                         additional.Add(new UsbRawDescriptorInfo(type, length, descriptor.ToArray().ToImmutableArray()));
+                        var ownerIsHeuristic = false;
+                        UsbConfigurationDescriptorOwnerKind ownerKind;
+                        if (type == ClassSpecificEndpointDescriptorType && currentEndpointIndex.HasValue)
+                        {
+                            ownerKind = UsbConfigurationDescriptorOwnerKind.Endpoint;
+                        }
+                        else if ((type == HidDescriptorType || type == ClassSpecificInterfaceDescriptorType)
+                            && currentInterfaceIndex.HasValue)
+                        {
+                            ownerKind = UsbConfigurationDescriptorOwnerKind.Interface;
+                        }
+                        else if (currentInterfaceIndex.HasValue)
+                        {
+                            ownerKind = UsbConfigurationDescriptorOwnerKind.Interface;
+                            ownerIsHeuristic = true;
+                        }
+                        else
+                        {
+                            ownerKind = UsbConfigurationDescriptorOwnerKind.Configuration;
+                        }
+                        ordered.Add(OrderedEntry(
+                            offset,
+                            descriptor,
+                            UsbConfigurationDescriptorEntryKind.Additional,
+                            ownerKind,
+                            interfaceIndex: ownerKind == UsbConfigurationDescriptorOwnerKind.Configuration
+                                ? null
+                                : currentInterfaceIndex,
+                            endpointIndex: ownerKind == UsbConfigurationDescriptorOwnerKind.Endpoint
+                                ? currentEndpointIndex
+                                : null,
+                            additionalDescriptorIndex: additionalIndex,
+                            ownerIsHeuristic: ownerIsHeuristic));
                     }
                     break;
             }
@@ -173,7 +245,35 @@ internal static class UsbDescriptorParser
             associations.ToImmutableArray(),
             interfaces.ToImmutableArray(),
             additional.ToImmutableArray(),
-            bounded.ToArray().ToImmutableArray());
+            bounded.ToArray().ToImmutableArray())
+        {
+            OrderedDescriptors = ordered.ToImmutableArray()
+        };
+    }
+
+    private static UsbConfigurationDescriptorEntryInfo OrderedEntry(
+        int offset,
+        ReadOnlySpan<byte> descriptor,
+        UsbConfigurationDescriptorEntryKind kind,
+        UsbConfigurationDescriptorOwnerKind ownerKind,
+        int? interfaceAssociationIndex = null,
+        int? interfaceIndex = null,
+        int? endpointIndex = null,
+        int? additionalDescriptorIndex = null,
+        bool ownerIsHeuristic = false)
+    {
+        return new UsbConfigurationDescriptorEntryInfo(
+            offset,
+            descriptor[1],
+            descriptor[0],
+            kind,
+            ownerKind,
+            interfaceAssociationIndex,
+            interfaceIndex,
+            endpointIndex,
+            additionalDescriptorIndex,
+            ownerIsHeuristic,
+            descriptor.ToArray().ToImmutableArray());
     }
 
     public static ushort ReadBosTotalLength(ReadOnlySpan<byte> data)

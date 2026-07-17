@@ -131,7 +131,7 @@ internal static class UsbDiagnosticNodeFormatter
         UsbDeviceDetailSnapshot detail,
         UsbDescriptorSelection selection)
     {
-        return selection.Kind switch
+        IReadOnlyList<UsbDiagnosticFieldView> fields = selection.Kind switch
         {
             UsbDiagnosticRowKind.Configuration => ConfigurationFields(detail.Configurations[selection.ConfigurationIndex]),
             UsbDiagnosticRowKind.InterfaceAssociation => IadFields(
@@ -141,6 +141,9 @@ internal static class UsbDiagnosticNodeFormatter
             UsbDiagnosticRowKind.Endpoint => EndpointFields(
                 detail.Configurations[selection.ConfigurationIndex]
                     .Interfaces[selection.ItemIndex].Endpoints[selection.EndpointIndex]),
+            UsbDiagnosticRowKind.SuperSpeedEndpointCompanion => CompanionFields(
+                detail.Configurations[selection.ConfigurationIndex]
+                    .Interfaces[selection.ItemIndex].Endpoints[selection.EndpointIndex].SuperSpeedCompanion!),
             UsbDiagnosticRowKind.AdditionalDescriptor => RawDescriptorFields(
                 detail.Configurations[selection.ConfigurationIndex].AdditionalDescriptors[selection.ItemIndex]),
             UsbDiagnosticRowKind.Bos => BosFields(detail.Bos!),
@@ -148,6 +151,25 @@ internal static class UsbDiagnosticNodeFormatter
                 detail.Bos!.Capabilities[selection.ItemIndex]),
             _ => []
         };
+        var ordered = TryGetOrderedEntry(detail, selection);
+        return ordered is null
+            ? fields
+            :
+            [
+                Field("Stream Offset", $"0x{ordered.Offset:X4}", "USB configuration descriptor stream"),
+                Field("bLength", ordered.Length.ToString(CultureInfo.InvariantCulture), "USB descriptor header"),
+                Field("bDescriptorType", $"0x{ordered.DescriptorType:X2}", "USB descriptor header"),
+                Field(
+                    "Owner Scope",
+                    ordered.OwnerIsHeuristic
+                        ? $"{ordered.OwnerKind} (inferred)"
+                        : ordered.OwnerKind.ToString(),
+                    ordered.OwnerIsHeuristic ? "HwScope bounded inference" : "USB descriptor structure",
+                    ordered.OwnerIsHeuristic
+                        ? "Unknown descriptor type was associated with the nearest interface context; the stream offset remains authoritative."
+                        : null),
+                .. fields
+            ];
     }
 
     public static (string Title, string Meta) DescribeDescriptor(
@@ -166,6 +188,8 @@ internal static class UsbDiagnosticNodeFormatter
             UsbDiagnosticRowKind.Endpoint =>
                 ($"Endpoint 0x{detail.Configurations[selection.ConfigurationIndex].Interfaces[selection.ItemIndex].Endpoints[selection.EndpointIndex].Address:X2}",
                     "USB endpoint descriptor"),
+            UsbDiagnosticRowKind.SuperSpeedEndpointCompanion =>
+                ("SuperSpeed Endpoint Companion", "USB SuperSpeed endpoint companion descriptor"),
             UsbDiagnosticRowKind.AdditionalDescriptor =>
                 ($"Additional Descriptor 0x{detail.Configurations[selection.ConfigurationIndex].AdditionalDescriptors[selection.ItemIndex].DescriptorType:X2}",
                     "Raw or class-specific USB descriptor"),
@@ -203,6 +227,11 @@ internal static class UsbDiagnosticNodeFormatter
             foreach (var configuration in detail.Configurations)
             {
                 builder.AppendLine($"  Configuration {configuration.DescriptorIndex}: value={configuration.ConfigurationValue}, total={configuration.TotalLength}, interfaces={configuration.Interfaces.Length}");
+                foreach (var ordered in configuration.OrderedDescriptors)
+                {
+                    builder.AppendLine($"    @0x{ordered.Offset:X4} type=0x{ordered.DescriptorType:X2} length={ordered.Length} kind={ordered.Kind} owner={ordered.OwnerKind}");
+                }
+
                 foreach (var item in configuration.InterfaceAssociations)
                 {
                     builder.AppendLine($"    IAD: first={item.FirstInterface}, count={item.InterfaceCount}, class={item.FunctionClass:X2}/{item.FunctionSubClass:X2}/{item.FunctionProtocol:X2}");
@@ -346,6 +375,14 @@ internal static class UsbDiagnosticNodeFormatter
         Field("SS Bytes / Interval", item.SuperSpeedCompanion is null ? "未报告" : $"{item.SuperSpeedCompanion.BytesPerInterval} bytes", Source(item.SuperSpeedCompanion, "SuperSpeed endpoint companion"))
     ];
 
+    private static IReadOnlyList<UsbDiagnosticFieldView> CompanionFields(
+        UsbSuperSpeedEndpointCompanionInfo item) =>
+    [
+        Field("Maximum Burst", item.MaximumBurst.ToString(CultureInfo.InvariantCulture), "SuperSpeed endpoint companion"),
+        Field("Attributes", $"0x{item.Attributes:X2}", "SuperSpeed endpoint companion"),
+        Field("Bytes / Interval", $"{item.BytesPerInterval} bytes", "SuperSpeed endpoint companion")
+    ];
+
     private static IReadOnlyList<UsbDiagnosticFieldView> BosFields(UsbBosDescriptorInfo item) =>
     [
         Field("Total Length", $"{item.TotalLength} bytes", "USB BOS descriptor"),
@@ -371,6 +408,12 @@ internal static class UsbDiagnosticNodeFormatter
         UsbDeviceDetailSnapshot detail,
         UsbDescriptorSelection selection)
     {
+        var ordered = TryGetOrderedEntry(detail, selection);
+        if (ordered is not null)
+        {
+            return ordered.RawBytes.AsSpan();
+        }
+
         return selection.Kind switch
         {
             UsbDiagnosticRowKind.Configuration => detail.Configurations[selection.ConfigurationIndex].RawBytes.AsSpan(),
@@ -380,6 +423,23 @@ internal static class UsbDiagnosticNodeFormatter
             UsbDiagnosticRowKind.BosCapability => detail.Bos!.Capabilities[selection.ItemIndex].RawBytes.AsSpan(),
             _ => ReadOnlySpan<byte>.Empty
         };
+    }
+
+    private static UsbConfigurationDescriptorEntryInfo? TryGetOrderedEntry(
+        UsbDeviceDetailSnapshot detail,
+        UsbDescriptorSelection selection)
+    {
+        if (selection.ConfigurationIndex < 0
+            || selection.ConfigurationIndex >= detail.Configurations.Length
+            || selection.OrderedEntryIndex < 0)
+        {
+            return null;
+        }
+
+        var ordered = detail.Configurations[selection.ConfigurationIndex].OrderedDescriptors;
+        return selection.OrderedEntryIndex < ordered.Length
+            ? ordered[selection.OrderedEntryIndex]
+            : null;
     }
 
     private static void AppendFields(

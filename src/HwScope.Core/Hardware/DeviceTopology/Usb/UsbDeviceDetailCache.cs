@@ -95,24 +95,34 @@ public sealed class UsbDeviceDetailCache
         Task<UsbDeviceDetailSnapshot> sharedTask;
         lock (_sync)
         {
+            UsbDeviceDetailSnapshot? fallback = null;
             if (_states.TryGetValue(target.AttachmentId, out var existing)
                 && string.Equals(existing.DeviceNodeId, target.DeviceNodeId, StringComparison.OrdinalIgnoreCase))
             {
+                if (!forceRefresh && existing.Cached is not null)
+                {
+                    return Task.FromResult(existing.Cached).WaitAsync(cancellationToken);
+                }
+
                 if (existing.LoadTask is not null)
                 {
                     return existing.LoadTask.WaitAsync(cancellationToken);
                 }
 
-                if (!forceRefresh && existing.Cached is not null)
-                {
-                    return Task.FromResult(existing.Cached).WaitAsync(cancellationToken);
-                }
+                fallback = existing.Cached;
             }
 
-            var state = new CacheState(target.DeviceNodeId);
+            var state = new CacheState(target.DeviceNodeId)
+            {
+                Cached = fallback
+            };
             _states[target.AttachmentId] = state;
             sharedTask = LoadAndPublishAsync(target, state);
             state.LoadTask = sharedTask;
+            if (sharedTask.IsCompleted)
+            {
+                state.LoadTask = null;
+            }
         }
 
         return sharedTask.WaitAsync(cancellationToken);
@@ -152,7 +162,11 @@ public sealed class UsbDeviceDetailCache
             {
                 if (_states.TryGetValue(target.AttachmentId, out var current) && ReferenceEquals(current, owner))
                 {
-                    _states.Remove(target.AttachmentId);
+                    owner.LoadTask = null;
+                    if (owner.Cached is null)
+                    {
+                        _states.Remove(target.AttachmentId);
+                    }
                 }
             }
 

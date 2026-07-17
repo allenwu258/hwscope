@@ -137,15 +137,6 @@ public partial class UsbTopologyDiagnosticsWindow : FluentWindow
         _snapshot = result.Snapshot;
         _diagnostics = MergeDiagnostics(result.Snapshot.Diagnostics.Entries, result.AttemptDiagnostics.Entries);
         _projection.SetSnapshot(result.Snapshot, _diagnostics);
-        foreach (var node in result.Snapshot.Nodes.Where(node => node.AttachmentId is not null))
-        {
-            var cached = App.DeviceTopologies.UsbDetails.TryGetCached(node.AttachmentId!, node.NodeId);
-            if (cached is not null)
-            {
-                _projection.SetDeviceDetail(cached);
-            }
-        }
-
         UpdateSummary(result.Snapshot);
         var target = _pendingTargetNodeId;
         _pendingTargetNodeId = null;
@@ -465,7 +456,18 @@ public partial class UsbTopologyDiagnosticsWindow : FluentWindow
             : App.DeviceTopologies.UsbDetails.TryGetCached(node.AttachmentId, node.NodeId);
         if (detail is not null)
         {
-            _projection.SetDeviceDetail(detail);
+            var addedToProjection = _projection.SetDeviceDetail(detail, expandWhenAdded: true);
+            if (addedToProjection)
+            {
+                Dispatcher.BeginInvoke(() =>
+                {
+                    if (IsLoaded
+                        && string.Equals(_selectedRowId, node.NodeId, StringComparison.OrdinalIgnoreCase))
+                    {
+                        RebuildRows(node.NodeId, resetDetailScroll: false);
+                    }
+                }, DispatcherPriority.Background);
+            }
         }
 
         SelectedNodeTitleText.Text = node.DisplayName;
@@ -562,7 +564,7 @@ public partial class UsbTopologyDiagnosticsWindow : FluentWindow
                 return;
             }
 
-            _projection.SetDeviceDetail(detail);
+            _projection.SetDeviceDetail(detail, expandWhenAdded: !forceRefresh);
             UpdateSummary(_snapshot);
             RebuildRows(_selectedRowId, resetDetailScroll: false);
             StatusText.Text = detail.Diagnostics.HasErrors
@@ -576,18 +578,67 @@ public partial class UsbTopologyDiagnosticsWindow : FluentWindow
         {
             if (IsLoaded && loadVersion == _detailLoadVersion)
             {
-                StatusText.Text = $"读取 USB descriptor 失败：{ex.Message}";
-                if (_snapshot.Nodes.FirstOrDefault(node =>
-                        string.Equals(node.NodeId, nodeId, StringComparison.OrdinalIgnoreCase)) is { } node)
-                {
-                    DescriptorFieldsList.ItemsSource = UsbDiagnosticNodeFormatter
-                        .BuildDescriptors(node, null)
-                        .Append(new UsbDiagnosticFieldView(
-                            "读取失败", ex.Message, "USB detail worker"))
-                        .ToArray();
-                }
+                RenderDetailFailure(nodeId, ex);
             }
         }
+    }
+
+    private void RenderDetailFailure(string nodeId, Exception error)
+    {
+        if (_snapshot?.Nodes.FirstOrDefault(node =>
+                string.Equals(node.NodeId, nodeId, StringComparison.OrdinalIgnoreCase)) is not { } node)
+        {
+            StatusText.Text = $"读取 USB descriptor 失败：{error.Message}";
+            return;
+        }
+
+        var stale = node.AttachmentId is null
+            ? null
+            : App.DeviceTopologies.UsbDetails.TryGetCached(node.AttachmentId, node.NodeId);
+        if (stale is not null)
+        {
+            _projection.SetDeviceDetail(stale);
+            if (_selectedRowId is not null
+                && _projection.TryGetDescriptorSelection(_selectedRowId, out var selection)
+                && selection is not null
+                && string.Equals(selection.OwnerNodeId, nodeId, StringComparison.OrdinalIgnoreCase))
+            {
+                RenderDescriptor(stale, selection, resetDetailScroll: false);
+            }
+            else if (string.Equals(_selectedTopologyNodeId, nodeId, StringComparison.OrdinalIgnoreCase))
+            {
+                RenderTopologyNode(node, resetDetailScroll: false);
+            }
+
+            SelectedNodeMetaText.Text += $" · descriptor 刷新失败，显示 {stale.GeneratedAt:HH:mm:ss} 缓存";
+            RawReportTextBox.Text += $"{Environment.NewLine}{Environment.NewLine}Descriptor Refresh Attempt{Environment.NewLine}  Error: {error.Message}";
+            AppendDescriptorStatusField(
+                "刷新失败",
+                $"{error.Message}；当前显示 {stale.GeneratedAt:HH:mm:ss} 的上次成功结果。");
+            StatusText.Text = $"Descriptor 刷新失败，保留 {stale.GeneratedAt:HH:mm:ss} 的上次成功结果。";
+            return;
+        }
+
+        if (string.Equals(_selectedTopologyNodeId, nodeId, StringComparison.OrdinalIgnoreCase))
+        {
+            DescriptorFieldsList.ItemsSource = UsbDiagnosticNodeFormatter
+                .BuildDescriptors(node, null)
+                .Append(new UsbDiagnosticFieldView(
+                    "读取失败", error.Message, "USB detail worker"))
+                .ToArray();
+        }
+
+        StatusText.Text = $"读取 USB descriptor 失败：{error.Message}";
+    }
+
+    private void AppendDescriptorStatusField(string label, string value)
+    {
+        var current = DescriptorFieldsList.ItemsSource is IEnumerable<UsbDiagnosticFieldView> fields
+            ? fields
+            : [];
+        DescriptorFieldsList.ItemsSource = current
+            .Append(new UsbDiagnosticFieldView(label, value, "USB detail cache"))
+            .ToArray();
     }
 
     private void CancelDetailLoad()

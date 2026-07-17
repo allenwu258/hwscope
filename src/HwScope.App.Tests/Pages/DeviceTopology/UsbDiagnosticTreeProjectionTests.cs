@@ -36,6 +36,7 @@ public sealed class UsbDiagnosticTreeProjectionTests
         Assert.Contains(rows, row => row.RowKind == UsbDiagnosticRowKind.InterfaceAssociation);
         Assert.Contains(rows, row => row.RowKind == UsbDiagnosticRowKind.Interface);
         Assert.Contains(rows, row => row.RowKind == UsbDiagnosticRowKind.Endpoint);
+        Assert.Contains(rows, row => row.RowKind == UsbDiagnosticRowKind.SuperSpeedEndpointCompanion);
         Assert.Contains(rows, row => row.RowKind == UsbDiagnosticRowKind.AdditionalDescriptor);
         Assert.Contains(rows, row => row.RowKind == UsbDiagnosticRowKind.Bos);
         Assert.Contains(rows, row => row.RowKind == UsbDiagnosticRowKind.BosCapability);
@@ -43,6 +44,13 @@ public sealed class UsbDiagnosticTreeProjectionTests
         Assert.True(projection.TryGetDescriptorSelection(endpoint.RowId, out var selection));
         Assert.Equal("device", selection!.OwnerNodeId);
         Assert.Equal(UsbDiagnosticRowKind.Endpoint, selection.Kind);
+        var interfaceRow = Assert.Single(rows, row => row.RowKind == UsbDiagnosticRowKind.Interface);
+        var additional = Assert.Single(rows, row => row.RowKind == UsbDiagnosticRowKind.AdditionalDescriptor);
+        Assert.Equal(interfaceRow.RowId, additional.ParentRowId);
+        var orderedRows = rows.ToList();
+        Assert.True(orderedRows.IndexOf(rows.Single(row =>
+                row.RowKind == UsbDiagnosticRowKind.InterfaceAssociation))
+            < orderedRows.IndexOf(interfaceRow));
     }
 
     [Fact]
@@ -122,6 +130,105 @@ public sealed class UsbDiagnosticTreeProjectionTests
         Assert.Contains(fields, field => field.Label == "Maximum Power" && field.Value == "100 mA");
         Assert.Contains("USB Descriptor Diagnostic", report);
         Assert.Contains("0000  09 02 20 00", report);
+
+        var endpointSelection = new UsbDescriptorSelection(
+            "device", UsbDiagnosticRowKind.Endpoint,
+            ConfigurationIndex: 0, ItemIndex: 0, EndpointIndex: 0, OrderedEntryIndex: 2);
+        var endpointFields = UsbDiagnosticNodeFormatter.BuildDescriptorOverview(detail, endpointSelection);
+        var endpointReport = UsbDiagnosticNodeFormatter.BuildDescriptorRawReport(detail, endpointSelection);
+        Assert.Equal("0x001A", Assert.Single(endpointFields, field => field.Label == "Stream Offset").Value);
+        Assert.Contains("0000  04 05 01 02", endpointReport);
+    }
+
+    [Fact]
+    public void CachedDetailDoesNotReopenManuallyCollapsedDevice()
+    {
+        var projection = new UsbDiagnosticTreeProjection();
+        projection.SetSnapshot(CreateSnapshot());
+        var detail = CreateDetail();
+        projection.SetDeviceDetail(detail, expandWhenAdded: true);
+        projection.Build(null, UsbDiagnosticTreeFilter.All);
+        projection.Toggle("device");
+
+        projection.SetDeviceDetail(detail, expandWhenAdded: true);
+        var rows = projection.Build(null, UsbDiagnosticTreeFilter.All);
+
+        Assert.False(Assert.Single(rows, row => row.RowId == "device").IsExpanded);
+        Assert.DoesNotContain(rows, row => row.RowKind == UsbDiagnosticRowKind.Configuration);
+    }
+
+    [Fact]
+    public void RefreshExpandsPortThatNewlyGainsConnectedDevice()
+    {
+        var full = CreateSnapshot();
+        var initial = full with
+        {
+            Nodes = full.Nodes
+                .Where(node => node.NodeId != "device")
+                .Select(node => node.NodeId == "connected-port"
+                    ? node with
+                    {
+                        ChildNodeIds = [],
+                        Port = node.Port! with
+                        {
+                            ConnectionStatus = UsbConnectionStatus.NoDeviceConnected,
+                            ConnectionSpeed = UsbConnectionSpeed.Unknown
+                        }
+                    }
+                    : node)
+                .ToArray()
+        };
+        var projection = new UsbDiagnosticTreeProjection();
+        projection.SetSnapshot(initial);
+        projection.Build(null, UsbDiagnosticTreeFilter.All);
+
+        projection.SetSnapshot(full);
+        var rows = projection.Build(null, UsbDiagnosticTreeFilter.All);
+
+        Assert.Contains(rows, row => row.RowId == "device");
+        Assert.True(Assert.Single(rows, row => row.RowId == "connected-port").IsExpanded);
+    }
+
+    [Fact]
+    public void RefreshDoesNotReopenExplicitlyCollapsedConnectedPort()
+    {
+        var full = CreateSnapshot();
+        var projection = new UsbDiagnosticTreeProjection();
+        projection.SetSnapshot(full);
+        projection.Build(null, UsbDiagnosticTreeFilter.All);
+        projection.Toggle("connected-port");
+
+        var disconnected = full with
+        {
+            Nodes = full.Nodes
+                .Where(node => node.NodeId != "device")
+                .Select(node => node.NodeId == "connected-port"
+                    ? node with { ChildNodeIds = [] }
+                    : node)
+                .ToArray()
+        };
+        projection.SetSnapshot(disconnected);
+        projection.SetSnapshot(full);
+        var rows = projection.Build(null, UsbDiagnosticTreeFilter.All);
+
+        Assert.False(Assert.Single(rows, row => row.RowId == "connected-port").IsExpanded);
+        Assert.DoesNotContain(rows, row => row.RowId == "device");
+    }
+
+    [Fact]
+    public void ProjectionRetainsOnlyTwoMostRecentDeviceDetails()
+    {
+        var snapshot = CreateSnapshotWithThreeDevices();
+        var projection = new UsbDiagnosticTreeProjection();
+        projection.SetSnapshot(snapshot);
+
+        projection.SetDeviceDetail(CreateDetail("device-1", "attachment-1"));
+        projection.SetDeviceDetail(CreateDetail("device-2", "attachment-2"));
+        projection.SetDeviceDetail(CreateDetail("device-3", "attachment-3"));
+
+        Assert.Null(projection.TryGetDetail("device-1"));
+        Assert.NotNull(projection.TryGetDetail("device-2"));
+        Assert.NotNull(projection.TryGetDetail("device-3"));
     }
 
     private static UsbTopologySnapshot CreateSnapshot()
@@ -154,7 +261,9 @@ public sealed class UsbDiagnosticTreeProjectionTests
             DateTimeOffset.UnixEpoch);
     }
 
-    private static UsbDeviceDetailSnapshot CreateDetail()
+    private static UsbDeviceDetailSnapshot CreateDetail(
+        string deviceNodeId = "device",
+        string attachmentId = "attachment-1")
     {
         var endpoint = new UsbEndpointDescriptorInfo(
             0x81,
@@ -193,7 +302,22 @@ public sealed class UsbDiagnosticTreeProjectionTests
             [iad],
             [item],
             [new UsbRawDescriptorInfo(0x24, 4, [0x04, 0x24, 0x01, 0x02])],
-            [0x09, 0x02, 0x20, 0x00]);
+            [0x09, 0x02, 0x20, 0x00])
+        {
+            OrderedDescriptors =
+            [
+                Ordered(9, 0x0B, UsbConfigurationDescriptorEntryKind.InterfaceAssociation,
+                    UsbConfigurationDescriptorOwnerKind.Configuration, iad: 0),
+                Ordered(17, 0x04, UsbConfigurationDescriptorEntryKind.Interface,
+                    UsbConfigurationDescriptorOwnerKind.Configuration, item: 0),
+                Ordered(26, 0x05, UsbConfigurationDescriptorEntryKind.Endpoint,
+                    UsbConfigurationDescriptorOwnerKind.Interface, item: 0, endpoint: 0),
+                Ordered(33, 0x30, UsbConfigurationDescriptorEntryKind.SuperSpeedEndpointCompanion,
+                    UsbConfigurationDescriptorOwnerKind.Endpoint, item: 0, endpoint: 0),
+                Ordered(39, 0x24, UsbConfigurationDescriptorEntryKind.Additional,
+                    UsbConfigurationDescriptorOwnerKind.Interface, item: 0, additional: 0)
+            ]
+        };
         var capability = new UsbBosCapabilityInfo(
             0x02,
             "USB 2.0 Extension",
@@ -204,8 +328,8 @@ public sealed class UsbDiagnosticTreeProjectionTests
             [capability],
             [0x05, 0x0F, 0x0C, 0x00, 0x01]);
         return new UsbDeviceDetailSnapshot(
-            "attachment-1",
-            "device",
+            attachmentId,
+            deviceNodeId,
             "Vendor",
             "USB Storage",
             "SERIAL",
@@ -214,6 +338,54 @@ public sealed class UsbDiagnosticTreeProjectionTests
             bos,
             DeviceTopologyDiagnostics.Empty,
             DateTimeOffset.UnixEpoch);
+    }
+
+    private static UsbConfigurationDescriptorEntryInfo Ordered(
+        int offset,
+        byte type,
+        UsbConfigurationDescriptorEntryKind kind,
+        UsbConfigurationDescriptorOwnerKind owner,
+        int? iad = null,
+        int? item = null,
+        int? endpoint = null,
+        int? additional = null)
+    {
+        return new UsbConfigurationDescriptorEntryInfo(
+            offset, type, 4, kind, owner, iad, item, endpoint, additional, false,
+            [4, type, 1, 2]);
+    }
+
+    private static UsbTopologySnapshot CreateSnapshotWithThreeDevices()
+    {
+        var nodes = new List<UsbTopologyNode>();
+        var portIds = new List<string>();
+        for (var index = 1; index <= 3; index++)
+        {
+            var portId = $"attachment-{index}";
+            var deviceId = $"device-{index}";
+            portIds.Add(portId);
+            nodes.Add(Node(
+                portId, "root", [deviceId], UsbTopologyNodeKind.Port,
+                $"Port {index}", "controller",
+                port: Port(index, index.ToString(), UsbConnectionStatus.DeviceConnected)));
+            nodes.Add(Node(
+                deviceId, portId, [], UsbTopologyNodeKind.Device,
+                $"Device {index}", "controller",
+                identity: Identity(deviceId, $"Device {index}"),
+                descriptor: DeviceDescriptor(),
+                attachmentId: portId));
+        }
+
+        var controller = Node(
+            "controller", null, ["root"], UsbTopologyNodeKind.HostController,
+            "xHCI Controller", "controller");
+        var root = Node(
+            "root", "controller", portIds, UsbTopologyNodeKind.RootHub,
+            "USB Root Hub", "controller",
+            hub: new UsbHubInfo("root-hub", 3, false, true));
+        return new UsbTopologySnapshot(
+            [controller, root, .. nodes], ["controller"],
+            DeviceTopologyDiagnostics.Empty, DateTimeOffset.UnixEpoch);
     }
 
     private static UsbTopologyNode Node(

@@ -23,6 +23,7 @@ internal enum UsbDiagnosticRowKind
     InterfaceAssociation,
     Interface,
     Endpoint,
+    SuperSpeedEndpointCompanion,
     AdditionalDescriptor,
     Bos,
     BosCapability,
@@ -34,7 +35,8 @@ internal sealed record UsbDescriptorSelection(
     UsbDiagnosticRowKind Kind,
     int ConfigurationIndex = -1,
     int ItemIndex = -1,
-    int EndpointIndex = -1);
+    int EndpointIndex = -1,
+    int OrderedEntryIndex = -1);
 
 internal sealed record UsbDiagnosticTreeRow(
     string RowId,
@@ -55,9 +57,12 @@ internal sealed record UsbDiagnosticTreeRow(
 
 internal sealed class UsbDiagnosticTreeProjection
 {
+    private const int MaximumRetainedDeviceDetails = 2;
     private readonly HashSet<string> _expandedRowIds = new(StringComparer.OrdinalIgnoreCase);
+    private readonly HashSet<string> _manuallyCollapsedRowIds = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, UsbDeviceDetailSnapshot> _detailsByNodeId =
         new(StringComparer.OrdinalIgnoreCase);
+    private readonly LinkedList<string> _detailRecency = [];
     private UsbTopologySnapshot _snapshot = UsbTopologySnapshot.Empty;
     private IReadOnlyDictionary<string, UsbTopologyNode> _nodes =
         new Dictionary<string, UsbTopologyNode>(StringComparer.OrdinalIgnoreCase);
@@ -66,7 +71,8 @@ internal sealed class UsbDiagnosticTreeProjection
     private IReadOnlyDictionary<string, DeviceTopologyDiagnostic> _standaloneDiagnostics =
         new Dictionary<string, DeviceTopologyDiagnostic>(StringComparer.OrdinalIgnoreCase);
     private Dictionary<string, Entry> _lastEntries = new(StringComparer.OrdinalIgnoreCase);
-    private bool _expansionInitialized;
+    private IReadOnlySet<string> _meaningfulExpandableNodeIds =
+        new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
     public int ProblemCount { get; private set; }
 
@@ -97,39 +103,60 @@ internal sealed class UsbDiagnosticTreeProjection
             if (!_nodes.TryGetValue(entry.Key, out var node)
                 || !string.Equals(node.AttachmentId, entry.Value.AttachmentId, StringComparison.OrdinalIgnoreCase))
             {
-                _detailsByNodeId.Remove(entry.Key);
+                RemoveProjectedDetail(entry.Key);
             }
         }
 
         ProblemCount = snapshot.Nodes.Count(HasProblem)
             + _standaloneDiagnostics.Values.Count(entry =>
                 entry.Severity != DeviceTopologyDiagnosticSeverity.Information);
-        if (!_expansionInitialized && snapshot.HostControllerNodeIds.Count > 0)
+        var meaningful = BuildMeaningfulExpandableNodeIds();
+        foreach (var nodeId in meaningful)
         {
-            foreach (var controllerId in snapshot.HostControllerNodeIds)
+            if (!_meaningfulExpandableNodeIds.Contains(nodeId)
+                && !_manuallyCollapsedRowIds.Contains(nodeId))
             {
-                AddDefaultExpansion(controllerId, new HashSet<string>(StringComparer.OrdinalIgnoreCase));
+                _expandedRowIds.Add(nodeId);
             }
-
-            _expansionInitialized = true;
         }
+
+        _meaningfulExpandableNodeIds = meaningful;
+        _manuallyCollapsedRowIds.RemoveWhere(rowId =>
+            IsTopologyRowId(rowId) && !_nodes.ContainsKey(rowId));
     }
 
-    public void SetDeviceDetail(UsbDeviceDetailSnapshot detail)
+    public bool SetDeviceDetail(UsbDeviceDetailSnapshot detail, bool expandWhenAdded = false)
     {
         if (_nodes.TryGetValue(detail.DeviceNodeId, out var node)
             && string.Equals(node.AttachmentId, detail.AttachmentId, StringComparison.OrdinalIgnoreCase))
         {
+            var isNew = !_detailsByNodeId.ContainsKey(detail.DeviceNodeId);
             _detailsByNodeId[detail.DeviceNodeId] = detail;
-            _expandedRowIds.Add(detail.DeviceNodeId);
+            TouchDetail(detail.DeviceNodeId);
+            if (isNew && expandWhenAdded && !_manuallyCollapsedRowIds.Contains(detail.DeviceNodeId))
+            {
+                _expandedRowIds.Add(detail.DeviceNodeId);
+            }
+
             ProblemCount = _snapshot.Nodes.Count(HasProblem)
                 + _standaloneDiagnostics.Values.Count(entry =>
                     entry.Severity != DeviceTopologyDiagnosticSeverity.Information);
+            return isNew;
         }
+
+        return false;
     }
 
-    public UsbDeviceDetailSnapshot? TryGetDetail(string nodeId) =>
-        _detailsByNodeId.GetValueOrDefault(nodeId);
+    public UsbDeviceDetailSnapshot? TryGetDetail(string nodeId)
+    {
+        if (!_detailsByNodeId.TryGetValue(nodeId, out var detail))
+        {
+            return null;
+        }
+
+        TouchDetail(nodeId);
+        return detail;
+    }
 
     public IReadOnlyList<UsbDiagnosticTreeRow> Build(
         string? searchText,
@@ -171,9 +198,14 @@ internal sealed class UsbDiagnosticTreeProjection
             return;
         }
 
-        if (!_expandedRowIds.Remove(rowId))
+        if (_expandedRowIds.Remove(rowId))
+        {
+            _manuallyCollapsedRowIds.Add(rowId);
+        }
+        else
         {
             _expandedRowIds.Add(rowId);
+            _manuallyCollapsedRowIds.Remove(rowId);
         }
     }
 
@@ -184,9 +216,18 @@ internal sealed class UsbDiagnosticTreeProjection
             .Where(entry => entry.ParentRowId is not null)
             .Select(entry => entry.ParentRowId!);
         _expandedRowIds.UnionWith(parentIds);
+        _manuallyCollapsedRowIds.ExceptWith(parentIds);
     }
 
-    public void CollapseAll() => _expandedRowIds.Clear();
+    public void CollapseAll()
+    {
+        var parentIds = _lastEntries.Values
+            .Where(entry => entry.ParentRowId is not null)
+            .Select(entry => entry.ParentRowId!)
+            .ToArray();
+        _expandedRowIds.Clear();
+        _manuallyCollapsedRowIds.UnionWith(parentIds);
+    }
 
     public bool ExpandPath(string rowId)
     {
@@ -201,6 +242,7 @@ internal sealed class UsbDiagnosticTreeProjection
         while (current.ParentRowId is not null && visited.Add(current.RowId))
         {
             _expandedRowIds.Add(current.ParentRowId);
+            _manuallyCollapsedRowIds.Remove(current.ParentRowId);
             if (!entries.TryGetValue(current.ParentRowId, out current))
             {
                 break;
@@ -272,6 +314,38 @@ internal sealed class UsbDiagnosticTreeProjection
         return entries;
     }
 
+    private void TouchDetail(string nodeId)
+    {
+        var existing = _detailRecency.Find(nodeId);
+        if (existing is not null)
+        {
+            _detailRecency.Remove(existing);
+        }
+
+        _detailRecency.AddFirst(nodeId);
+        while (_detailRecency.Count > MaximumRetainedDeviceDetails)
+        {
+            var removed = _detailRecency.Last!.Value;
+            RemoveProjectedDetail(removed);
+        }
+    }
+
+    private void RemoveProjectedDetail(string nodeId)
+    {
+        _detailsByNodeId.Remove(nodeId);
+        var recent = _detailRecency.Find(nodeId);
+        if (recent is not null)
+        {
+            _detailRecency.Remove(recent);
+        }
+
+        var descriptorPrefix = $"{nodeId}#";
+        _expandedRowIds.RemoveWhere(rowId =>
+            rowId.StartsWith(descriptorPrefix, StringComparison.OrdinalIgnoreCase));
+        _manuallyCollapsedRowIds.RemoveWhere(rowId =>
+            rowId.StartsWith(descriptorPrefix, StringComparison.OrdinalIgnoreCase));
+    }
+
     private Entry BuildTopologyEntry(UsbTopologyNode node)
     {
         var hasProblem = HasProblem(node);
@@ -325,6 +399,12 @@ internal sealed class UsbDiagnosticTreeProjection
                 $"{configuration.Interfaces.Length} interfaces",
                 new UsbDescriptorSelection(ownerNodeId, UsbDiagnosticRowKind.Configuration, configurationIndex),
                 configuration.Description);
+
+            if (!configuration.OrderedDescriptors.IsDefaultOrEmpty)
+            {
+                AddOrderedDescriptorEntries(entries, ownerNodeId, configurationId, configurationIndex, configuration);
+                continue;
+            }
 
             for (var iadIndex = 0; iadIndex < configuration.InterfaceAssociations.Length; iadIndex++)
             {
@@ -400,6 +480,124 @@ internal sealed class UsbDiagnosticTreeProjection
                 $"{capability.RawBytes.Length} bytes",
                 new UsbDescriptorSelection(ownerNodeId, UsbDiagnosticRowKind.BosCapability,
                     ItemIndex: capabilityIndex));
+        }
+    }
+
+    private static void AddOrderedDescriptorEntries(
+        IDictionary<string, Entry> entries,
+        string ownerNodeId,
+        string configurationId,
+        int configurationIndex,
+        UsbConfigurationDescriptorInfo configuration)
+    {
+        var interfaceRowIds = new Dictionary<int, string>();
+        var endpointRowIds = new Dictionary<(int InterfaceIndex, int EndpointIndex), string>();
+        for (var orderedIndex = 0; orderedIndex < configuration.OrderedDescriptors.Length; orderedIndex++)
+        {
+            var ordered = configuration.OrderedDescriptors[orderedIndex];
+            var rowId = $"{configurationId}#ordered:{orderedIndex}";
+            var offset = $"@0x{ordered.Offset:X4}";
+            switch (ordered.Kind)
+            {
+                case UsbConfigurationDescriptorEntryKind.InterfaceAssociation
+                    when ordered.InterfaceAssociationIndex is { } iadIndex
+                        && iadIndex >= 0
+                        && iadIndex < configuration.InterfaceAssociations.Length:
+                {
+                    var iad = configuration.InterfaceAssociations[iadIndex];
+                    AddDescriptorEntry(entries, rowId, configurationId, ownerNodeId,
+                        UsbDiagnosticRowKind.InterfaceAssociation,
+                        $"IAD · Interface {iad.FirstInterface}-{iad.FirstInterface + iad.InterfaceCount - 1}",
+                        offset,
+                        $"class {iad.FunctionClass:X2}/{iad.FunctionSubClass:X2}/{iad.FunctionProtocol:X2}",
+                        new UsbDescriptorSelection(ownerNodeId, UsbDiagnosticRowKind.InterfaceAssociation,
+                            configurationIndex, iadIndex, OrderedEntryIndex: orderedIndex),
+                        iad.Description);
+                    break;
+                }
+                case UsbConfigurationDescriptorEntryKind.Interface
+                    when ordered.InterfaceIndex is { } interfaceIndex
+                        && interfaceIndex >= 0
+                        && interfaceIndex < configuration.Interfaces.Length:
+                {
+                    var item = configuration.Interfaces[interfaceIndex];
+                    interfaceRowIds[interfaceIndex] = rowId;
+                    AddDescriptorEntry(entries, rowId, configurationId, ownerNodeId,
+                        UsbDiagnosticRowKind.Interface,
+                        $"Interface {item.InterfaceNumber} · Alt {item.AlternateSetting}",
+                        offset,
+                        $"class {item.InterfaceClass:X2}/{item.InterfaceSubClass:X2}/{item.InterfaceProtocol:X2}",
+                        new UsbDescriptorSelection(ownerNodeId, UsbDiagnosticRowKind.Interface,
+                            configurationIndex, interfaceIndex, OrderedEntryIndex: orderedIndex),
+                        item.Description);
+                    break;
+                }
+                case UsbConfigurationDescriptorEntryKind.Endpoint
+                    when ordered.InterfaceIndex is { } interfaceIndex
+                        && ordered.EndpointIndex is { } endpointIndex
+                        && interfaceIndex >= 0
+                        && interfaceIndex < configuration.Interfaces.Length
+                        && endpointIndex >= 0
+                        && endpointIndex < configuration.Interfaces[interfaceIndex].Endpoints.Length:
+                {
+                    var endpoint = configuration.Interfaces[interfaceIndex].Endpoints[endpointIndex];
+                    var parentId = interfaceRowIds.GetValueOrDefault(interfaceIndex, configurationId);
+                    endpointRowIds[(interfaceIndex, endpointIndex)] = rowId;
+                    AddDescriptorEntry(entries, rowId, parentId, ownerNodeId,
+                        UsbDiagnosticRowKind.Endpoint,
+                        $"Endpoint 0x{endpoint.Address:X2}",
+                        offset,
+                        $"{endpoint.Direction} · {endpoint.TransferType} · {endpoint.MaximumPacketBytes} bytes",
+                        new UsbDescriptorSelection(ownerNodeId, UsbDiagnosticRowKind.Endpoint,
+                            configurationIndex, interfaceIndex, endpointIndex, orderedIndex));
+                    break;
+                }
+                case UsbConfigurationDescriptorEntryKind.SuperSpeedEndpointCompanion
+                    when ordered.InterfaceIndex is { } interfaceIndex
+                        && ordered.EndpointIndex is { } endpointIndex:
+                {
+                    var parentId = endpointRowIds.GetValueOrDefault(
+                        (interfaceIndex, endpointIndex),
+                        interfaceRowIds.GetValueOrDefault(interfaceIndex, configurationId));
+                    AddDescriptorEntry(entries, rowId, parentId, ownerNodeId,
+                        UsbDiagnosticRowKind.SuperSpeedEndpointCompanion,
+                        "SuperSpeed Endpoint Companion",
+                        offset,
+                        $"{ordered.Length} bytes",
+                        new UsbDescriptorSelection(ownerNodeId,
+                            UsbDiagnosticRowKind.SuperSpeedEndpointCompanion,
+                            configurationIndex, interfaceIndex, endpointIndex, orderedIndex));
+                    break;
+                }
+                case UsbConfigurationDescriptorEntryKind.Additional
+                    when ordered.AdditionalDescriptorIndex is { } additionalIndex
+                        && additionalIndex >= 0
+                        && additionalIndex < configuration.AdditionalDescriptors.Length:
+                {
+                    var descriptor = configuration.AdditionalDescriptors[additionalIndex];
+                    var parentId = ordered.OwnerKind switch
+                    {
+                        UsbConfigurationDescriptorOwnerKind.Endpoint
+                            when ordered.InterfaceIndex is { } interfaceIndex
+                                && ordered.EndpointIndex is { } endpointIndex =>
+                            endpointRowIds.GetValueOrDefault(
+                                (interfaceIndex, endpointIndex),
+                                interfaceRowIds.GetValueOrDefault(interfaceIndex, configurationId)),
+                        UsbConfigurationDescriptorOwnerKind.Interface
+                            when ordered.InterfaceIndex is { } interfaceIndex =>
+                            interfaceRowIds.GetValueOrDefault(interfaceIndex, configurationId),
+                        _ => configurationId
+                    };
+                    AddDescriptorEntry(entries, rowId, parentId, ownerNodeId,
+                        UsbDiagnosticRowKind.AdditionalDescriptor,
+                        $"Additional Descriptor 0x{descriptor.DescriptorType:X2}",
+                        offset,
+                        $"{descriptor.Length} bytes · {ordered.OwnerKind}{(ordered.OwnerIsHeuristic ? " (inferred)" : string.Empty)}",
+                        new UsbDescriptorSelection(ownerNodeId, UsbDiagnosticRowKind.AdditionalDescriptor,
+                            configurationIndex, additionalIndex, OrderedEntryIndex: orderedIndex));
+                    break;
+                }
+            }
         }
     }
 
@@ -538,23 +736,21 @@ internal sealed class UsbDiagnosticTreeProjection
                     entry.Severity != DeviceTopologyDiagnosticSeverity.Information));
     }
 
-    private void AddDefaultExpansion(string nodeId, ISet<string> visited)
+    private HashSet<string> BuildMeaningfulExpandableNodeIds()
     {
-        if (!_nodes.TryGetValue(nodeId, out var node) || !visited.Add(nodeId))
+        var meaningful = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var node in _snapshot.Nodes)
         {
-            return;
+            if (node.ChildNodeIds.Count > 0
+                && (node.Kind is UsbTopologyNodeKind.HostController or UsbTopologyNodeKind.RootHub
+                    || node.ChildNodeIds.Any(childId =>
+                        HasConnectedDescendant(childId, new HashSet<string>(StringComparer.OrdinalIgnoreCase)))))
+            {
+                meaningful.Add(node.NodeId);
+            }
         }
 
-        if (node.Kind is UsbTopologyNodeKind.HostController or UsbTopologyNodeKind.RootHub
-            || node.ChildNodeIds.Any(childId => HasConnectedDescendant(childId, new HashSet<string>(visited, StringComparer.OrdinalIgnoreCase))))
-        {
-            _expandedRowIds.Add(nodeId);
-        }
-
-        foreach (var childId in node.ChildNodeIds)
-        {
-            AddDefaultExpansion(childId, visited);
-        }
+        return meaningful;
     }
 
     private bool HasConnectedDescendant(string nodeId, ISet<string> visited)
@@ -567,6 +763,11 @@ internal sealed class UsbDiagnosticTreeProjection
         return node.Kind is UsbTopologyNodeKind.Device or UsbTopologyNodeKind.Hub
             || node.ChildNodeIds.Any(childId => HasConnectedDescendant(childId, visited));
     }
+
+    private static bool IsTopologyRowId(string rowId) =>
+        !rowId.Contains("#configuration:", StringComparison.OrdinalIgnoreCase)
+        && !rowId.Contains("#bos", StringComparison.OrdinalIgnoreCase)
+        && !rowId.StartsWith("usb-diagnostic:", StringComparison.OrdinalIgnoreCase);
 
     private static SymbolRegular FormatIcon(UsbDiagnosticRowKind rowKind, string? topologyNodeId)
     {
@@ -601,6 +802,7 @@ internal sealed class UsbDiagnosticTreeProjection
         UsbDiagnosticRowKind.InterfaceAssociation => "IAD",
         UsbDiagnosticRowKind.Interface => "Interface",
         UsbDiagnosticRowKind.Endpoint => "Endpoint",
+        UsbDiagnosticRowKind.SuperSpeedEndpointCompanion => "SS Companion",
         UsbDiagnosticRowKind.AdditionalDescriptor => "Raw Descriptor",
         UsbDiagnosticRowKind.Bos => "BOS",
         UsbDiagnosticRowKind.BosCapability => "Capability",

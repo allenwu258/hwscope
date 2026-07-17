@@ -21,6 +21,35 @@ public sealed record UsbRawDescriptorInfo(
     byte Length,
     ImmutableArray<byte> Bytes);
 
+public enum UsbConfigurationDescriptorEntryKind
+{
+    InterfaceAssociation,
+    Interface,
+    Endpoint,
+    SuperSpeedEndpointCompanion,
+    Additional
+}
+
+public enum UsbConfigurationDescriptorOwnerKind
+{
+    Configuration,
+    Interface,
+    Endpoint
+}
+
+public sealed record UsbConfigurationDescriptorEntryInfo(
+    int Offset,
+    byte DescriptorType,
+    byte Length,
+    UsbConfigurationDescriptorEntryKind Kind,
+    UsbConfigurationDescriptorOwnerKind OwnerKind,
+    int? InterfaceAssociationIndex,
+    int? InterfaceIndex,
+    int? EndpointIndex,
+    int? AdditionalDescriptorIndex,
+    bool OwnerIsHeuristic,
+    ImmutableArray<byte> RawBytes);
+
 public sealed record UsbSuperSpeedEndpointCompanionInfo(
     byte MaximumBurst,
     byte Attributes,
@@ -72,7 +101,10 @@ public sealed record UsbConfigurationDescriptorInfo(
     ImmutableArray<UsbInterfaceAssociationInfo> InterfaceAssociations,
     ImmutableArray<UsbInterfaceDescriptorInfo> Interfaces,
     ImmutableArray<UsbRawDescriptorInfo> AdditionalDescriptors,
-    ImmutableArray<byte> RawBytes);
+    ImmutableArray<byte> RawBytes)
+{
+    public ImmutableArray<UsbConfigurationDescriptorEntryInfo> OrderedDescriptors { get; init; } = [];
+}
 
 public sealed record UsbBosCapabilityInfo(
     byte CapabilityType,
