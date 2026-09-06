@@ -94,7 +94,8 @@ public sealed class HardwareCollector
             .Select(g => new
             {
                 Name = CleanName(g.Name),
-                Memory = g.AdapterRam,
+                Memory = g.DedicatedVideoMemoryBytes ?? 0,
+                Controller = g,
                 Pnp = g.PnpDeviceId
             })
             .Where(g => IsUseful(g.Name))
@@ -109,9 +110,29 @@ public sealed class HardwareCollector
 
         return string.Join(" / ", gpus.Select(g =>
         {
-            var memory = g.Memory > 0 ? FormatBinaryBytes(g.Memory, 0) : string.Empty;
-            return IsUseful(memory) ? $"{g.Name}（{memory}）" : g.Name;
+            var memory = FormatGraphicsMemory(g.Controller);
+            return $"{g.Name}（{memory}）";
         }));
+    }
+
+    private static string FormatGraphicsMemory(VideoControllerSnapshot controller)
+    {
+        if (controller.MemorySource == GraphicsMemorySource.Dxgi && controller.DedicatedVideoMemoryBytes is { } dedicated)
+        {
+            // SharedSystemMemory is a borrowing limit, not installed VRAM. Zero dedicated memory is valid on UMA.
+            return dedicated > 0 ? $"专用显存 {FormatGraphicsBytes(dedicated)}" : "无专用显存";
+        }
+
+        return controller.AdapterRam > 0
+            ? $"显存容量未确认；WMI 报告 {FormatGraphicsBytes(controller.AdapterRam)}"
+            : "显存容量未提供";
+    }
+
+    private static string FormatGraphicsBytes(ulong bytes)
+    {
+        var unit = bytes >= 1024UL * 1024 * 1024 ? "GiB" : "MiB";
+        var divisor = unit == "GiB" ? 1024m * 1024 * 1024 : 1024m * 1024;
+        return $"{(bytes / divisor).ToString("0.##", CultureInfo.InvariantCulture)} {unit}";
     }
 
     private static string CollectDisplay(HardwareInventorySnapshot snapshot)

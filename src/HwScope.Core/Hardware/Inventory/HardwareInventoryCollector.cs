@@ -2,7 +2,9 @@ using System.Diagnostics;
 using System.Management;
 using System.Runtime.InteropServices;
 using HwScope.Core.Hardware.Cpu;
+using HwScope.Core.Hardware.Graphics;
 using HwScope.Core.Windows;
+using HwScope.Core.Windows.Graphics;
 
 namespace HwScope.Core.Hardware.Inventory;
 
@@ -49,9 +51,7 @@ public sealed class HardwareInventoryCollector
             .Select(ToMemoryModule)
             .ToList());
 
-        var videoControllers = CollectStep(steps, progress, CollectionStepNames[4], totalSteps, ref completedSteps, () => Wmi.Query("SELECT Name, AdapterRAM, PNPDeviceID FROM Win32_VideoController")
-            .Select(ToVideoController)
-            .ToList());
+        var videoControllers = CollectStep(steps, progress, CollectionStepNames[4], totalSteps, ref completedSteps, CollectVideoControllers);
 
         var monitors = CollectStep(steps, progress, CollectionStepNames[5], totalSteps, ref completedSteps, CollectMonitors);
 
@@ -220,6 +220,22 @@ public sealed class HardwareInventoryCollector
     private static VideoControllerSnapshot ToVideoController(ManagementObject obj)
     {
         return new VideoControllerSnapshot(Wmi.GetString(obj, "Name"), Wmi.GetULong(obj, "AdapterRAM"), Wmi.GetString(obj, "PNPDeviceID"));
+    }
+
+    private static IReadOnlyList<VideoControllerSnapshot> CollectVideoControllers()
+    {
+        var dxgi = DxgiAdapterEnumerator.Collect();
+        var wmiControllers = new List<VideoControllerSnapshot>();
+        try
+        {
+            wmiControllers.AddRange(Wmi.Query("SELECT Name, AdapterRAM, PNPDeviceID FROM Win32_VideoController")
+                .Select(ToVideoController));
+        }
+        catch (Exception ex) when (IsRecoverableCollectionException(ex))
+        {
+            dxgi = dxgi with { Diagnostics = [.. dxgi.Diagnostics, $"WMI video inventory failed: {ex.Message}"] };
+        }
+        return GraphicsAdapterMerger.Merge(wmiControllers, dxgi);
     }
 
     private static IReadOnlyList<MonitorSnapshot> CollectMonitors()

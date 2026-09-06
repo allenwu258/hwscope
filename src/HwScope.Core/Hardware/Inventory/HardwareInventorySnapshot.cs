@@ -57,7 +57,25 @@ public sealed record MemoryModuleSnapshot(
     uint InterleavePosition,
     string Tag);
 
-public sealed record VideoControllerSnapshot(string Name, ulong AdapterRam, string PnpDeviceId);
+public sealed record VideoControllerSnapshot(
+    string Name,
+    // Legacy WMI uint32 value retained for diagnostics; never treat it as verified VRAM capacity.
+    ulong AdapterRam,
+    string PnpDeviceId,
+    ulong? DedicatedVideoMemoryBytes = null,
+    ulong? DedicatedSystemMemoryBytes = null,
+    ulong? SharedSystemMemoryBytes = null,
+    GraphicsMemorySource MemorySource = GraphicsMemorySource.Wmi,
+    bool IsEstimated = true,
+    ulong? AdapterLuid = null,
+    IReadOnlyList<string>? MemoryDiagnostics = null);
+
+public enum GraphicsMemorySource
+{
+    Wmi,
+    Dxgi,
+    Unknown
+}
 
 public sealed record MonitorSnapshot(string FriendlyName, string ManufacturerName, string ProductCodeId, string FallbackName);
 
