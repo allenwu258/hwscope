@@ -131,9 +131,10 @@ public sealed class GraphicsInventoryTests
     public void NameOrVendorAloneCannotAssignMemory(string pnp)
     {
         var result = Merge([new("GPU", GiB, pnp)], [Adapter(8 * GiB)]);
-        Assert.Equal(2, result.Count);
-        Assert.Null(result[0].DedicatedVideoMemoryBytes);
-        Assert.Equal(8 * GiB, result[1].DedicatedVideoMemoryBytes);
+        var controller = Assert.Single(result);
+        Assert.Null(controller.DedicatedVideoMemoryBytes);
+        Assert.Null(controller.AdapterLuid);
+        Assert.Equal(pnp, controller.PnpDeviceId);
     }
 
     [Fact]
@@ -141,18 +142,30 @@ public sealed class GraphicsInventoryTests
     {
         var result = Merge([new("GPU", 0, Pnp), new("GPU", 0, Pnp.Replace("INSTANCE1", "INSTANCE2"))],
             [Adapter(8 * GiB), Adapter(16 * GiB) with { Luid = 2 }]);
-        Assert.Equal(4, result.Count);
-        Assert.All(result.Take(2), item => Assert.Null(item.DedicatedVideoMemoryBytes));
-        Assert.All(result.Take(2), item => Assert.Contains(item.MemoryDiagnostics!, note => note.Contains("ambiguous")));
-        Assert.Equal(new ulong?[] { 1, 2 }, result.Skip(2).Select(item => item.AdapterLuid));
+        Assert.Equal(2, result.Count);
+        Assert.All(result, item => Assert.Null(item.DedicatedVideoMemoryBytes));
+        Assert.All(result, item => Assert.Contains(item.MemoryDiagnostics!, note => note.Contains("ambiguous")));
+        Assert.All(result, item => Assert.Null(item.AdapterLuid));
     }
 
     [Fact]
     public void TwoWmiRecordsCannotClaimOneDxgiAdapter()
     {
         var result = Merge([new("GPU", 0, Pnp), new("GPU", 0, Pnp.Replace("INSTANCE1", "INSTANCE2"))], [Adapter(8 * GiB)]);
-        Assert.Equal(3, result.Count);
-        Assert.All(result.Take(2), item => Assert.Null(item.DedicatedVideoMemoryBytes));
+        Assert.Equal(2, result.Count);
+        Assert.All(result, item => Assert.Null(item.DedicatedVideoMemoryBytes));
+    }
+
+    [Fact]
+    public void UnmatchedDxgiAdapterDoesNotDuplicateAnExistingDeviceList()
+    {
+        var result = Merge([new("GPU", 0, Pnp)],
+            [Adapter(8 * GiB), Adapter(16 * GiB) with { DeviceId = 0x1234, Luid = 2 }]);
+
+        var controller = Assert.Single(result);
+        Assert.Equal(8 * GiB, controller.DedicatedVideoMemoryBytes);
+        Assert.Equal(1UL, controller.AdapterLuid);
+        Assert.Contains(controller.MemoryDiagnostics!, note => note.Contains("omitted"));
     }
 
     [Fact]

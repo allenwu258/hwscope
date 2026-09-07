@@ -40,13 +40,29 @@ internal static class GraphicsAdapterMerger
             }
         }
 
-        for (var index = 0; index < adapters.Count; index++)
+        if (controllers.Count == 0)
         {
-            if (!matched.Contains(index))
+            foreach (var adapter in adapters)
             {
-                var adapter = adapters[index];
                 result.Add(WithMemory(new VideoControllerSnapshot(adapter.Description, 0, string.Empty),
                     adapter, [.. enumeration.Diagnostics, "DXGI adapter has no unique WMI identity association."]));
+            }
+        }
+        else if (matched.Count != adapters.Count)
+        {
+            // WMI remains the authoritative device list when present. Keeping unmatched
+            // DXGI records out of the list prevents duplicate GPUs in summary/CLI output.
+            foreach (var controllerIndex in Enumerable.Range(0, result.Count))
+            {
+                var controller = result[controllerIndex];
+                var diagnostics = controller.MemoryDiagnostics ?? [];
+                if (!diagnostics.Any(note => note.Contains("DXGI adapter", StringComparison.OrdinalIgnoreCase)))
+                {
+                    result[controllerIndex] = controller with
+                    {
+                        MemoryDiagnostics = [.. diagnostics, "One or more DXGI adapters could not be uniquely associated with WMI records; unmatched adapters were omitted from the device list."]
+                    };
+                }
             }
         }
         return result;

@@ -129,7 +129,7 @@ These should be captured in the shared inventory snapshot:
   - DXGI DedicatedVideoMemoryBytes, DedicatedSystemMemoryBytes, SharedSystemMemoryBytes
   - AdapterLuid, MemorySource, IsEstimated, MemoryDiagnostics
   - DXGI reads run in the existing video preload step and remain usable when WMI returns no devices.
-  - PCI model identifiers are merged only when both sides have a unique match. Ambiguous boards retain separate DXGI records without an invented PnP association.
+  - PCI model identifiers are merged only when both sides have a unique match. When WMI records exist, they define the device list; unmatched DXGI records are omitted with diagnostics to avoid duplicate GPUs. If WMI returns no records, DXGI supplies the device list without an invented PnP association.
   - Summary shows dedicated video memory only, in GiB/MiB. Shared memory limits and dynamic budgets are not installed VRAM.
   - DXGI reports driver-visible capacity, which can differ from nominal board capacity or vendor tools due to reservations and reporting semantics. Values are not corrected using a model-name catalog.
 - Monitors:
