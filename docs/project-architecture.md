@@ -122,7 +122,7 @@ GUI 依赖 `WPF-UI`，当前版本为 `4.3.0`。
   显卡 WMI/DXGI 快照合并。DXGI 提供专用显存、专用系统内存、共享系统内存与 LUID；PCI vendor/device/subsystem/revision 必须构成双向唯一匹配才补入 WMI 记录。WMI 有记录时以其为设备列表，无法唯一关联的 DXGI 记录不追加到列表并保留诊断，避免重复 GPU；WMI 为空时才由 DXGI 提供设备列表。不按名称、厂商或枚举顺序猜测。`AdapterRam` 保留 WMI 原始值供诊断，不能作为已确认的专用显存。
 
 - `HwScope.Core.Windows.Graphics`
-  只读 `CreateDXGIFactory1` / `EnumAdapters1` / `GetDesc1` 边界。限定 64 位 Windows，按 native SIZE_T 读取容量；检查 HRESULT、限制枚举数量、释放所有 COM 引用。software adapter 不参与显存合并，DXGI 失败时保留 WMI 回退和诊断。
+  只读 `CreateDXGIFactory1` / `EnumAdapters1` / `GetDesc1` 边界。通过显式 `ComImport` 接口封送 native 调用，限定 64 位 Windows，按 native SIZE_T 读取容量；检查 HRESULT、限制枚举数量并释放所有 COM 引用。software adapter 不参与显存合并，DXGI 失败时保留 WMI 回退和诊断。
 
 - `HwScope.Core.Hardware.Cpu`
   CPU 详情领域模型、WMI 采集、Windows topology API 聚合、已知型号 fallback、文本报告格式化。

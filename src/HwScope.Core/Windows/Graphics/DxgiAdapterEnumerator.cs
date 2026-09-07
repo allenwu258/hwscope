@@ -23,7 +23,7 @@ internal static class DxgiAdapterEnumerator
     private const int DxgiErrorNotFound = unchecked((int)0x887A0002);
     private const uint MaximumAdapters = 256;
 
-    public static unsafe DxgiEnumerationResult Collect()
+    public static DxgiEnumerationResult Collect()
     {
         var adapters = new List<DxgiAdapterInfo>();
         var diagnostics = new List<string>();
@@ -32,39 +32,51 @@ internal static class DxgiAdapterEnumerator
             return new([], ["DXGI video memory inventory requires a 64-bit Windows process."]);
         }
 
-        nint factory = 0;
+        nint factoryPointer = 0;
+        IDXGIFactory1? factory = null;
         try
         {
             var iid = new Guid("770aae78-f26f-4dba-a829-253c83d1b387");
-            var hr = CreateDXGIFactory1(in iid, out factory);
-            if (hr < 0 || factory == 0)
+            var hr = CreateDXGIFactory1(in iid, out factoryPointer);
+            if (hr < 0 || factoryPointer == 0)
             {
                 diagnostics.Add($"CreateDXGIFactory1 failed (HRESULT 0x{hr:X8}).");
                 return new(adapters, diagnostics);
             }
 
-            // IDXGIFactory1::EnumAdapters1 is slot 12, after IUnknown, IDXGIObject and IDXGIFactory.
-            var enumerate = (delegate* unmanaged[Stdcall]<nint, uint, nint*, int>)(*(nint**)factory)[12];
+            try
+            {
+                factory = (IDXGIFactory1)Marshal.GetTypedObjectForIUnknown(factoryPointer, typeof(IDXGIFactory1));
+            }
+            finally
+            {
+                Marshal.Release(factoryPointer);
+                factoryPointer = 0;
+            }
+
+            if (factory is null)
+            {
+                diagnostics.Add("DXGI factory could not be wrapped as IDXGIFactory1.");
+                return new(adapters, diagnostics);
+            }
+
             for (uint index = 0; index < MaximumAdapters; index++)
             {
-                nint adapter = 0;
+                IDXGIAdapter1? adapter = null;
                 try
                 {
-                    hr = enumerate(factory, index, &adapter);
+                    hr = factory.EnumAdapters1(index, out adapter);
                     if (hr == DxgiErrorNotFound)
                     {
                         return new(adapters, diagnostics);
                     }
-                    if (hr < 0 || adapter == 0)
+                    if (hr < 0 || adapter is null)
                     {
                         diagnostics.Add($"EnumAdapters1({index}) failed (HRESULT 0x{hr:X8}).");
                         return new(adapters, diagnostics);
                     }
 
-                    // IDXGIAdapter1::GetDesc1 is slot 10; preserve its HRESULT explicitly.
-                    var getDescription = (delegate* unmanaged[Stdcall]<nint, AdapterDescription*, int>)(*(nint**)adapter)[10];
-                    AdapterDescription description = default;
-                    hr = getDescription(adapter, &description);
+                    hr = adapter.GetDesc1(out var description);
                     if (hr < 0)
                     {
                         diagnostics.Add($"GetDesc1({index}) failed (HRESULT 0x{hr:X8}).");
@@ -72,10 +84,10 @@ internal static class DxgiAdapterEnumerator
                     }
 
                     adapters.Add(new DxgiAdapterInfo(
-                        new string(description.Description, 0, 128).TrimEnd('\0').Trim(),
-                        (ulong)description.DedicatedVideoMemory,
-                        (ulong)description.DedicatedSystemMemory,
-                        (ulong)description.SharedSystemMemory,
+                        description.Description?.TrimEnd('\0').Trim() ?? string.Empty,
+                        description.DedicatedVideoMemory,
+                        description.DedicatedSystemMemory,
+                        description.SharedSystemMemory,
                         description.VendorId,
                         description.DeviceId,
                         description.SubSystemId,
@@ -90,24 +102,34 @@ internal static class DxgiAdapterEnumerator
             }
             diagnostics.Add($"DXGI enumeration exceeded the {MaximumAdapters}-adapter limit.");
         }
-        catch (Exception ex) when (ex is COMException or DllNotFoundException or EntryPointNotFoundException or BadImageFormatException)
+        catch (Exception ex) when (ex is COMException or DllNotFoundException or EntryPointNotFoundException or BadImageFormatException or MarshalDirectiveException or InvalidCastException or ArgumentException or AccessViolationException)
         {
             diagnostics.Add($"DXGI enumeration failed: {ex.Message}");
         }
         finally
         {
             Release(factory);
+            if (factoryPointer != 0)
+            {
+                Marshal.Release(factoryPointer);
+            }
         }
 
         return new(adapters, diagnostics);
     }
 
-    private static unsafe void Release(nint instance)
+    private static void Release(object? instance)
     {
-        if (instance != 0)
+        try
         {
-            var release = (delegate* unmanaged[Stdcall]<nint, uint>)(*(nint**)instance)[2];
-            release(instance);
+            if (instance is not null && Marshal.IsComObject(instance))
+            {
+                Marshal.ReleaseComObject(instance);
+            }
+        }
+        catch (Exception ex) when (ex is COMException or InvalidCastException or AccessViolationException or ArgumentException)
+        {
+            // COM cleanup is best effort. The primary enumeration error is preserved.
         }
     }
 
@@ -115,10 +137,43 @@ internal static class DxgiAdapterEnumerator
     [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
     private static extern int CreateDXGIFactory1(in Guid riid, out nint factory);
 
-    [StructLayout(LayoutKind.Sequential)]
-    internal unsafe struct AdapterDescription
+    [ComImport]
+    [Guid("770aae78-f26f-4dba-a829-253c83d1b387")]
+    [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    private interface IDXGIFactory1
     {
-        public fixed char Description[128];
+        [PreserveSig] int SetPrivateData(in Guid name, uint dataSize, nint data);
+        [PreserveSig] int SetPrivateDataInterface(in Guid name, nint unknown);
+        [PreserveSig] int GetPrivateData(in Guid name, ref uint dataSize, nint data);
+        [PreserveSig] int GetParent(in Guid riid, out nint parent);
+        [PreserveSig] int EnumAdapters(uint index, out nint adapter);
+        [PreserveSig] int MakeWindowAssociation(nint windowHandle, uint flags);
+        [PreserveSig] int GetWindowAssociation(out nint windowHandle);
+        [PreserveSig] int CreateSwapChain(nint device, nint description, out nint swapChain);
+        [PreserveSig] int CreateSoftwareAdapter(nint module, out nint adapter);
+        [PreserveSig] int EnumAdapters1(uint index, [MarshalAs(UnmanagedType.Interface)] out IDXGIAdapter1? adapter);
+    }
+
+    [ComImport]
+    [Guid("29038f61-3839-4626-91fd-086879011a05")]
+    [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    private interface IDXGIAdapter1
+    {
+        [PreserveSig] int SetPrivateData(in Guid name, uint dataSize, nint data);
+        [PreserveSig] int SetPrivateDataInterface(in Guid name, nint unknown);
+        [PreserveSig] int GetPrivateData(in Guid name, ref uint dataSize, nint data);
+        [PreserveSig] int GetParent(in Guid riid, out nint parent);
+        [PreserveSig] int EnumOutputs(uint index, out nint output);
+        [PreserveSig] int GetDesc(out nint description);
+        [PreserveSig] int CheckInterfaceSupport(in Guid interfaceName, out long userModeDriverVersion);
+        [PreserveSig] int GetDesc1(out AdapterDescription description);
+    }
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    internal struct AdapterDescription
+    {
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 128)]
+        public string? Description;
         public uint VendorId;
         public uint DeviceId;
         public uint SubSystemId;
