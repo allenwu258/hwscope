@@ -6,7 +6,7 @@ HwScope 是一个 Windows 本地硬件工具箱项目，目标是在一个程序
 
 - WPF 图形界面，基于 WPF-UI / Fluent 风格，包含传统桌面应用式标题栏菜单、左侧导航和 HWiNFO 风格图标+文字快捷工具栏。
 - 首页硬件配置摘要，支持卡片视图和列表视图。
-- 显卡摘要优先使用 64 位 DXGI 专用显存容量，以 GiB/MiB 展示；WMI `AdapterRAM` 仅作为未确认的回退报告，避免大显存设备误报 4GB。共享系统内存不计入专用显存。
+- 显卡摘要优先使用 64 位 Windows DXGI 专用显存容量，以 GiB/MiB 展示；WMI `AdapterRAM` 仅作为明确标注的未确认回退，避免大显存设备误报 4GB。只有 PCI vendor/device/subsystem/revision 双向唯一匹配时才合并 WMI 与 DXGI；无法唯一匹配时保留诊断并避免重复 GPU，WMI 为空时才使用 DXGI 设备列表。共享系统内存不计入专用显存。
 - CPU 详情页，展示身份、规格、频率、拓扑、缓存、核心映射、指令集和平台上下文。
 - 内存 / SPD 详情页，展示运行态概览、模块选择、WMI/SMBIOS 模块详情、位宽/电压字段和后续 SPD/时序占位。
 - 存储设备详情页，按物理磁盘展示身份、固件、序列号、总线、扇区、卷/分区、健康状态、温度、寿命和 SMART / Health 属性。
@@ -221,6 +221,17 @@ dotnet build
 
 当前目标框架为 `net8.0-windows`，硬件摘要主要通过 Windows WMI 采集，CPU 详情的拓扑和缓存信息会优先使用 Windows topology API。
 
+生成可分发的 Windows x64 自包含目录：
+
+```powershell
+dotnet restore HwScope.sln -r win-x64
+dotnet publish .\src\HwScope.App\HwScope.App.csproj -c Release -r win-x64 --self-contained true -o .\artifacts\release\app
+dotnet publish .\src\HwScope.Cli\HwScope.Cli.csproj -c Release -r win-x64 --self-contained true -o .\artifacts\release\cli
+dotnet publish .\src\HwScope.UsbWorker\HwScope.UsbWorker.csproj -c Release -r win-x64 --self-contained true -o .\artifacts\release\usb-worker
+```
+
+native 跑分 worker 需要先按下方章节的脚本构建，再复制到发布目录的 `app\native` 和 `cli\native`。当前修复版发行包位于 `artifacts\HwScope-v0.2.2-gpu-vram-fix-win-x64`。
+
 ## 内存跑分
 
 内存跑分由 native C++ worker 提供。开发时先构建 worker：
@@ -337,7 +348,7 @@ src\HwScope.App\Themes\Json\dark.json
 - 内存跑分结果目前不应直接对标 AIDA64，kernel、copy accounting、NUMA 和 cache row 仍在演进。
 - 存储跑分当前仅支持本地、单 physical extent 的文件系统卷；Storage Spaces/跨盘卷、network share、RAM disk 和 raw disk 被拒绝。结果不应直接对标 CrystalDiskMark。
 - native worker 不会由 `dotnet build` 自动编译；需要先运行对应 native 构建脚本生成 Release 产物。
-- 截至 2026-07-17，Release 配置下 Core 与 App 共 152 项自动化测试通过。
+- 截至 2026-09-08，Release 配置下 Core 与 App 共 180 项自动化测试通过。
 
 ## License
 
