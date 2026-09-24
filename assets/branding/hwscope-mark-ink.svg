@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" role="img" aria-labelledby="title desc">
+<title id="title">HwScope mark — ink</title>
+<desc id="desc">Double lens, reflection arc and a 45 degree handle, redrawn from the original HwScope magnifying glass.</desc>
+<g fill="none">
+  <path d="M309 309L340 340" stroke="#17364D" stroke-width="30"/>
+  <path d="M-29 0H29V116A29 29 0 0 1-29 116Z" transform="translate(338 338) rotate(-45)" stroke="#17364D" stroke-width="22" stroke-linejoin="round"/>
+  <circle cx="206" cy="206" r="142" stroke="#17364D" stroke-width="24"/>
+  <circle cx="206" cy="206" r="105" stroke="#17364D" stroke-width="16"/>
+  <path d="M142 206A64 64 0 0 1 206 142" stroke="#17364D" stroke-width="14" stroke-linecap="round"/>
+</g>
+</svg>

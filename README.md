@@ -1,6 +1,15 @@
 # HwScope
 
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/branding/hwscope-lockup.svg">
+    <img src="assets/branding/hwscope-lockup-light.svg" alt="HwScope 横版 Logo" width="560">
+  </picture>
+</p>
+
 HwScope 是一个 Windows 本地硬件工具箱项目，目标是在一个程序里逐步整合硬件摘要、CPU-Z 类详情、传感器、跑分、压力测试和稳定性查询。
+
+项目图标提供无文字方形 Logo、HwScope 横版字标、深浅色和单色版本，详见 [品牌图标资源](assets/branding/README.md)。
 
 当前版本已具备：
 
